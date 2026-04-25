@@ -152,6 +152,37 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Idle"
     }
 
+    public func generateSummary(for meetingID: UUID, generatedAt: Date = Date()) async throws {
+        guard let meeting = meetings.first(where: { $0.id == meetingID }) else {
+            throw ProbeError.invalidArguments("Meeting not found")
+        }
+        guard let transcriptJSONURL = meeting.transcriptJSONURL else {
+            throw ProbeError.invalidArguments("Meeting has no structured transcript URL")
+        }
+        guard let summaryJSONURL = meeting.summaryJSONURL,
+              let summaryMarkdownURL = meeting.summaryMarkdownURL
+        else {
+            throw ProbeError.invalidArguments("Meeting has no summary output URL")
+        }
+
+        let transcript = try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        let provider = ExtractiveMeetingSummaryProvider()
+        let summary = try provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: meeting.name,
+                startedAt: meeting.startedAt,
+                endedAt: meeting.endedAt,
+                language: speechLocaleIdentifier,
+                meetingGoal: nil,
+                segments: transcript.segments,
+                generatedAt: generatedAt
+            )
+        )
+        try MeetingSummaryWriter.write(summary, jsonURL: summaryJSONURL, markdownURL: summaryMarkdownURL)
+        statusText = summary.status == .succeeded ? "Summary generated" : "Summary failed"
+        objectWillChange.send()
+    }
+
     public func selectMeeting(_ id: UUID?) {
         selectedMeetingID = id
     }
