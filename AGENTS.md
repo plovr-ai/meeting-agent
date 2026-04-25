@@ -27,11 +27,19 @@ swift run CoreAudioTapProbe --list
 swift run CoreAudioTapProbe --seconds 10
 swift run CoreAudioTapProbe --seconds 10 --wav
 swift run CoreAudioTapProbe --seconds 10 --wav --stt-provider local --stt-locale zh-CN
+swift run CoreAudioTapProbe --seconds 10 --wav --stt-provider whisper --stt-locale zh-CN
 swift run CoreAudioTapProbe --pid <PID> --seconds 10 --wav capture.wav
 ```
 
 When `--pid` is omitted, the program auto-selects the first preferred running meeting app or common Google Meet browser process. Use `--pid` to override that selection.
-The only implemented STT provider is currently `local`, backed by macOS Speech.
+Implemented STT providers are `local`, backed by macOS Speech, and `whisper`, backed by a local `whisper.cpp` CLI and model.
+The `whisper` STT provider uses a local `whisper.cpp` CLI and model. Configure it with `MEETING_AGENT_WHISPER_BIN` and `MEETING_AGENT_WHISPER_MODEL`, for example:
+
+```sh
+export MEETING_AGENT_WHISPER_BIN=/opt/homebrew/bin/whisper-cli
+export MEETING_AGENT_WHISPER_MODEL=/Users/allan/models/ggml-small.bin
+```
+
 Use `--stt-locale` to match the meeting language. The default is `en-US`; Chinese recognition should usually use `zh-CN`.
 
 When `--wav` is provided without a filename, the program writes timestamped files such as:
@@ -63,7 +71,8 @@ When `--wav capture.wav` is provided, the program writes:
 - `WavFileWriter` writes RIFF/WAVE output.
 - `RecordingOutput` owns the `.record/` file naming convention.
 - `SpeechTranscriptionProvider` is the provider boundary for transcription backends.
-- `LocalSpeechTranscriptionProvider` is the only implemented provider today and uses `SystemSpeechTranscriber`.
+- `LocalSpeechTranscriptionProvider` uses `SystemSpeechTranscriber`.
+- `WhisperSpeechTranscriptionProvider` uses a local `whisper.cpp` CLI and model.
 - `SystemSpeechTranscriber` adapts captured PCM frames into `SFSpeechAudioBufferRecognitionRequest`.
 - If Speech recognition permission or availability fails, WAV recording should continue and the transcript file should contain the failure reason.
 
