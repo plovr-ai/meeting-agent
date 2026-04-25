@@ -5,8 +5,12 @@
 Standardize transcript output so every STT provider writes speaker-labeled text in a common format:
 
 ```text
-User A: hello
-User B: thanks
+User A:
+hello
+continued speech from the same speaker
+
+User B:
+thanks
 ```
 
 The first implementation focuses on provider-neutral formatting and data flow. It does not add true speaker diarization yet. Providers that cannot identify speakers will emit a default speaker, rendered as `User A`.
@@ -14,7 +18,7 @@ The first implementation focuses on provider-neutral formatting and data flow. I
 ## Scope
 
 - Add a provider-neutral transcript segment model in `MeetingAgentCore`.
-- Render transcript files through one shared formatter.
+- Render transcript files through one shared formatter that groups consecutive segments from the same speaker into speaker turns.
 - Map stable speaker identifiers to display labels `User A`, `User B`, `User C`, and so on.
 - Keep existing STT providers working:
   - `WhisperSpeechTranscriptionProvider` appends each non-empty chunk as a segment.
@@ -38,6 +42,26 @@ Introduce small transcript-domain types in core:
 
 The file format is produced only by `TranscriptFormatter`. Providers do not construct strings like `User A:` directly. They pass text, and optionally a speaker identifier, into the shared transcript layer.
 
+`TranscriptSegment` represents raw STT output, not the final display paragraph. A provider may emit many short segments for one speaker because the recognizer runs in chunks. `TranscriptFormatter` groups consecutive segments with the same speaker into an internal speaker turn and emits the speaker label once per turn.
+
+The rendered format for one turn is:
+
+```text
+User A:
+first recognized segment
+second recognized segment
+```
+
+When the speaker changes, the formatter starts a new turn and separates turns with a blank line:
+
+```text
+User A:
+first speaker text
+
+User B:
+second speaker text
+```
+
 For the initial implementation, both existing providers will use a default speaker when they have no speaker metadata. This keeps output consistent while leaving a clear seam for later diarization work to supply different speaker identifiers.
 
 ## Data Flow
@@ -48,13 +72,13 @@ Whisper:
 2. The chunk is sent to `whisper.cpp`.
 3. Empty lines and `[BLANK_AUDIO]` are filtered as today.
 4. Each non-empty chunk becomes `TranscriptSegment(speaker: .default, text: chunkText)`.
-5. The complete segment list is rendered and replaces the transcript file.
+5. The complete segment list is rendered as speaker turns and replaces the transcript file.
 
 macOS Speech:
 
 1. Audio frames are appended to `SFSpeechAudioBufferRecognitionRequest`.
 2. Partial and final results update one current transcript segment.
-3. The file is rewritten as `User A: <bestTranscription.formattedString>`.
+3. The file is rewritten as one default-speaker turn.
 
 Future diarization:
 
@@ -71,10 +95,11 @@ If segment text is blank after trimming, the formatter omits it. If no segments 
 
 Add focused XCTest coverage for:
 
-- Default segments render as `User A: text`.
-- Distinct speaker identifiers map stably to `User A`, `User B`, and reuse prior labels.
+- Default segments render as a single `User A` turn.
+- Consecutive segments from the same speaker render under one label.
+- Distinct speaker identifiers map stably to `User A`, `User B`, and reuse prior labels when speakers take another turn.
 - Blank segment text is omitted.
-- Whisper chunk transcripts are written in standardized labeled format.
+- Whisper chunk transcripts are written in standardized turn format.
 - Whisper blank audio filtering still omits `[BLANK_AUDIO]`.
 - Local Speech transcript updates use the shared formatter where practical through testable formatting units.
 
