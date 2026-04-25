@@ -16,6 +16,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var audioURL: URL?
     public var transcriptURL: URL?
     public var transcriptJSONURL: URL?
+    public var summaryURL: URL?
     public var diagnosticsURL: URL?
     public var transcriptionStatus: TranscriptionStatus
     public var transcriptionFailureReason: String?
@@ -30,6 +31,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         audioURL: URL?,
         transcriptURL: URL?,
         transcriptJSONURL: URL? = nil,
+        summaryURL: URL? = nil,
         diagnosticsURL: URL? = nil,
         transcriptionStatus: TranscriptionStatus = .notStarted,
         transcriptionFailureReason: String? = nil,
@@ -43,6 +45,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.audioURL = audioURL
         self.transcriptURL = transcriptURL
         self.transcriptJSONURL = transcriptJSONURL
+        self.summaryURL = summaryURL
         self.diagnosticsURL = diagnosticsURL
         self.transcriptionStatus = transcriptionStatus
         self.transcriptionFailureReason = transcriptionFailureReason
@@ -58,6 +61,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case audioURL
         case transcriptURL
         case transcriptJSONURL
+        case summaryURL
         case diagnosticsURL
         case transcriptionStatus
         case transcriptionFailureReason
@@ -74,6 +78,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         audioURL = try container.decodeIfPresent(URL.self, forKey: .audioURL)
         transcriptURL = try container.decodeIfPresent(URL.self, forKey: .transcriptURL)
         transcriptJSONURL = try container.decodeIfPresent(URL.self, forKey: .transcriptJSONURL)
+        summaryURL = try container.decodeIfPresent(URL.self, forKey: .summaryURL)
         diagnosticsURL = try container.decodeIfPresent(URL.self, forKey: .diagnosticsURL)
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
         transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)

@@ -111,6 +111,34 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.speechProvider, .whisper)
         XCTAssertEqual(viewModel.speechLocaleIdentifier, "zh-CN")
     }
+
+    func testExportsSelectedMeetingTranscriptAndUpdatesStatus() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
+        try "Transcript text".write(to: XCTUnwrap(stored.record.transcriptURL), atomically: true, encoding: .utf8)
+        let viewModel = MeetingAgentViewModel(store: store)
+        try viewModel.loadMeetings()
+        let destination = root.appendingPathComponent("exported-transcript.txt")
+
+        try viewModel.exportTranscript(for: stored.record.id, to: destination)
+
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "Transcript text")
+        XCTAssertEqual(viewModel.statusText, "Transcript exported")
+    }
+
+    func testSummaryClipboardTextFailsWithClearStatusWhenSummaryMissing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
+        let viewModel = MeetingAgentViewModel(store: store)
+        try viewModel.loadMeetings()
+
+        XCTAssertThrowsError(try viewModel.summaryTextForClipboard(for: stored.record.id))
+        XCTAssertEqual(viewModel.statusText, "Copy summary failed: Missing summary artifact")
+    }
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {

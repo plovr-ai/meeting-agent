@@ -14,6 +14,7 @@ final class MeetingRecordTests: XCTestCase {
             audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
             transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
             transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json"),
+            summaryURL: URL(fileURLWithPath: "/tmp/summary.md"),
             transcriptionStatus: .transcribed,
             transcriptionFailureReason: nil,
             speechProvider: .whisper,
@@ -75,5 +76,24 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertNil(decoded.transcriptionFailureReason)
         XCTAssertEqual(decoded.speechProvider, .whisper)
         XCTAssertEqual(decoded.speechLocaleIdentifier, "en-US")
+    }
+
+    func testDecodesMetadataWithoutSummaryURL() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "diagnosticsURL" : "file:\\/\\/\\/tmp\\/diagnostics.json",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.summaryURL)
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import MeetingAgentCore
 import SwiftUI
 
@@ -81,6 +82,29 @@ struct MainWindowView: View {
                 stopRecording: {
                     viewModel.stopRecording()
                 },
+                copySummary: { meeting in
+                    copySummary(for: meeting)
+                },
+                exportTranscript: { meeting in
+                    export("transcript.txt", for: meeting) { destination in
+                        try viewModel.exportTranscript(for: meeting.id, to: destination)
+                    }
+                },
+                exportSummary: { meeting in
+                    export("summary.md", for: meeting) { destination in
+                        try viewModel.exportSummary(for: meeting.id, to: destination)
+                    }
+                },
+                exportMeetingData: { meeting in
+                    export("meeting.json", for: meeting) { destination in
+                        try viewModel.exportMeetingData(for: meeting.id, to: destination)
+                    }
+                },
+                exportReadinessReport: { meeting in
+                    export("readiness-report.md", for: meeting) { destination in
+                        try viewModel.exportReadinessReport(for: meeting.id, to: destination)
+                    }
+                },
                 retryTranscription: { meeting in
                     Task {
                         await viewModel.retryTranscription(for: meeting.id)
@@ -113,6 +137,41 @@ struct MainWindowView: View {
         }
     }
 
+    private func copySummary(for meeting: MeetingRecord) {
+        do {
+            let summary = try viewModel.summaryTextForClipboard(for: meeting.id)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(summary, forType: .string)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func export(_ suggestedName: String, for meeting: MeetingRecord, operation: (URL) throws -> Void) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(sanitizedFileNameComponent(meeting.name))-\(suggestedName)"
+        panel.title = "Export \(suggestedName)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try operation(url)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func sanitizedFileNameComponent(_ value: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/:")
+            .union(.controlCharacters)
+            .union(.newlines)
+        let sanitized = value
+            .components(separatedBy: invalidCharacters)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? "meeting" : sanitized
+    }
+
     private var configurationStatusText: String {
         switch viewModel.speechConfigurationStatus {
         case .available:
@@ -137,6 +196,11 @@ private struct MeetingDetailView: View {
     let statusText: String
     let isRecording: Bool
     let stopRecording: () -> Void
+    let copySummary: (MeetingRecord) -> Void
+    let exportTranscript: (MeetingRecord) -> Void
+    let exportSummary: (MeetingRecord) -> Void
+    let exportMeetingData: (MeetingRecord) -> Void
+    let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
 
     var body: some View {
@@ -168,6 +232,44 @@ private struct MeetingDetailView: View {
                     retryTranscription(meeting)
                 }
                 .disabled(isRecording || meeting.audioURL == nil)
+                Divider()
+                Text("Exports")
+                    .font(.headline)
+                HStack {
+                    Button {
+                        copySummary(meeting)
+                    } label: {
+                        Label("Copy Summary", systemImage: "doc.on.clipboard")
+                    }
+                    .disabled(isRecording || meeting.summaryURL == nil)
+
+                    Button {
+                        exportTranscript(meeting)
+                    } label: {
+                        Label("Transcript", systemImage: "doc.text")
+                    }
+                    .disabled(isRecording || meeting.transcriptURL == nil)
+
+                    Button {
+                        exportSummary(meeting)
+                    } label: {
+                        Label("Summary", systemImage: "text.badge.checkmark")
+                    }
+                    .disabled(isRecording || meeting.summaryURL == nil)
+                }
+                HStack {
+                    Button {
+                        exportMeetingData(meeting)
+                    } label: {
+                        Label("Meeting JSON", systemImage: "curlybraces")
+                    }
+
+                    Button {
+                        exportReadinessReport(meeting)
+                    } label: {
+                        Label("Readiness Report", systemImage: "checklist")
+                    }
+                }
                 Divider()
                 Text("Transcript")
                     .font(.headline)
