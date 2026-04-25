@@ -126,7 +126,9 @@ struct ProbeMain {
                 totalBytes += frame.pcm.count
                 peak = max(peak, frame.pcm.max() ?? 0)
                 try writer?.append(frame)
-                try transcriptionFailureIsolator?.append(frame)
+                if let transcriptionFailure = transcriptionFailureIsolator?.append(frame) {
+                    log(transcriptionFailure)
+                }
             }
 
             log("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")

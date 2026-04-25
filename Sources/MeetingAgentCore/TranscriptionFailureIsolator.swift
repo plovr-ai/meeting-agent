@@ -17,15 +17,19 @@ public final class TranscriptionFailureIsolator {
         self.transcriptURL = transcriptURL
     }
 
-    public func append(_ frame: AudioFrame) throws {
-        guard let transcriber else { return }
+    @discardableResult
+    public func append(_ frame: AudioFrame) -> String? {
+        guard let transcriber else { return nil }
 
         do {
             try transcriber.append(frame)
+            return nil
         } catch {
+            let message = "Speech recognition failed: \(error)"
             transcriber.finish()
-            try TranscriptFileWriter(url: transcriptURL).replace(with: "Speech recognition failed: \(error)")
             self.transcriber = nil
+            try? TranscriptFileWriter(url: transcriptURL).replace(with: message)
+            return message
         }
     }
 
