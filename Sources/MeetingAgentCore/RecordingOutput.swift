@@ -1,11 +1,11 @@
 import Foundation
 
-struct RecordingOutput {
-    let directory: URL
-    let wavURL: URL
-    let transcriptURL: URL
+public struct RecordingOutput {
+    public let directory: URL
+    public let wavURL: URL
+    public let transcriptURL: URL
 
-    static func defaultOutput(
+    public static func defaultOutput(
         forRequestedWavPath wavPath: String,
         timestamp: Date = Date(),
         timeZone: TimeZone = .current,
@@ -36,21 +36,21 @@ struct RecordingOutput {
     }
 }
 
-final class TranscriptFileWriter {
+public final class TranscriptFileWriter {
     private let url: URL
     private var isClosed = false
 
-    init(url: URL) throws {
+    public init(url: URL) throws {
         self.url = url
         FileManager.default.createFile(atPath: url.path, contents: Data())
     }
 
-    func replace(with text: String) throws {
+    public func replace(with text: String) throws {
         guard !isClosed else { return }
         try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func close() throws {
+    public func close() throws {
         isClosed = true
     }
 }

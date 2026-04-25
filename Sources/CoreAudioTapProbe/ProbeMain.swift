@@ -1,4 +1,5 @@
 import Foundation
+import MeetingAgentCore
 
 @main
 struct ProbeMain {
@@ -40,22 +41,15 @@ struct ProbeMain {
 
         log("Starting capture for \(target.displayName) pid=\(target.processID)")
 
-        let tapManager = AudioTapManager()
-        let aggregateManager = AggregateDeviceManager()
-        let frameBuffer = AudioFrameRingBuffer(capacity: 512)
-        let reader = AudioIOReader(frameBuffer: frameBuffer)
+        let captureSession = AudioCaptureSession()
+        let frameBuffer = captureSession.frameBuffer
         defer {
-            reader.stop()
-            aggregateManager.destroyAggregateDevice()
-            tapManager.destroyTap()
+            captureSession.stop()
         }
 
-        let tapID = try tapManager.createTap(for: target)
-        let tapUID = try tapManager.tapUID()
-        let aggregateID = try aggregateManager.createAggregateDevice(named: "MeetingAgent Probe Aggregate", tapUID: tapUID)
-        try reader.start(deviceID: aggregateID)
+        try captureSession.start(target: target)
 
-        log("Capture started tapID=\(tapID) aggregateID=\(aggregateID) tappedProcesses=\(tapManager.tappedProcessCount)")
+        log("Capture started target=\(target.displayName)")
 
         let recordingOutput = try options.wavPath.map {
             try RecordingOutput.defaultOutput(forRequestedWavPath: $0)
@@ -63,8 +57,8 @@ struct ProbeMain {
         let writer = try recordingOutput.map {
             try WavFileWriter(
                 url: $0.wavURL,
-                sampleRate: UInt32(reader.outputSampleRate.rounded()),
-                channelCount: UInt16(reader.outputChannelCount)
+                sampleRate: UInt32(captureSession.outputSampleRate.rounded()),
+                channelCount: UInt16(captureSession.outputChannelCount)
             )
         }
         let transcriber: AudioFrameTranscriber?
@@ -137,76 +131,5 @@ struct ProbeMain {
     private static func log(_ message: String) {
         print(message)
         fflush(stdout)
-    }
-}
-
-struct ProbeOptions {
-    let listOnly: Bool
-    let pid: pid_t?
-    let seconds: Int
-    let wavPath: String?
-    let speechProvider: SpeechProvider
-    let speechLocaleIdentifier: String
-
-    init(arguments: [String]) throws {
-        listOnly = arguments.isEmpty || arguments.contains("--list")
-
-        var parsedPID: pid_t?
-        var parsedSeconds = 10
-        var parsedWavPath: String?
-        var parsedSpeechProvider = SpeechProvider.local
-        var parsedSpeechLocaleIdentifier = "en-US"
-
-        var index = 0
-        while index < arguments.count {
-            let arg = arguments[index]
-            switch arg {
-            case "--list":
-                index += 1
-            case "--pid":
-                guard index + 1 < arguments.count, let value = Int32(arguments[index + 1]) else {
-                    throw ProbeError.invalidArguments("--pid requires an integer process id")
-                }
-                parsedPID = value
-                index += 2
-            case "--seconds":
-                guard index + 1 < arguments.count, let value = Int(arguments[index + 1]), value > 0 else {
-                    throw ProbeError.invalidArguments("--seconds requires a positive integer")
-                }
-                parsedSeconds = value
-                index += 2
-            case "--wav":
-                if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
-                    parsedWavPath = arguments[index + 1]
-                    index += 2
-                } else {
-                    parsedWavPath = ""
-                    index += 1
-                }
-            case "--stt-locale":
-                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
-                    throw ProbeError.invalidArguments("--stt-locale requires a locale identifier such as en-US or zh-CN")
-                }
-                parsedSpeechLocaleIdentifier = arguments[index + 1]
-                index += 2
-            case "--stt-provider":
-                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
-                    throw ProbeError.invalidArguments("--stt-provider requires one of: \(SpeechProvider.supportedValuesDescription)")
-                }
-                guard let provider = SpeechProvider(rawValue: arguments[index + 1]) else {
-                    throw ProbeError.invalidArguments("Unsupported --stt-provider \(arguments[index + 1]). Supported providers: \(SpeechProvider.supportedValuesDescription)")
-                }
-                parsedSpeechProvider = provider
-                index += 2
-            default:
-                throw ProbeError.invalidArguments("Unknown argument \(arg)")
-            }
-        }
-
-        pid = parsedPID
-        seconds = parsedSeconds
-        wavPath = parsedWavPath
-        speechProvider = parsedSpeechProvider
-        speechLocaleIdentifier = parsedSpeechLocaleIdentifier
     }
 }

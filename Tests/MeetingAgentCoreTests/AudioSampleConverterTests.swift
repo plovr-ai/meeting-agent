@@ -1,5 +1,5 @@
 import XCTest
-@testable import CoreAudioTapProbe
+@testable import MeetingAgentCore
 
 final class AudioSampleConverterTests: XCTestCase {
     func testConvertsFloat32SamplesToLittleEndianInt16PCM() {

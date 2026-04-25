@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
 
-final class AudioIOReader {
+public final class AudioIOReader {
     private let frameBuffer: AudioFrameRingBuffer
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
@@ -9,14 +9,14 @@ final class AudioIOReader {
     private var channelCount: Int = 1
     private var inputFormat = AudioStreamBasicDescription()
 
-    private(set) var outputSampleRate: Double = 48_000
-    private(set) var outputChannelCount: Int = 1
+    public private(set) var outputSampleRate: Double = 48_000
+    public private(set) var outputChannelCount: Int = 1
 
-    init(frameBuffer: AudioFrameRingBuffer) {
+    public init(frameBuffer: AudioFrameRingBuffer) {
         self.frameBuffer = frameBuffer
     }
 
-    func start(deviceID: AudioObjectID) throws {
+    public func start(deviceID: AudioObjectID) throws {
         self.deviceID = deviceID
         inputFormat = try readInputStreamFormat(deviceID: deviceID)
         sampleRate = inputFormat.mSampleRate > 0 ? inputFormat.mSampleRate : try readNominalSampleRate(deviceID: deviceID)
@@ -45,7 +45,7 @@ final class AudioIOReader {
         )
     }
 
-    func stop() {
+    public func stop() {
         guard deviceID != AudioObjectID(kAudioObjectUnknown), let ioProcID else { return }
         AudioDeviceStop(deviceID, ioProcID)
         AudioDeviceDestroyIOProcID(deviceID, ioProcID)

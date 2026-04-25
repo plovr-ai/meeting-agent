@@ -1,15 +1,17 @@
 import CoreAudio
 import Foundation
 
-final class AggregateDeviceManager {
-    private(set) var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+public final class AggregateDeviceManager {
+    public private(set) var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
     private let deviceUID = "com.meetingagent.CoreAudioTapProbe.aggregate.\(UUID().uuidString)"
 
-    var isCreated: Bool {
+    public var isCreated: Bool {
         aggregateDeviceID != AudioObjectID(kAudioObjectUnknown)
     }
 
-    func createAggregateDevice(named name: String, tapUID: String) throws -> AudioObjectID {
+    public init() {}
+
+    public func createAggregateDevice(named name: String, tapUID: String) throws -> AudioObjectID {
         guard !isCreated else {
             return aggregateDeviceID
         }
@@ -35,7 +37,7 @@ final class AggregateDeviceManager {
         return createdID
     }
 
-    func destroyAggregateDevice() {
+    public func destroyAggregateDevice() {
         guard isCreated else { return }
         AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
         aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)

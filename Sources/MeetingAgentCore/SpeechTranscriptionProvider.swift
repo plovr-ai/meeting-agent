@@ -1,28 +1,30 @@
 import Foundation
 
-enum SpeechProvider: String, Equatable {
+public enum SpeechProvider: String, Equatable {
     case local
     case whisper
 
-    static var supportedValuesDescription: String {
+    public static var supportedValuesDescription: String {
         "local, whisper"
     }
 }
 
-protocol AudioFrameTranscriber: AnyObject {
+public protocol AudioFrameTranscriber: AnyObject {
     func append(_ frame: AudioFrame) throws
     func finish()
 }
 
-protocol SpeechTranscriptionProvider {
+public protocol SpeechTranscriptionProvider {
     var provider: SpeechProvider { get }
     func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber
 }
 
-struct LocalSpeechTranscriptionProvider: SpeechTranscriptionProvider {
-    let provider: SpeechProvider = .local
+public struct LocalSpeechTranscriptionProvider: SpeechTranscriptionProvider {
+    public let provider: SpeechProvider = .local
 
-    func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber {
+    public init() {}
+
+    public func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber {
         try await SystemSpeechTranscriber.start(
             transcriptURL: transcriptURL,
             localeIdentifier: localeIdentifier
@@ -30,8 +32,8 @@ struct LocalSpeechTranscriptionProvider: SpeechTranscriptionProvider {
     }
 }
 
-enum SpeechTranscriptionProviderFactory {
-    static func provider(for provider: SpeechProvider) -> SpeechTranscriptionProvider {
+public enum SpeechTranscriptionProviderFactory {
+    public static func provider(for provider: SpeechProvider) -> SpeechTranscriptionProvider {
         switch provider {
         case .local:
             return LocalSpeechTranscriptionProvider()
