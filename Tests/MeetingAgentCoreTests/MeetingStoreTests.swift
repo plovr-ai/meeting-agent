@@ -63,4 +63,32 @@ final class MeetingStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.first?.endedAt, Date(timeIntervalSince1970: 300))
     }
+
+    func testLoadsLegacyMeetingMetadataWithDefaultSummaryURLs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let id = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        let directory = store.meetingsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadata = """
+        {
+          "audioURL" : "\(directory.appendingPathComponent("audio.wav").absoluteString)",
+          "endedAt" : "2026-04-25T10:10:00Z",
+          "id" : "\(id.uuidString)",
+          "name" : "Legacy Meeting",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "\(directory.appendingPathComponent("transcript.json").absoluteString)",
+          "transcriptURL" : "\(directory.appendingPathComponent("transcript.txt").absoluteString)"
+        }
+        """
+        try metadata.write(to: directory.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8)
+
+        let loaded = try store.loadMeetings()
+
+        XCTAssertEqual(loaded.first?.summaryJSONURL?.lastPathComponent, "summary.json")
+        XCTAssertEqual(loaded.first?.summaryMarkdownURL?.lastPathComponent, "summary.md")
+        XCTAssertEqual(loaded.first?.summaryJSONURL?.deletingLastPathComponent().lastPathComponent, id.uuidString)
+        XCTAssertEqual(loaded.first?.summaryMarkdownURL?.deletingLastPathComponent().lastPathComponent, id.uuidString)
+    }
 }
