@@ -72,13 +72,17 @@ struct ProbeMain {
                 channelCount: UInt16(captureSession.outputChannelCount)
             )
         }
-        let transcriber: AudioFrameTranscriber?
+        let transcriptionFailureIsolator: TranscriptionFailureIsolator?
         if let recordingOutput {
             do {
                 let speechProvider = SpeechTranscriptionProviderFactory.provider(for: options.speechProvider)
-                transcriber = try await speechProvider.start(
+                let transcriber = try await speechProvider.start(
                     transcriptURL: recordingOutput.transcriptURL,
                     localeIdentifier: options.speechLocaleIdentifier
+                )
+                transcriptionFailureIsolator = TranscriptionFailureIsolator(
+                    transcriber: transcriber,
+                    transcriptURL: recordingOutput.transcriptURL
                 )
                 log("Speech recognition provider: \(options.speechProvider.rawValue)")
                 log("Speech recognition locale: \(options.speechLocaleIdentifier)")
@@ -87,10 +91,10 @@ struct ProbeMain {
                 try transcriptWriter.replace(with: "Speech recognition unavailable: \(error)")
                 try transcriptWriter.close()
                 log("Speech recognition unavailable: \(error)")
-                transcriber = nil
+                transcriptionFailureIsolator = nil
             }
         } else {
-            transcriber = nil
+            transcriptionFailureIsolator = nil
         }
 
         if let recordingOutput {
@@ -122,14 +126,14 @@ struct ProbeMain {
                 totalBytes += frame.pcm.count
                 peak = max(peak, frame.pcm.max() ?? 0)
                 try writer?.append(frame)
-                try transcriber?.append(frame)
+                try transcriptionFailureIsolator?.append(frame)
             }
 
             log("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")
         }
 
         try writer?.close()
-        transcriber?.finish()
+        transcriptionFailureIsolator?.finish()
         diagnosticsTracker.finish(endedReason: .saved)
         let diagnostics = diagnosticsTracker.snapshot()
         if let recordingOutput {
