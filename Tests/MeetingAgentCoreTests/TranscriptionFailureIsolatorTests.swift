@@ -24,10 +24,12 @@ final class TranscriptionFailureIsolatorTests: XCTestCase {
             timestampNanos: 1
         )
 
-        try isolator.append(frame)
-        try isolator.append(frame)
+        let failureMessage = isolator.append(frame)
+        let repeatedFailureMessage = isolator.append(frame)
 
         XCTAssertFalse(isolator.isActive)
+        XCTAssertEqual(failureMessage, "Speech recognition failed: Speech recognition error: chunk failed")
+        XCTAssertNil(repeatedFailureMessage)
         XCTAssertEqual(transcriber.appendCount, 1)
         XCTAssertEqual(transcriber.finishCount, 1)
         XCTAssertEqual(
