@@ -24,10 +24,15 @@ Use these from the repository root:
 ```sh
 swift test
 swift run CoreAudioTapProbe --list
-swift run CoreAudioTapProbe --pid <PID> --seconds 10
-swift run CoreAudioTapProbe --pid <PID> --seconds 10 --wav
+swift run CoreAudioTapProbe --seconds 10
+swift run CoreAudioTapProbe --seconds 10 --wav
+swift run CoreAudioTapProbe --seconds 10 --wav --stt-provider local --stt-locale zh-CN
 swift run CoreAudioTapProbe --pid <PID> --seconds 10 --wav capture.wav
 ```
+
+When `--pid` is omitted, the program auto-selects the first preferred running meeting app or common Google Meet browser process. Use `--pid` to override that selection.
+The only implemented STT provider is currently `local`, backed by macOS Speech.
+Use `--stt-locale` to match the meeting language. The default is `en-US`; Chinese recognition should usually use `zh-CN`.
 
 When `--wav` is provided without a filename, the program writes timestamped files such as:
 
@@ -57,6 +62,8 @@ When `--wav capture.wav` is provided, the program writes:
 - `AudioIOReader` reads process tap audio and converts float32 linear PCM to signed 16-bit PCM.
 - `WavFileWriter` writes RIFF/WAVE output.
 - `RecordingOutput` owns the `.record/` file naming convention.
+- `SpeechTranscriptionProvider` is the provider boundary for transcription backends.
+- `LocalSpeechTranscriptionProvider` is the only implemented provider today and uses `SystemSpeechTranscriber`.
 - `SystemSpeechTranscriber` adapts captured PCM frames into `SFSpeechAudioBufferRecognitionRequest`.
 - If Speech recognition permission or availability fails, WAV recording should continue and the transcript file should contain the failure reason.
 

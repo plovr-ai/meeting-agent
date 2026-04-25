@@ -23,13 +23,19 @@ struct ProbeMain {
             throw ProbeError.coreAudio("Core Audio Process Tap requires macOS 14.2 or later")
         }
 
-        guard let pid = options.pid else {
-            printTargets()
-            throw ProbeError.invalidArguments("Pass --pid <process-id> to start capture")
-        }
-
-        guard let target = RunningProcessDiscovery.currentTargets().first(where: { $0.processID == pid }) else {
-            throw ProbeError.targetNotFound(pid)
+        let targets = RunningProcessDiscovery.currentTargets()
+        let target: AudioCaptureTarget
+        if let pid = options.pid {
+            guard let requestedTarget = targets.first(where: { $0.processID == pid }) else {
+                throw ProbeError.targetNotFound(pid)
+            }
+            target = requestedTarget
+        } else if let automaticTarget = RunningProcessDiscovery.automaticTarget(from: targets) {
+            target = automaticTarget
+            log("Auto-selected capture target: \(target.displayName) pid=\(target.processID)")
+        } else {
+            printTargets(targets)
+            throw ProbeError.invalidArguments("No preferred meeting or Google Meet browser process found; pass --pid <process-id> to start capture")
         }
 
         log("Starting capture for \(target.displayName) pid=\(target.processID)")
@@ -61,10 +67,16 @@ struct ProbeMain {
                 channelCount: UInt16(reader.outputChannelCount)
             )
         }
-        let transcriber: SystemSpeechTranscriber?
+        let transcriber: AudioFrameTranscriber?
         if let recordingOutput {
             do {
-                transcriber = try await SystemSpeechTranscriber.start(transcriptURL: recordingOutput.transcriptURL)
+                let speechProvider = SpeechTranscriptionProviderFactory.provider(for: options.speechProvider)
+                transcriber = try await speechProvider.start(
+                    transcriptURL: recordingOutput.transcriptURL,
+                    localeIdentifier: options.speechLocaleIdentifier
+                )
+                log("Speech recognition provider: \(options.speechProvider.rawValue)")
+                log("Speech recognition locale: \(options.speechLocaleIdentifier)")
             } catch {
                 let transcriptWriter = try TranscriptFileWriter(url: recordingOutput.transcriptURL)
                 try transcriptWriter.replace(with: "Speech recognition unavailable: \(error)")
@@ -108,13 +120,17 @@ struct ProbeMain {
     }
 
     private static func printTargets() {
+        printTargets(RunningProcessDiscovery.currentTargets())
+    }
+
+    private static func printTargets(_ targets: [AudioCaptureTarget]) {
         log("Running capture targets:")
-        for target in RunningProcessDiscovery.currentTargets() {
+        for target in targets {
             let bundle = target.bundleIdentifier ?? "unknown-bundle"
             log("\(target.processID)\t\(target.displayName)\t\(bundle)")
         }
         log("")
-        log("Usage: CoreAudioTapProbe --pid <process-id> [--seconds 10] [--wav [capture.wav]]")
+        log("Usage: CoreAudioTapProbe [--pid <process-id>] [--seconds 10] [--wav [capture.wav]] [--stt-provider local] [--stt-locale en-US]")
         log("When --wav is provided, audio and transcript files are written to .record/")
     }
 
@@ -129,6 +145,8 @@ struct ProbeOptions {
     let pid: pid_t?
     let seconds: Int
     let wavPath: String?
+    let speechProvider: SpeechProvider
+    let speechLocaleIdentifier: String
 
     init(arguments: [String]) throws {
         listOnly = arguments.isEmpty || arguments.contains("--list")
@@ -136,6 +154,8 @@ struct ProbeOptions {
         var parsedPID: pid_t?
         var parsedSeconds = 10
         var parsedWavPath: String?
+        var parsedSpeechProvider = SpeechProvider.local
+        var parsedSpeechLocaleIdentifier = "en-US"
 
         var index = 0
         while index < arguments.count {
@@ -163,6 +183,21 @@ struct ProbeOptions {
                     parsedWavPath = ""
                     index += 1
                 }
+            case "--stt-locale":
+                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
+                    throw ProbeError.invalidArguments("--stt-locale requires a locale identifier such as en-US or zh-CN")
+                }
+                parsedSpeechLocaleIdentifier = arguments[index + 1]
+                index += 2
+            case "--stt-provider":
+                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
+                    throw ProbeError.invalidArguments("--stt-provider requires one of: \(SpeechProvider.supportedValuesDescription)")
+                }
+                guard let provider = SpeechProvider(rawValue: arguments[index + 1]) else {
+                    throw ProbeError.invalidArguments("Unsupported --stt-provider \(arguments[index + 1]). Supported providers: \(SpeechProvider.supportedValuesDescription)")
+                }
+                parsedSpeechProvider = provider
+                index += 2
             default:
                 throw ProbeError.invalidArguments("Unknown argument \(arg)")
             }
@@ -171,5 +206,7 @@ struct ProbeOptions {
         pid = parsedPID
         seconds = parsedSeconds
         wavPath = parsedWavPath
+        speechProvider = parsedSpeechProvider
+        speechLocaleIdentifier = parsedSpeechLocaleIdentifier
     }
 }

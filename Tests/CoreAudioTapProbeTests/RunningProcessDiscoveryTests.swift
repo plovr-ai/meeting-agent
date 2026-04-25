@@ -28,4 +28,26 @@ final class RunningProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(targets.map(\.displayName), ["Google Chrome", "zoom.us", "Notes"])
     }
+
+    func testEdgeIsPreferredAsGoogleMeetBrowser() {
+        let apps = [
+            RunningAppSnapshot(processID: 200, displayName: "Notes", bundleIdentifier: "com.apple.Notes"),
+            RunningAppSnapshot(processID: 201, displayName: "Microsoft Edge", bundleIdentifier: "com.microsoft.edgemac")
+        ]
+
+        let targets = RunningProcessDiscovery.targets(from: apps, currentProcessID: 999)
+
+        XCTAssertEqual(targets.map(\.displayName), ["Microsoft Edge", "Notes"])
+    }
+
+    func testAutomaticallySelectsFirstPreferredTarget() {
+        let targets = [
+            AudioCaptureTarget(processID: 200, displayName: "Notes", bundleIdentifier: "com.apple.Notes"),
+            AudioCaptureTarget(processID: 201, displayName: "Google Chrome", bundleIdentifier: "com.google.Chrome")
+        ]
+
+        let selected = RunningProcessDiscovery.automaticTarget(from: targets)
+
+        XCTAssertEqual(selected?.processID, 201)
+    }
 }

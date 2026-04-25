@@ -11,10 +11,10 @@ enum SpeechAudioBufferFactory {
         }
 
         guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+            commonFormat: .pcmFormatFloat32,
             sampleRate: frame.sampleRate,
-            channels: AVAudioChannelCount(channelCount),
-            interleaved: true
+            channels: 1,
+            interleaved: false
         ) else {
             throw ProbeError.speechRecognition("Unable to create Speech audio format")
         }
@@ -25,20 +25,30 @@ enum SpeechAudioBufferFactory {
         }
 
         buffer.frameLength = frameCount
-        let buffers = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
-        guard let destination = buffers[0].mData else {
+        guard let destination = buffer.floatChannelData?[0] else {
             throw ProbeError.speechRecognition("Speech audio buffer has no writable storage")
         }
 
-        frame.pcm.copyBytes(to: destination.assumingMemoryBound(to: UInt8.self), count: frame.pcm.count)
-        buffers[0].mDataByteSize = UInt32(frame.pcm.count)
-        buffers[0].mNumberChannels = AVAudioChannelCount(channelCount)
+        frame.pcm.withUnsafeBytes { rawBuffer in
+            let bytes = rawBuffer.bindMemory(to: UInt8.self)
+            for frameIndex in 0..<Int(frameCount) {
+                var mixedSample: Float = 0
+                for channelIndex in 0..<channelCount {
+                    let byteOffset = (frameIndex * channelCount + channelIndex) * MemoryLayout<Int16>.size
+                    let low = UInt16(bytes[byteOffset])
+                    let high = UInt16(bytes[byteOffset + 1]) << 8
+                    let sample = Int16(bitPattern: high | low)
+                    mixedSample += Float(sample) / 32768.0
+                }
+                destination[frameIndex] = mixedSample / Float(channelCount)
+            }
+        }
 
         return buffer
     }
 }
 
-final class SystemSpeechTranscriber {
+final class SystemSpeechTranscriber: AudioFrameTranscriber {
     private let request: SFSpeechAudioBufferRecognitionRequest
     private let writer: TranscriptFileWriter
     private var task: SFSpeechRecognitionTask?
@@ -48,15 +58,17 @@ final class SystemSpeechTranscriber {
         self.writer = writer
     }
 
-    static func start(transcriptURL: URL) async throws -> SystemSpeechTranscriber {
+    static func start(transcriptURL: URL, localeIdentifier: String) async throws -> SystemSpeechTranscriber {
         try await requestAuthorization()
 
-        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
-            throw ProbeError.speechRecognition("System speech recognizer is unavailable")
+        let locale = Locale(identifier: localeIdentifier)
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            throw ProbeError.speechRecognition("System speech recognizer is unavailable for locale \(localeIdentifier)")
         }
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.taskHint = .dictation
 
         let writer = try TranscriptFileWriter(url: transcriptURL)
         let transcriber = SystemSpeechTranscriber(request: request, writer: writer)

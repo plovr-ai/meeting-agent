@@ -7,6 +7,7 @@ struct RunningProcessDiscovery {
         "com.microsoft.teams",
         "com.microsoft.teams2",
         "com.google.Chrome",
+        "com.microsoft.edgemac",
         "company.thebrowser.Browser",
         "com.apple.Safari",
         "com.larksuite.Lark",
@@ -44,6 +45,12 @@ struct RunningProcessDiscovery {
             }
 
             return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        }
+    }
+
+    static func automaticTarget(from targets: [AudioCaptureTarget]) -> AudioCaptureTarget? {
+        targets.first { target in
+            target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false
         }
     }
 }

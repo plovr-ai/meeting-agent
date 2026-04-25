@@ -65,6 +65,36 @@ final class RecordingOutputTests: XCTestCase {
         XCTAssertEqual(options.wavPath, "")
     }
 
+    func testSpeechLocaleDefaultsToEnglish() throws {
+        let options = try ProbeOptions(arguments: ["--seconds", "5"])
+
+        XCTAssertEqual(options.speechLocaleIdentifier, "en-US")
+    }
+
+    func testSpeechLocaleCanBeConfigured() throws {
+        let options = try ProbeOptions(arguments: ["--seconds", "5", "--stt-locale", "zh-CN"])
+
+        XCTAssertEqual(options.speechLocaleIdentifier, "zh-CN")
+    }
+
+    func testSpeechProviderDefaultsToLocal() throws {
+        let options = try ProbeOptions(arguments: ["--seconds", "5"])
+
+        XCTAssertEqual(options.speechProvider, .local)
+    }
+
+    func testSpeechProviderCanBeConfiguredToLocal() throws {
+        let options = try ProbeOptions(arguments: ["--seconds", "5", "--stt-provider", "local"])
+
+        XCTAssertEqual(options.speechProvider, .local)
+    }
+
+    func testUnknownSpeechProviderIsRejected() {
+        XCTAssertThrowsError(try ProbeOptions(arguments: ["--seconds", "5", "--stt-provider", "openai"])) { error in
+            XCTAssertEqual(String(describing: error), "Invalid arguments: Unsupported --stt-provider openai. Supported providers: local")
+        }
+    }
+
     func testTranscriptWriterReplacesPartialTextWithLatestText() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: url) }
