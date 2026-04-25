@@ -166,6 +166,39 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertThrowsError(try viewModel.summaryTextForClipboard(for: stored.record.id))
         XCTAssertEqual(viewModel.statusText, "Copy summary failed: Missing summary artifact")
     }
+
+    func testGenerateSummaryWritesArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(
+            id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+            name: "Launch Review",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000)
+        )
+        stored.record.endedAt = Date(timeIntervalSince1970: 1_777_000_600)
+        try store.save(stored.record)
+        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
+            TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
+        ])
+        try transcriptWriter.close()
+        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US")
+        try viewModel.loadMeetings()
+
+        try await viewModel.generateSummary(
+            for: stored.record.id,
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
+        )
+
+        let summary = try MeetingSummaryWriter.read(from: stored.record.summaryJSONURL!)
+        XCTAssertEqual(summary.status, .succeeded)
+        XCTAssertEqual(summary.decisions.first?.sourceSegmentIDs, ["segment-1"])
+        XCTAssertEqual(summary.actionItems.first?.sourceSegmentIDs, ["segment-2"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stored.record.summaryMarkdownURL!.path))
+        XCTAssertEqual(viewModel.statusText, "Summary generated")
+    }
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {
