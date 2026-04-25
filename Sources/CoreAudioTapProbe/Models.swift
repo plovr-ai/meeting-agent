@@ -25,6 +25,7 @@ enum ProbeError: Error, CustomStringConvertible {
     case targetNotFound(pid_t)
     case coreAudio(String)
     case captureNotStarted
+    case speechRecognition(String)
 
     var description: String {
         switch self {
@@ -36,6 +37,8 @@ enum ProbeError: Error, CustomStringConvertible {
             return "Core Audio error: \(message)"
         case .captureNotStarted:
             return "Capture has not started"
+        case .speechRecognition(let message):
+            return "Speech recognition error: \(message)"
         }
     }
 }

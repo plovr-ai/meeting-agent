@@ -8,5 +8,7 @@
     <string>CoreAudioTapProbe</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>CoreAudioTapProbe captures meeting audio from the selected app so the meeting agent can transcribe and translate it.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>CoreAudioTapProbe uses system speech recognition to save captured meeting audio as text.</string>
 </dict>
 </plist>

@@ -51,12 +51,34 @@ struct ProbeMain {
 
         log("Capture started tapID=\(tapID) aggregateID=\(aggregateID) tappedProcesses=\(tapManager.tappedProcessCount)")
 
-        let writer = try options.wavPath.map {
+        let recordingOutput = try options.wavPath.map {
+            try RecordingOutput.defaultOutput(forRequestedWavPath: $0)
+        }
+        let writer = try recordingOutput.map {
             try WavFileWriter(
-                url: URL(fileURLWithPath: $0),
+                url: $0.wavURL,
                 sampleRate: UInt32(reader.outputSampleRate.rounded()),
                 channelCount: UInt16(reader.outputChannelCount)
             )
+        }
+        let transcriber: SystemSpeechTranscriber?
+        if let recordingOutput {
+            do {
+                transcriber = try await SystemSpeechTranscriber.start(transcriptURL: recordingOutput.transcriptURL)
+            } catch {
+                let transcriptWriter = try TranscriptFileWriter(url: recordingOutput.transcriptURL)
+                try transcriptWriter.replace(with: "Speech recognition unavailable: \(error)")
+                try transcriptWriter.close()
+                log("Speech recognition unavailable: \(error)")
+                transcriber = nil
+            }
+        } else {
+            transcriber = nil
+        }
+
+        if let recordingOutput {
+            log("Recording audio to \(recordingOutput.wavURL.path)")
+            log("Recording transcript to \(recordingOutput.transcriptURL.path)")
         }
 
         let end = Date().addingTimeInterval(TimeInterval(options.seconds))
@@ -74,12 +96,14 @@ struct ProbeMain {
                 totalBytes += frame.pcm.count
                 peak = max(peak, frame.pcm.max() ?? 0)
                 try writer?.append(frame)
+                try transcriber?.append(frame)
             }
 
             log("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")
         }
 
         try writer?.close()
+        transcriber?.finish()
         log("Capture stopped")
     }
 
@@ -90,7 +114,8 @@ struct ProbeMain {
             log("\(target.processID)\t\(target.displayName)\t\(bundle)")
         }
         log("")
-        log("Usage: CoreAudioTapProbe --pid <process-id> [--seconds 10] [--wav /tmp/capture.wav]")
+        log("Usage: CoreAudioTapProbe --pid <process-id> [--seconds 10] [--wav [capture.wav]]")
+        log("When --wav is provided, audio and transcript files are written to .record/")
     }
 
     private static func log(_ message: String) {
@@ -131,11 +156,13 @@ struct ProbeOptions {
                 parsedSeconds = value
                 index += 2
             case "--wav":
-                guard index + 1 < arguments.count else {
-                    throw ProbeError.invalidArguments("--wav requires a file path")
+                if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") {
+                    parsedWavPath = arguments[index + 1]
+                    index += 2
+                } else {
+                    parsedWavPath = ""
+                    index += 1
                 }
-                parsedWavPath = arguments[index + 1]
-                index += 2
             default:
                 throw ProbeError.invalidArguments("Unknown argument \(arg)")
             }
