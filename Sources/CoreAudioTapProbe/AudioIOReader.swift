@@ -7,6 +7,10 @@ final class AudioIOReader {
     private var ioProcID: AudioDeviceIOProcID?
     private var sampleRate: Double = 48_000
     private var channelCount: Int = 1
+    private var inputFormat = AudioStreamBasicDescription()
+
+    private(set) var outputSampleRate: Double = 48_000
+    private(set) var outputChannelCount: Int = 1
 
     init(frameBuffer: AudioFrameRingBuffer) {
         self.frameBuffer = frameBuffer
@@ -14,8 +18,11 @@ final class AudioIOReader {
 
     func start(deviceID: AudioObjectID) throws {
         self.deviceID = deviceID
-        sampleRate = try readNominalSampleRate(deviceID: deviceID)
-        channelCount = max(1, try readInputChannelCount(deviceID: deviceID))
+        inputFormat = try readInputStreamFormat(deviceID: deviceID)
+        sampleRate = inputFormat.mSampleRate > 0 ? inputFormat.mSampleRate : try readNominalSampleRate(deviceID: deviceID)
+        channelCount = max(1, Int(inputFormat.mChannelsPerFrame == 0 ? UInt32(try readInputChannelCount(deviceID: deviceID)) : inputFormat.mChannelsPerFrame))
+        outputSampleRate = sampleRate
+        outputChannelCount = channelCount
 
         var createdIOProcID: AudioDeviceIOProcID?
 
@@ -52,15 +59,33 @@ final class AudioIOReader {
 
         for buffer in buffers {
             guard let dataPointer = buffer.mData, buffer.mDataByteSize > 0 else { continue }
-            let pcm = Data(bytes: dataPointer, count: Int(buffer.mDataByteSize))
+            let raw = Data(bytes: dataPointer, count: Int(buffer.mDataByteSize))
+            let pcm = convertToInt16PCM(raw)
             let frame = AudioFrame(
                 pcm: pcm,
-                sampleRate: sampleRate,
-                channelCount: Int(buffer.mNumberChannels == 0 ? UInt32(channelCount) : buffer.mNumberChannels),
+                sampleRate: outputSampleRate,
+                channelCount: Int(buffer.mNumberChannels == 0 ? UInt32(outputChannelCount) : buffer.mNumberChannels),
                 timestampNanos: UInt64(DispatchTime.now().uptimeNanoseconds)
             )
             frameBuffer.push(frame)
         }
+    }
+
+    private func convertToInt16PCM(_ raw: Data) -> Data {
+        guard inputFormat.mFormatID == kAudioFormatLinearPCM else {
+            return raw
+        }
+
+        let isFloat = (inputFormat.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        if isFloat && inputFormat.mBitsPerChannel == 32 {
+            return AudioSampleConverter.float32ToInt16PCM(raw)
+        }
+
+        if !isFloat && inputFormat.mBitsPerChannel == 16 {
+            return raw
+        }
+
+        return raw
     }
 
     private func readNominalSampleRate(deviceID: AudioObjectID) throws -> Double {
@@ -97,6 +122,22 @@ final class AudioIOReader {
         )
 
         return bufferList.reduce(0) { $0 + Int($1.mNumberChannels) }
+    }
+
+    private func readInputStreamFormat(deviceID: AudioObjectID) throws -> AudioStreamBasicDescription {
+        var address = CoreAudioHelpers.propertyAddress(
+            kAudioDevicePropertyStreamFormat,
+            scope: kAudioDevicePropertyScopeInput
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+
+        try CoreAudioHelpers.check(
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &format),
+            "AudioObjectGetPropertyData(kAudioDevicePropertyStreamFormat)"
+        )
+
+        return format
     }
 
     deinit {

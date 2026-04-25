@@ -49,10 +49,14 @@ struct ProbeMain {
         let aggregateID = try aggregateManager.createAggregateDevice(named: "MeetingAgent Probe Aggregate", tapUID: tapUID)
         try reader.start(deviceID: aggregateID)
 
-        log("Capture started tapID=\(tapID) aggregateID=\(aggregateID)")
+        log("Capture started tapID=\(tapID) aggregateID=\(aggregateID) tappedProcesses=\(tapManager.tappedProcessCount)")
 
         let writer = try options.wavPath.map {
-            try WavFileWriter(url: URL(fileURLWithPath: $0), sampleRate: 16_000, channelCount: 1)
+            try WavFileWriter(
+                url: URL(fileURLWithPath: $0),
+                sampleRate: UInt32(reader.outputSampleRate.rounded()),
+                channelCount: UInt16(reader.outputChannelCount)
+            )
         }
 
         let end = Date().addingTimeInterval(TimeInterval(options.seconds))

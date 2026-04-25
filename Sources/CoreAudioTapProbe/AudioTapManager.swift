@@ -4,6 +4,7 @@ import Foundation
 @available(macOS 14.2, *)
 final class AudioTapManager {
     private(set) var tapID = AudioObjectID(kAudioObjectUnknown)
+    private(set) var tappedProcessCount = 0
 
     var isRunning: Bool {
         tapID != AudioObjectID(kAudioObjectUnknown)
@@ -14,11 +15,12 @@ final class AudioTapManager {
             return tapID
         }
 
-        let processObjectID = try CoreAudioHelpers.processObjectID(for: target.processID)
+        let processObjectIDs = try CoreAudioHelpers.outputProcessObjectIDs(for: target)
+        tappedProcessCount = processObjectIDs.count
 
         let description = CATapDescription()
         description.name = "MeetingAgent Tap: \(target.displayName)"
-        description.processes = [processObjectID]
+        description.processes = processObjectIDs
         description.isPrivate = true
         description.isExclusive = true
         description.isMixdown = true
@@ -46,6 +48,7 @@ final class AudioTapManager {
         guard isRunning else { return }
         AudioHardwareDestroyProcessTap(tapID)
         tapID = AudioObjectID(kAudioObjectUnknown)
+        tappedProcessCount = 0
     }
 
     deinit {
