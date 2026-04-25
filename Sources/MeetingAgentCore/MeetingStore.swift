@@ -42,6 +42,7 @@ public final class MeetingStore {
             audioURL: directory.appendingPathComponent("audio.wav"),
             transcriptURL: directory.appendingPathComponent("transcript.txt"),
             transcriptJSONURL: directory.appendingPathComponent("transcript.json"),
+            summaryURL: directory.appendingPathComponent("summary.md"),
             diagnosticsURL: directory.appendingPathComponent("diagnostics.json")
         )
         try save(record)

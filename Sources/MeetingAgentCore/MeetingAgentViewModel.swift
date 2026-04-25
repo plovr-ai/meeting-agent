@@ -12,6 +12,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let store: MeetingStore
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
+    private let exportService: MeetingExportService
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
 
@@ -21,11 +22,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechLocaleIdentifier: String = Locale.current.identifier,
         speechProvider: SpeechProvider = .whisper,
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
-        speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore()
+        speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
+        exportService: MeetingExportService = MeetingExportService()
     ) {
         self.store = store
         self.speechConfigurationStore = speechConfigurationStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
+        self.exportService = exportService
         if let speechConfiguration {
             self.speechConfiguration = speechConfiguration
         } else if speechProvider != .whisper || speechLocaleIdentifier != Locale.current.identifier {
@@ -145,6 +148,46 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingID = id
     }
 
+    public func exportTranscript(for meetingID: UUID, to destinationURL: URL) throws {
+        try export("Transcript", for: meetingID) { record in
+            try exportService.exportTranscript(for: record, to: destinationURL)
+        }
+    }
+
+    public func exportSummary(for meetingID: UUID, to destinationURL: URL) throws {
+        try export("Summary", for: meetingID) { record in
+            try exportService.exportSummary(for: record, to: destinationURL)
+        }
+    }
+
+    public func exportMeetingData(for meetingID: UUID, to destinationURL: URL) throws {
+        try export("Meeting data", for: meetingID) { record in
+            try exportService.exportMeetingData(for: record, to: destinationURL)
+        }
+    }
+
+    public func exportReadinessReport(for meetingID: UUID, to destinationURL: URL) throws {
+        try export("Readiness report", for: meetingID) { record in
+            try exportService.exportReadinessReport(for: record, to: destinationURL)
+        }
+    }
+
+    public func summaryTextForClipboard(for meetingID: UUID) throws -> String {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else {
+            let error = MeetingExportError.missingArtifact("meeting")
+            statusText = "Copy summary failed: \(Self.errorMessage(error))"
+            throw error
+        }
+        do {
+            let summary = try exportService.summaryText(for: record)
+            statusText = "Summary copied"
+            return summary
+        } catch {
+            statusText = "Copy summary failed: \(Self.errorMessage(error))"
+            throw error
+        }
+    }
+
     public func retryTranscription(for meetingID: UUID) async {
         guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else { return }
         var record = meetings[index]
@@ -254,5 +297,29 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func persistSpeechConfiguration() {
         try? speechConfigurationStore.save(speechConfiguration)
+    }
+
+    private func export(_ label: String, for meetingID: UUID, operation: (MeetingRecord) throws -> Void) throws {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else {
+            let error = MeetingExportError.missingArtifact("meeting")
+            statusText = "\(label) export failed: \(Self.errorMessage(error))"
+            throw error
+        }
+
+        do {
+            try operation(record)
+            statusText = "\(label) exported"
+        } catch {
+            statusText = "\(label) export failed: \(Self.errorMessage(error))"
+            throw error
+        }
+    }
+
+    private static func errorMessage(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return String(describing: error)
     }
 }
