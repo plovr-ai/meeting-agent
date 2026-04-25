@@ -160,7 +160,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
     private var chunkFrames: [AudioFrame] = []
     private var pendingChunkDurationSeconds = 0.0
     private var chunkIndex = 0
-    private var transcriptParts: [String] = []
+    private var transcriptSegments: [TranscriptSegment] = []
     private var isFinished = false
 
     private init(
@@ -216,7 +216,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         isFinished = true
 
         do {
-            guard !chunkFrames.isEmpty || !transcriptParts.isEmpty else {
+            guard !chunkFrames.isEmpty || !transcriptSegments.isEmpty else {
                 throw ProbeError.speechRecognition("Whisper transcription unavailable: no audio frames were captured")
             }
             if !chunkFrames.isEmpty {
@@ -278,8 +278,8 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             try String(contentsOf: outputTextURL, encoding: .utf8)
         )
         if !transcript.isEmpty {
-            transcriptParts.append(transcript)
-            try TranscriptFileWriter(url: transcriptURL).replace(with: transcriptParts.joined(separator: "\n"))
+            transcriptSegments.append(TranscriptSegment(text: transcript))
+            try TranscriptFileWriter(url: transcriptURL).replace(with: TranscriptFormatter.render(transcriptSegments))
         }
 
         chunkFrames.removeAll(keepingCapacity: true)
