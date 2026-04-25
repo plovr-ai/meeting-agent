@@ -153,32 +153,30 @@ struct WhisperSpeechTranscriptionProvider: SpeechTranscriptionProvider {
 final class WhisperCLITranscriber: AudioFrameTranscriber {
     private let transcriptURL: URL
     private let temporaryDirectory: URL
-    private let inputWavURL: URL
-    private let outputBaseURL: URL
-    private let outputTextURL: URL
     private let configuration: WhisperConfiguration
     private let processRunner: WhisperProcessRunning
     private let languageCode: String?
-    private var writer: WavFileWriter?
+    private let chunkDurationSeconds: Double
+    private var chunkFrames: [AudioFrame] = []
+    private var pendingChunkDurationSeconds = 0.0
+    private var chunkIndex = 0
+    private var transcriptParts: [String] = []
     private var isFinished = false
 
     private init(
         transcriptURL: URL,
         temporaryDirectory: URL,
-        inputWavURL: URL,
-        outputBaseURL: URL,
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
-        languageCode: String?
+        languageCode: String?,
+        chunkDurationSeconds: Double
     ) {
         self.transcriptURL = transcriptURL
         self.temporaryDirectory = temporaryDirectory
-        self.inputWavURL = inputWavURL
-        self.outputBaseURL = outputBaseURL
-        outputTextURL = outputBaseURL.appendingPathExtension("txt")
         self.configuration = configuration
         self.processRunner = processRunner
         self.languageCode = languageCode
+        self.chunkDurationSeconds = max(0.001, chunkDurationSeconds)
     }
 
     static func start(
@@ -186,33 +184,31 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         localeIdentifier: String,
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
-        workingDirectory: URL = FileManager.default.temporaryDirectory
+        workingDirectory: URL = FileManager.default.temporaryDirectory,
+        chunkDurationSeconds: Double = 8
     ) throws -> WhisperCLITranscriber {
         let temporaryDirectory = workingDirectory.appendingPathComponent("meeting-agent-whisper-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-        let inputWavURL = temporaryDirectory.appendingPathComponent("input.wav")
-        let outputBaseURL = temporaryDirectory.appendingPathComponent("transcript")
 
         return WhisperCLITranscriber(
             transcriptURL: transcriptURL,
             temporaryDirectory: temporaryDirectory,
-            inputWavURL: inputWavURL,
-            outputBaseURL: outputBaseURL,
             configuration: configuration,
             processRunner: processRunner,
-            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier)
+            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier),
+            chunkDurationSeconds: chunkDurationSeconds
         )
     }
 
     func append(_ frame: AudioFrame) throws {
-        if writer == nil {
-            writer = try WavFileWriter(
-                url: inputWavURL,
-                sampleRate: UInt32(frame.sampleRate.rounded()),
-                channelCount: UInt16(frame.channelCount)
-            )
+        guard !isFinished else { return }
+
+        chunkFrames.append(frame)
+        pendingChunkDurationSeconds += Self.durationSeconds(for: frame)
+
+        if pendingChunkDurationSeconds >= chunkDurationSeconds {
+            try transcribePendingChunk()
         }
-        try writer?.append(frame)
     }
 
     func finish() {
@@ -220,22 +216,12 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         isFinished = true
 
         do {
-            guard let writer else {
+            guard !chunkFrames.isEmpty || !transcriptParts.isEmpty else {
                 throw ProbeError.speechRecognition("Whisper transcription unavailable: no audio frames were captured")
             }
-            try writer.close()
-            try processRunner.run(
-                binaryURL: configuration.binaryURL,
-                modelURL: configuration.modelURL,
-                inputWavURL: inputWavURL,
-                outputBaseURL: outputBaseURL,
-                languageCode: languageCode
-            )
-            guard FileManager.default.fileExists(atPath: outputTextURL.path) else {
-                throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
+            if !chunkFrames.isEmpty {
+                try transcribePendingChunk()
             }
-            let transcript = try String(contentsOf: outputTextURL, encoding: .utf8)
-            try TranscriptFileWriter(url: transcriptURL).replace(with: transcript.trimmingCharacters(in: .newlines))
         } catch {
             try? TranscriptFileWriter(url: transcriptURL).replace(with: failureMessage(for: error))
         }
@@ -254,5 +240,57 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             return String(description.dropFirst(prefix.count))
         }
         return "Whisper transcription unavailable: \(description)"
+    }
+
+    private func transcribePendingChunk() throws {
+        guard !chunkFrames.isEmpty else { return }
+
+        let chunkID = chunkIndex
+        chunkIndex += 1
+
+        let inputWavURL = temporaryDirectory.appendingPathComponent("input-\(chunkID).wav")
+        let outputBaseURL = temporaryDirectory.appendingPathComponent("transcript-\(chunkID)")
+        let outputTextURL = outputBaseURL.appendingPathExtension("txt")
+
+        let firstFrame = chunkFrames[0]
+        let writer = try WavFileWriter(
+            url: inputWavURL,
+            sampleRate: UInt32(firstFrame.sampleRate.rounded()),
+            channelCount: UInt16(firstFrame.channelCount)
+        )
+        for frame in chunkFrames {
+            try writer.append(frame)
+        }
+        try writer.close()
+
+        try processRunner.run(
+            binaryURL: configuration.binaryURL,
+            modelURL: configuration.modelURL,
+            inputWavURL: inputWavURL,
+            outputBaseURL: outputBaseURL,
+            languageCode: languageCode
+        )
+        guard FileManager.default.fileExists(atPath: outputTextURL.path) else {
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
+        }
+
+        let transcript = try String(contentsOf: outputTextURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !transcript.isEmpty {
+            transcriptParts.append(transcript)
+            try TranscriptFileWriter(url: transcriptURL).replace(with: transcriptParts.joined(separator: "\n"))
+        }
+
+        chunkFrames.removeAll(keepingCapacity: true)
+        pendingChunkDurationSeconds = 0
+        try? FileManager.default.removeItem(at: inputWavURL)
+        try? FileManager.default.removeItem(at: outputTextURL)
+    }
+
+    private static func durationSeconds(for frame: AudioFrame) -> Double {
+        let bytesPerFrame = max(1, frame.channelCount) * MemoryLayout<Int16>.size
+        let frameCount = frame.pcm.count / bytesPerFrame
+        guard frame.sampleRate > 0 else { return 0 }
+        return Double(frameCount) / frame.sampleRate
     }
 }

@@ -162,6 +162,32 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertNotNil(runner.inputWavURL)
     }
 
+    func testTranscriberRunsWhisperBeforeFinishWhenChunkThresholdIsReached() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-streaming-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = SequencedWhisperProcessRunner(outputs: ["first chunk\n"])
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory,
+            chunkDurationSeconds: 0.001
+        )
+
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
+
+        XCTAssertEqual(runner.runCount, 1)
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "first chunk\n")
+    }
+
     func testTranscriberWritesFailureReasonWhenRunnerFails() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -263,6 +289,27 @@ private final class OutputWritingWhisperProcessRunner: WhisperProcessRunning {
         self.inputWavURL = inputWavURL
         self.languageCode = languageCode
         try outputText.write(to: outputBaseURL.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+private final class SequencedWhisperProcessRunner: WhisperProcessRunning {
+    private var outputs: [String]
+    private(set) var runCount = 0
+
+    init(outputs: [String]) {
+        self.outputs = outputs
+    }
+
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws {
+        runCount += 1
+        let output = outputs.isEmpty ? "" : outputs.removeFirst()
+        try output.write(to: outputBaseURL.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
     }
 }
 
