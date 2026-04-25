@@ -64,6 +64,26 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(configuration.modelURL, modelURL)
     }
 
+    func testConfigurationFindsBinaryOnPathWhenEnvironmentVariableIsUnset() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-config-path-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binURL = directory.appendingPathComponent("whisper-cli")
+        let modelURL = directory.appendingPathComponent("ggml-small.bin")
+        FileManager.default.createFile(atPath: binURL.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binURL.path)
+
+        let configuration = try WhisperConfiguration.fromEnvironment([
+            "PATH": directory.path,
+            "MEETING_AGENT_WHISPER_MODEL": modelURL.path
+        ], fileManager: .default)
+
+        XCTAssertEqual(configuration.binaryURL, binURL)
+        XCTAssertEqual(configuration.modelURL, modelURL)
+    }
+
     func testProcessRunnerBuildsExpectedArgumentsWithLanguage() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

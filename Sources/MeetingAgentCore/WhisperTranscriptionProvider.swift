@@ -6,12 +6,20 @@ struct WhisperConfiguration: Equatable {
 
     static func fromAppConfiguration(
         _ configuration: SpeechTranscriptionConfiguration,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) throws -> WhisperConfiguration {
-        guard let binaryPath = configuration.whisperBinaryPath else {
+        guard let binaryPath = WhisperConfigurationResolver.binaryPath(
+            explicitPath: configuration.whisperBinaryPath,
+            environment: environment,
+            fileManager: fileManager
+        ) else {
             throw unavailable("Whisper binary path is not configured")
         }
-        guard let modelPath = configuration.whisperModelPath else {
+        guard let modelPath = WhisperConfigurationResolver.modelPath(
+            explicitPath: configuration.whisperModelPath,
+            environment: environment
+        ) else {
             throw unavailable("Whisper model path is not configured")
         }
         return try validated(binaryPath: binaryPath, modelPath: modelPath, fileManager: fileManager)
@@ -21,10 +29,17 @@ struct WhisperConfiguration: Equatable {
         _ environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) throws -> WhisperConfiguration {
-        guard let binaryPath = nonBlank(environment["MEETING_AGENT_WHISPER_BIN"]) else {
+        guard let binaryPath = WhisperConfigurationResolver.binaryPath(
+            explicitPath: nil,
+            environment: environment,
+            fileManager: fileManager
+        ) else {
             throw unavailable("MEETING_AGENT_WHISPER_BIN is not set")
         }
-        guard let modelPath = nonBlank(environment["MEETING_AGENT_WHISPER_MODEL"]) else {
+        guard let modelPath = WhisperConfigurationResolver.modelPath(
+            explicitPath: nil,
+            environment: environment
+        ) else {
             throw unavailable("MEETING_AGENT_WHISPER_MODEL is not set")
         }
 
@@ -64,6 +79,51 @@ struct WhisperConfiguration: Equatable {
 
     private static func unavailable(_ reason: String) -> ProbeError {
         .speechRecognition("Whisper transcription unavailable: \(reason)")
+    }
+}
+
+enum WhisperConfigurationResolver {
+    static func binaryPath(
+        explicitPath: String?,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> String? {
+        if let explicitPath = nonBlank(explicitPath) {
+            return explicitPath
+        }
+        if let environmentPath = nonBlank(environment["MEETING_AGENT_WHISPER_BIN"]) {
+            return environmentPath
+        }
+        return executablePath(named: "whisper-cli", pathValue: environment["PATH"], fileManager: fileManager)
+    }
+
+    static func modelPath(
+        explicitPath: String?,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        nonBlank(explicitPath) ?? nonBlank(environment["MEETING_AGENT_WHISPER_MODEL"])
+    }
+
+    private static func executablePath(
+        named executableName: String,
+        pathValue: String?,
+        fileManager: FileManager
+    ) -> String? {
+        guard let pathValue = nonBlank(pathValue) else { return nil }
+        for directory in pathValue.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(executableName).path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 

@@ -30,12 +30,22 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         self.whisperModelPath = Self.normalized(whisperModelPath)
     }
 
-    public func validationStatus(fileManager: FileManager = .default) -> SpeechConfigurationValidationStatus {
+    public func validationStatus(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> SpeechConfigurationValidationStatus {
         guard provider == .whisper else { return .available }
-        guard let whisperBinaryPath else {
+        guard let whisperBinaryPath = WhisperConfigurationResolver.binaryPath(
+            explicitPath: whisperBinaryPath,
+            environment: environment,
+            fileManager: fileManager
+        ) else {
             return .unavailable("Whisper binary path is not configured")
         }
-        guard let whisperModelPath else {
+        guard let whisperModelPath = WhisperConfigurationResolver.modelPath(
+            explicitPath: whisperModelPath,
+            environment: environment
+        ) else {
             return .unavailable("Whisper model path is not configured")
         }
 

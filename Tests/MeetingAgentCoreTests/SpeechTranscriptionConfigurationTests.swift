@@ -11,7 +11,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            configuration.validationStatus(fileManager: .default),
+            configuration.validationStatus(environment: [:], fileManager: .default),
             .unavailable("Whisper binary path is not configured")
         )
     }
@@ -36,6 +36,39 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
 
         XCTAssertEqual(configuration.validationStatus(fileManager: .default), .available)
         XCTAssertEqual(try WhisperConfiguration.fromAppConfiguration(configuration, fileManager: .default).binaryURL, binaryURL)
+    }
+
+    func testWhisperValidationFindsBinaryOnPathWhenNotExplicitlyConfigured() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("speech-config-path-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binaryURL = directory.appendingPathComponent("whisper-cli")
+        let modelURL = directory.appendingPathComponent("ggml-small.bin")
+        FileManager.default.createFile(atPath: binaryURL.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: modelURL.path
+        )
+        let environment = ["PATH": directory.path]
+
+        XCTAssertEqual(
+            configuration.validationStatus(environment: environment, fileManager: .default),
+            .available
+        )
+        XCTAssertEqual(
+            try WhisperConfiguration.fromAppConfiguration(
+                configuration,
+                environment: environment,
+                fileManager: .default
+            ).binaryURL,
+            binaryURL
+        )
     }
 
     func testLocalProviderDoesNotRequireWhisperPaths() {
