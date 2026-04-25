@@ -1,0 +1,42 @@
+import XCTest
+@testable import MeetingAgentCore
+
+final class MeetingSummaryTests: XCTestCase {
+    func testMeetingSummaryEncodesAndDecodes() throws {
+        let summary = MeetingSummary(
+            overview: "The team aligned on launch scope.",
+            keyTopics: ["Launch"],
+            decisions: [
+                MeetingDecision(
+                    description: "Approved the launch date.",
+                    participants: ["User A"],
+                    sourceSegmentIDs: ["segment-1"],
+                    confidence: 0.8
+                )
+            ],
+            actionItems: [
+                MeetingActionItem(
+                    description: "Follow up with legal.",
+                    owner: "User B",
+                    dueDate: nil,
+                    sourceSegmentIDs: ["segment-2"],
+                    confidence: 0.7
+                )
+            ],
+            openQuestions: ["Can support staff the launch?"],
+            risks: ["Legal review may delay launch."],
+            followUps: ["Schedule launch review."],
+            language: "en-US",
+            sourceSegmentIDs: ["segment-1", "segment-2"],
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            provider: "extractive-local",
+            status: .succeeded,
+            failureReason: nil
+        )
+
+        let data = try JSONEncoder.meetingAgent.encode(summary)
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingSummary.self, from: data)
+
+        XCTAssertEqual(decoded, summary)
+    }
+}

@@ -15,6 +15,8 @@ final class MeetingRecordTests: XCTestCase {
             transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
             transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json"),
             summaryURL: URL(fileURLWithPath: "/tmp/summary.md"),
+            summaryJSONURL: URL(fileURLWithPath: "/tmp/summary.json"),
+            summaryMarkdownURL: URL(fileURLWithPath: "/tmp/summary.md"),
             transcriptionStatus: .transcribed,
             transcriptionFailureReason: nil,
             speechProvider: .whisper,
@@ -95,5 +97,7 @@ final class MeetingRecordTests: XCTestCase {
         let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
 
         XCTAssertNil(decoded.summaryURL)
+        XCTAssertNil(decoded.summaryJSONURL)
+        XCTAssertNil(decoded.summaryMarkdownURL)
     }
 }
