@@ -43,6 +43,8 @@ public final class MeetingStore {
             transcriptURL: directory.appendingPathComponent("transcript.txt"),
             transcriptJSONURL: directory.appendingPathComponent("transcript.json"),
             summaryURL: directory.appendingPathComponent("summary.md"),
+            summaryJSONURL: directory.appendingPathComponent("summary.json"),
+            summaryMarkdownURL: directory.appendingPathComponent("summary.md"),
             diagnosticsURL: directory.appendingPathComponent("diagnostics.json")
         )
         try save(record)
@@ -72,7 +74,17 @@ public final class MeetingStore {
             let metadataURL = directory.appendingPathComponent("metadata.json")
             guard fileManager.fileExists(atPath: metadataURL.path) else { return nil }
             let data = try Data(contentsOf: metadataURL)
-            return try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: data)
+            var record = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: data)
+            if record.summaryURL == nil {
+                record.summaryURL = directory.appendingPathComponent("summary.md")
+            }
+            if record.summaryJSONURL == nil {
+                record.summaryJSONURL = directory.appendingPathComponent("summary.json")
+            }
+            if record.summaryMarkdownURL == nil {
+                record.summaryMarkdownURL = record.summaryURL ?? directory.appendingPathComponent("summary.md")
+            }
+            return record
         }
 
         return records.sorted { $0.startedAt > $1.startedAt }

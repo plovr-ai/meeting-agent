@@ -17,6 +17,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var transcriptURL: URL?
     public var transcriptJSONURL: URL?
     public var summaryURL: URL?
+    public var summaryJSONURL: URL?
+    public var summaryMarkdownURL: URL?
     public var diagnosticsURL: URL?
     public var transcriptionStatus: TranscriptionStatus
     public var transcriptionFailureReason: String?
@@ -32,6 +34,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptURL: URL?,
         transcriptJSONURL: URL? = nil,
         summaryURL: URL? = nil,
+        summaryJSONURL: URL? = nil,
+        summaryMarkdownURL: URL? = nil,
         diagnosticsURL: URL? = nil,
         transcriptionStatus: TranscriptionStatus = .notStarted,
         transcriptionFailureReason: String? = nil,
@@ -46,6 +50,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.transcriptURL = transcriptURL
         self.transcriptJSONURL = transcriptJSONURL
         self.summaryURL = summaryURL
+        self.summaryJSONURL = summaryJSONURL
+        self.summaryMarkdownURL = summaryMarkdownURL ?? summaryURL
         self.diagnosticsURL = diagnosticsURL
         self.transcriptionStatus = transcriptionStatus
         self.transcriptionFailureReason = transcriptionFailureReason
@@ -62,6 +68,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case transcriptURL
         case transcriptJSONURL
         case summaryURL
+        case summaryJSONURL
+        case summaryMarkdownURL
         case diagnosticsURL
         case transcriptionStatus
         case transcriptionFailureReason
@@ -79,6 +87,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptURL = try container.decodeIfPresent(URL.self, forKey: .transcriptURL)
         transcriptJSONURL = try container.decodeIfPresent(URL.self, forKey: .transcriptJSONURL)
         summaryURL = try container.decodeIfPresent(URL.self, forKey: .summaryURL)
+        summaryJSONURL = try container.decodeIfPresent(URL.self, forKey: .summaryJSONURL)
+        summaryMarkdownURL = try container.decodeIfPresent(URL.self, forKey: .summaryMarkdownURL) ?? summaryURL
         diagnosticsURL = try container.decodeIfPresent(URL.self, forKey: .diagnosticsURL)
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
         transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)

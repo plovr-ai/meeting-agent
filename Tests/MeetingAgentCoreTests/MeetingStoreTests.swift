@@ -19,6 +19,8 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(created.record.transcriptURL?.lastPathComponent, "transcript.txt")
         XCTAssertEqual(created.record.transcriptJSONURL?.lastPathComponent, "transcript.json")
         XCTAssertEqual(created.record.summaryURL?.lastPathComponent, "summary.md")
+        XCTAssertEqual(created.record.summaryJSONURL?.lastPathComponent, "summary.json")
+        XCTAssertEqual(created.record.summaryMarkdownURL?.lastPathComponent, "summary.md")
         XCTAssertEqual(created.record.diagnosticsURL?.lastPathComponent, "diagnostics.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.directory.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.metadataURL.path))
