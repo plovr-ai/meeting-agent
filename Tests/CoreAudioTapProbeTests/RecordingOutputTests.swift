@@ -89,9 +89,15 @@ final class RecordingOutputTests: XCTestCase {
         XCTAssertEqual(options.speechProvider, .local)
     }
 
+    func testSpeechProviderCanBeConfiguredToWhisper() throws {
+        let options = try ProbeOptions(arguments: ["--seconds", "5", "--stt-provider", "whisper"])
+
+        XCTAssertEqual(options.speechProvider, .whisper)
+    }
+
     func testUnknownSpeechProviderIsRejected() {
         XCTAssertThrowsError(try ProbeOptions(arguments: ["--seconds", "5", "--stt-provider", "openai"])) { error in
-            XCTAssertEqual(String(describing: error), "Invalid arguments: Unsupported --stt-provider openai. Supported providers: local")
+            XCTAssertEqual(String(describing: error), "Invalid arguments: Unsupported --stt-provider openai. Supported providers: local, whisper")
         }
     }
 

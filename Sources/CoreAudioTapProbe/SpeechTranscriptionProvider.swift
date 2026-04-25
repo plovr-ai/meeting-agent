@@ -2,9 +2,10 @@ import Foundation
 
 enum SpeechProvider: String, Equatable {
     case local
+    case whisper
 
     static var supportedValuesDescription: String {
-        "local"
+        "local, whisper"
     }
 }
 
@@ -33,6 +34,8 @@ enum SpeechTranscriptionProviderFactory {
     static func provider(for provider: SpeechProvider) -> SpeechTranscriptionProvider {
         switch provider {
         case .local:
+            return LocalSpeechTranscriptionProvider()
+        case .whisper:
             return LocalSpeechTranscriptionProvider()
         }
     }
