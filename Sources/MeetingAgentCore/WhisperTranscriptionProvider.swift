@@ -185,7 +185,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
         workingDirectory: URL = FileManager.default.temporaryDirectory,
-        chunkDurationSeconds: Double = 8
+        chunkDurationSeconds: Double = 3
     ) throws -> WhisperCLITranscriber {
         let temporaryDirectory = workingDirectory.appendingPathComponent("meeting-agent-whisper-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
@@ -274,8 +274,9 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
         }
 
-        let transcript = try String(contentsOf: outputTextURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = normalizedTranscript(
+            try String(contentsOf: outputTextURL, encoding: .utf8)
+        )
         if !transcript.isEmpty {
             transcriptParts.append(transcript)
             try TranscriptFileWriter(url: transcriptURL).replace(with: transcriptParts.joined(separator: "\n"))
@@ -292,5 +293,14 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         let frameCount = frame.pcm.count / bytesPerFrame
         guard frame.sampleRate > 0 else { return 0 }
         return Double(frameCount) / frame.sampleRate
+    }
+
+    private func normalizedTranscript(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { $0.caseInsensitiveCompare("[BLANK_AUDIO]") != .orderedSame }
+            .joined(separator: "\n")
     }
 }

@@ -188,6 +188,32 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "first chunk\n")
     }
 
+    func testTranscriberFiltersBlankAudioMarker() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-blank-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = SequencedWhisperProcessRunner(outputs: ["hello\n", "[BLANK_AUDIO]\n"])
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory,
+            chunkDurationSeconds: 0.001
+        )
+
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
+        try transcriber.append(AudioFrame(pcm: Data([0x00, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 2))
+
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "hello\n")
+    }
+
     func testTranscriberWritesFailureReasonWhenRunnerFails() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
