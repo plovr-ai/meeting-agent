@@ -229,19 +229,26 @@ enum WhisperFileTranscriber {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
         }
 
-        let transcript = normalizedTranscript(try String(contentsOf: outputTextURL, encoding: .utf8))
-        try TranscriptFileWriter(url: transcriptURL).replace(
-            with: transcript.isEmpty ? "" : TranscriptFormatter.render([TranscriptSegment(text: transcript)])
-        )
+        let transcriptLines = normalizedTranscriptLines(try String(contentsOf: outputTextURL, encoding: .utf8))
+        let segments = transcriptLines.enumerated().map { lineIndex, text in
+            TranscriptSegment(
+                id: "whisper-retry-\(lineIndex)",
+                text: text,
+                language: localeIdentifier,
+                sourceProvider: "whisper",
+                isFinal: true,
+                timingSource: .unavailable
+            )
+        }
+        try TranscriptFileWriter(url: transcriptURL).replace(with: segments)
     }
 
-    private static func normalizedTranscript(_ text: String) -> String {
+    private static func normalizedTranscriptLines(_ text: String) -> [String] {
         text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { $0.caseInsensitiveCompare("[BLANK_AUDIO]") != .orderedSame }
-            .joined(separator: "\n")
     }
 }
 
