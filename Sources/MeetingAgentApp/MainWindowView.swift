@@ -214,97 +214,100 @@ private struct MeetingDetailView: View {
     let regenerateSummary: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let meeting {
-                Text(meeting.name)
-                    .font(.largeTitle)
-                Text(statusText)
-                    .foregroundStyle(.secondary)
-                LabeledContent("Started", value: meeting.startedAt.formatted(date: .abbreviated, time: .standard))
-                if let endedAt = meeting.endedAt {
-                    LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
-                }
-                LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
-                LabeledContent("STT Provider", value: meeting.speechProvider.rawValue)
-                LabeledContent("Language", value: meeting.speechLocaleIdentifier)
-                LabeledContent("Transcription", value: transcriptionStatusText(for: meeting))
-                if let failureReason = meeting.transcriptionFailureReason {
-                    Text(failureReason)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-                Button("Stop Recording") {
-                    stopRecording()
-                }
-                .disabled(!isRecording)
-                Button("Retry Transcription") {
-                    retryTranscription(meeting)
-                }
-                .disabled(isRecording || meeting.audioURL == nil)
-                Divider()
-                Text("Exports")
-                    .font(.headline)
-                HStack {
-                    Button {
-                        copySummary(meeting)
-                    } label: {
-                        Label("Copy Summary", systemImage: "doc.on.clipboard")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let meeting {
+                    Text(meeting.name)
+                        .font(.largeTitle)
+                    Text(statusText)
+                        .foregroundStyle(.secondary)
+                    LabeledContent("Started", value: meeting.startedAt.formatted(date: .abbreviated, time: .standard))
+                    if let endedAt = meeting.endedAt {
+                        LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
                     }
-                    .disabled(isRecording || meeting.summaryURL == nil)
+                    LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
+                    LabeledContent("STT Provider", value: meeting.speechProvider.rawValue)
+                    LabeledContent("Language", value: meeting.speechLocaleIdentifier)
+                    LabeledContent("Transcription", value: transcriptionStatusText(for: meeting))
+                    if let failureReason = meeting.transcriptionFailureReason {
+                        Text(failureReason)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                    HStack(spacing: 12) {
+                        Button("Stop Recording") {
+                            stopRecording()
+                        }
+                        .disabled(!isRecording)
+                        Button("Retry Transcription") {
+                            retryTranscription(meeting)
+                        }
+                        .disabled(isRecording || meeting.audioURL == nil)
+                    }
+                    Divider()
+                    Text("Exports")
+                        .font(.headline)
+                    HStack {
+                        Button {
+                            copySummary(meeting)
+                        } label: {
+                            Label("Copy Summary", systemImage: "doc.on.clipboard")
+                        }
+                        .disabled(isRecording || meeting.summaryURL == nil)
 
-                    Button {
-                        exportTranscript(meeting)
-                    } label: {
-                        Label("Transcript", systemImage: "doc.text")
-                    }
-                    .disabled(isRecording || meeting.transcriptURL == nil)
+                        Button {
+                            exportTranscript(meeting)
+                        } label: {
+                            Label("Transcript", systemImage: "doc.text")
+                        }
+                        .disabled(isRecording || meeting.transcriptURL == nil)
 
-                    Button {
-                        exportSummary(meeting)
-                    } label: {
-                        Label("Summary", systemImage: "text.badge.checkmark")
+                        Button {
+                            exportSummary(meeting)
+                        } label: {
+                            Label("Summary", systemImage: "text.badge.checkmark")
+                        }
+                        .disabled(isRecording || meeting.summaryURL == nil)
                     }
-                    .disabled(isRecording || meeting.summaryURL == nil)
-                }
-                HStack {
-                    Button {
-                        exportMeetingData(meeting)
-                    } label: {
-                        Label("Meeting JSON", systemImage: "curlybraces")
-                    }
+                    HStack {
+                        Button {
+                            exportMeetingData(meeting)
+                        } label: {
+                            Label("Meeting JSON", systemImage: "curlybraces")
+                        }
 
-                    Button {
-                        exportReadinessReport(meeting)
-                    } label: {
-                        Label("Readiness Report", systemImage: "checklist")
+                        Button {
+                            exportReadinessReport(meeting)
+                        } label: {
+                            Label("Readiness Report", systemImage: "checklist")
+                        }
                     }
-                }
-                Divider()
-                Text("Summary")
-                    .font(.headline)
-                summaryView(for: meeting)
-                Button("Regenerate Summary") {
-                    regenerateSummary(meeting.id)
-                }
-                .disabled(isRecording)
-                Divider()
-                Text("Transcript")
-                    .font(.headline)
-                ScrollView {
+                    Divider()
+                    Text("Summary")
+                        .font(.headline)
+                    summaryView(for: meeting)
+                    Button("Regenerate Summary") {
+                        regenerateSummary(meeting.id)
+                    }
+                    .disabled(isRecording)
+                    Divider()
+                    Text("Transcript")
+                        .font(.headline)
                     Text(transcriptText(for: meeting))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
+                } else {
+                    ContentUnavailableView(
+                        "No Meeting Selected",
+                        systemImage: "waveform",
+                        description: Text("Detected and recorded meetings will appear here.")
+                    )
                 }
-            } else {
-                ContentUnavailableView(
-                    "No Meeting Selected",
-                    systemImage: "waveform",
-                    description: Text("Detected and recorded meetings will appear here.")
-                )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
         }
-        .padding(20)
     }
 
     private func transcriptText(for meeting: MeetingRecord) -> String {
