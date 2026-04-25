@@ -48,7 +48,14 @@ final class MeetingAgentViewModelTests: XCTestCase {
     }
 
     func testSpeechLocaleCanBeConfiguredForAppRecording() {
-        let viewModel = MeetingAgentViewModel(speechLocaleIdentifier: "zh-CN")
+        let viewModel = MeetingAgentViewModel(
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            )
+        )
 
         XCTAssertEqual(viewModel.speechLocaleIdentifier, "zh-CN")
         XCTAssertEqual(viewModel.speechProvider, .whisper)
@@ -56,6 +63,53 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.updateSpeechLocaleIdentifier(" ja-JP ")
 
         XCTAssertEqual(viewModel.speechLocaleIdentifier, "ja-JP")
+    }
+
+    func testSpeechConfigurationCanBeUpdatedForAppRecording() {
+        let suiteName = "meeting-vm-settings-\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let viewModel = MeetingAgentViewModel(
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            speechConfigurationStore: SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        )
+
+        viewModel.updateSpeechProvider(.local)
+        viewModel.updateSpeechLocaleIdentifier(" zh-CN ")
+        viewModel.updateWhisperBinaryPath(" /opt/homebrew/bin/whisper-cli ")
+        viewModel.updateWhisperModelPath(" /Users/allan/models/ggml-small.bin ")
+
+        XCTAssertEqual(viewModel.speechConfiguration.provider, .local)
+        XCTAssertEqual(viewModel.speechConfiguration.localeIdentifier, "zh-CN")
+        XCTAssertEqual(viewModel.speechConfiguration.whisperBinaryPath, "/opt/homebrew/bin/whisper-cli")
+        XCTAssertEqual(viewModel.speechConfiguration.whisperModelPath, "/Users/allan/models/ggml-small.bin")
+    }
+
+    func testExplicitSpeechInitializerArgumentsOverridePersistedSettings() throws {
+        let suiteName = "meeting-vm-settings-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        try configurationStore.save(SpeechTranscriptionConfiguration(
+            provider: .local,
+            localeIdentifier: "ja-JP",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil
+        ))
+
+        let viewModel = MeetingAgentViewModel(
+            speechLocaleIdentifier: "zh-CN",
+            speechProvider: .whisper,
+            speechConfigurationStore: configurationStore
+        )
+
+        XCTAssertEqual(viewModel.speechProvider, .whisper)
+        XCTAssertEqual(viewModel.speechLocaleIdentifier, "zh-CN")
     }
 }
 

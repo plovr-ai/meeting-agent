@@ -4,6 +4,19 @@ struct WhisperConfiguration: Equatable {
     let binaryURL: URL
     let modelURL: URL
 
+    static func fromAppConfiguration(
+        _ configuration: SpeechTranscriptionConfiguration,
+        fileManager: FileManager = .default
+    ) throws -> WhisperConfiguration {
+        guard let binaryPath = configuration.whisperBinaryPath else {
+            throw unavailable("Whisper binary path is not configured")
+        }
+        guard let modelPath = configuration.whisperModelPath else {
+            throw unavailable("Whisper model path is not configured")
+        }
+        return try validated(binaryPath: binaryPath, modelPath: modelPath, fileManager: fileManager)
+    }
+
     static func fromEnvironment(
         _ environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
@@ -15,6 +28,14 @@ struct WhisperConfiguration: Equatable {
             throw unavailable("MEETING_AGENT_WHISPER_MODEL is not set")
         }
 
+        return try validated(binaryPath: binaryPath, modelPath: modelPath, fileManager: fileManager)
+    }
+
+    private static func validated(
+        binaryPath: String,
+        modelPath: String,
+        fileManager: FileManager
+    ) throws -> WhisperConfiguration {
         let binaryURL = URL(fileURLWithPath: binaryPath)
         let modelURL = URL(fileURLWithPath: modelPath)
 
@@ -138,15 +159,89 @@ struct WhisperProcessRunner: WhisperProcessRunning {
 
 struct WhisperSpeechTranscriptionProvider: SpeechTranscriptionProvider {
     let provider: SpeechProvider = .whisper
+    private let configuration: WhisperConfiguration?
+    private let processRunner: WhisperProcessRunning
+
+    init(
+        appConfiguration: SpeechTranscriptionConfiguration = .default,
+        processRunner: WhisperProcessRunning = WhisperProcessRunner()
+    ) {
+        self.configuration = try? WhisperConfiguration.fromAppConfiguration(appConfiguration)
+        self.processRunner = processRunner
+    }
+
+    init(
+        configuration: WhisperConfiguration,
+        processRunner: WhisperProcessRunning = WhisperProcessRunner()
+    ) {
+        self.configuration = configuration
+        self.processRunner = processRunner
+    }
 
     func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber {
-        let configuration = try WhisperConfiguration.fromEnvironment()
+        let configuration = try configuration ?? WhisperConfiguration.fromEnvironment()
         return try WhisperCLITranscriber.start(
             transcriptURL: transcriptURL,
             localeIdentifier: localeIdentifier,
             configuration: configuration,
-            processRunner: WhisperProcessRunner()
+            processRunner: processRunner
         )
+    }
+
+    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
+        guard let inputAudioURL = context.inputAudioURL else {
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: no audio file is available for retry")
+        }
+        let configuration = try configuration ?? WhisperConfiguration.fromEnvironment()
+        try WhisperFileTranscriber.transcribe(
+            inputAudioURL: inputAudioURL,
+            transcriptURL: context.transcriptURL,
+            localeIdentifier: context.localeIdentifier,
+            configuration: configuration,
+            processRunner: processRunner
+        )
+    }
+}
+
+enum WhisperFileTranscriber {
+    static func transcribe(
+        inputAudioURL: URL,
+        transcriptURL: URL,
+        localeIdentifier: String,
+        configuration: WhisperConfiguration,
+        processRunner: WhisperProcessRunning,
+        workingDirectory: URL = FileManager.default.temporaryDirectory
+    ) throws {
+        let temporaryDirectory = workingDirectory.appendingPathComponent("meeting-agent-whisper-retry-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let outputBaseURL = temporaryDirectory.appendingPathComponent("transcript")
+        let outputTextURL = outputBaseURL.appendingPathExtension("txt")
+        try processRunner.run(
+            binaryURL: configuration.binaryURL,
+            modelURL: configuration.modelURL,
+            inputWavURL: inputAudioURL,
+            outputBaseURL: outputBaseURL,
+            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier)
+        )
+        guard FileManager.default.fileExists(atPath: outputTextURL.path) else {
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
+        }
+
+        let transcript = normalizedTranscript(try String(contentsOf: outputTextURL, encoding: .utf8))
+        try TranscriptFileWriter(url: transcriptURL).replace(
+            with: transcript.isEmpty ? "" : TranscriptFormatter.render([TranscriptSegment(text: transcript)])
+        )
+    }
+
+    private static func normalizedTranscript(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { $0.caseInsensitiveCompare("[BLANK_AUDIO]") != .orderedSame }
+            .joined(separator: "\n")
     }
 }
 
@@ -164,6 +259,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
     private var chunkIndex = 0
     private var transcriptSegments: [TranscriptSegment] = []
     private var isFinished = false
+    private(set) var failureReason: String?
 
     private init(
         transcriptURL: URL,
@@ -228,7 +324,9 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
                 try transcribePendingChunk()
             }
         } catch {
-            try? TranscriptFileWriter(url: transcriptURL).replace(with: failureMessage(for: error))
+            let message = failureMessage(for: error)
+            failureReason = message
+            try? TranscriptFileWriter(url: transcriptURL).replace(with: message)
         }
 
         try? FileManager.default.removeItem(at: temporaryDirectory)

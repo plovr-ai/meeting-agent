@@ -7,6 +7,17 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 12) {
+                Picker("STT Provider", selection: Binding(
+                    get: { viewModel.speechProvider },
+                    set: { viewModel.updateSpeechProvider($0) }
+                )) {
+                    ForEach(SpeechProvider.allCases, id: \.self) { provider in
+                        Text(provider.rawValue).tag(provider)
+                    }
+                }
+                .disabled(viewModel.isRecording)
+                .padding([.horizontal, .top], 12)
+
                 TextField(
                     "STT Locale",
                     text: Binding(
@@ -16,7 +27,34 @@ struct MainWindowView: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .disabled(viewModel.isRecording)
-                .padding([.horizontal, .top], 12)
+                .padding(.horizontal, 12)
+
+                TextField(
+                    "Whisper Binary Path",
+                    text: Binding(
+                        get: { viewModel.speechConfiguration.whisperBinaryPath ?? "" },
+                        set: { viewModel.updateWhisperBinaryPath($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isRecording)
+                .padding(.horizontal, 12)
+
+                TextField(
+                    "Whisper Model Path",
+                    text: Binding(
+                        get: { viewModel.speechConfiguration.whisperModelPath ?? "" },
+                        set: { viewModel.updateWhisperModelPath($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isRecording)
+                .padding(.horizontal, 12)
+
+                Text(configurationStatusText)
+                    .font(.caption)
+                    .foregroundStyle(configurationStatusColor)
+                    .padding(.horizontal, 12)
 
                 List(selection: Binding(
                     get: { viewModel.selectedMeetingID },
@@ -42,6 +80,11 @@ struct MainWindowView: View {
                 isRecording: viewModel.isRecording,
                 stopRecording: {
                     viewModel.stopRecording()
+                },
+                retryTranscription: { meeting in
+                    Task {
+                        await viewModel.retryTranscription(for: meeting.id)
+                    }
                 }
             )
         }
@@ -69,6 +112,24 @@ struct MainWindowView: View {
             Text("\(target.displayName) detected. Start recording?")
         }
     }
+
+    private var configurationStatusText: String {
+        switch viewModel.speechConfigurationStatus {
+        case .available:
+            return "STT configuration available"
+        case .unavailable(let reason):
+            return reason
+        }
+    }
+
+    private var configurationStatusColor: Color {
+        switch viewModel.speechConfigurationStatus {
+        case .available:
+            return .secondary
+        case .unavailable:
+            return .red
+        }
+    }
 }
 
 private struct MeetingDetailView: View {
@@ -76,6 +137,7 @@ private struct MeetingDetailView: View {
     let statusText: String
     let isRecording: Bool
     let stopRecording: () -> Void
+    let retryTranscription: (MeetingRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -89,10 +151,23 @@ private struct MeetingDetailView: View {
                     LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
                 }
                 LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
+                LabeledContent("STT Provider", value: meeting.speechProvider.rawValue)
+                LabeledContent("Language", value: meeting.speechLocaleIdentifier)
+                LabeledContent("Transcription", value: transcriptionStatusText(for: meeting))
+                if let failureReason = meeting.transcriptionFailureReason {
+                    Text(failureReason)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
                 Button("Stop Recording") {
                     stopRecording()
                 }
                 .disabled(!isRecording)
+                Button("Retry Transcription") {
+                    retryTranscription(meeting)
+                }
+                .disabled(isRecording || meeting.audioURL == nil)
                 Divider()
                 Text("Transcript")
                     .font(.headline)
@@ -120,5 +195,20 @@ private struct MeetingDetailView: View {
             return "Transcript will appear here while recording."
         }
         return text
+    }
+
+    private func transcriptionStatusText(for meeting: MeetingRecord) -> String {
+        switch meeting.transcriptionStatus {
+        case .notStarted:
+            return "Not started"
+        case .transcribing:
+            return "Transcribing"
+        case .transcribed:
+            return "Transcribed"
+        case .failed:
+            return "Failed"
+        case .retryRequested:
+            return "Retry requested"
+        }
     }
 }

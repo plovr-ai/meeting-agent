@@ -13,13 +13,33 @@ final class MeetingRecordTests: XCTestCase {
             endedAt: endedAt,
             audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
             transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
-            transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json")
+            transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json"),
+            transcriptionStatus: .transcribed,
+            transcriptionFailureReason: nil,
+            speechProvider: .whisper,
+            speechLocaleIdentifier: "zh-CN"
         )
 
         let data = try JSONEncoder.meetingAgent.encode(record)
         let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: data)
 
         XCTAssertEqual(decoded, record)
+    }
+
+    func testNewMeetingDefaultsToNotStartedTranscription() {
+        let record = MeetingRecord(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            name: "Google Meet",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
+            transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt")
+        )
+
+        XCTAssertEqual(record.transcriptionStatus, .notStarted)
+        XCTAssertNil(record.transcriptionFailureReason)
+        XCTAssertEqual(record.speechProvider, .whisper)
+        XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
     }
 
     func testActiveRecordHasNoEndTime() {
@@ -51,5 +71,9 @@ final class MeetingRecordTests: XCTestCase {
 
         XCTAssertNil(decoded.diagnosticsURL)
         XCTAssertNil(decoded.transcriptJSONURL)
+        XCTAssertEqual(decoded.transcriptionStatus, .notStarted)
+        XCTAssertNil(decoded.transcriptionFailureReason)
+        XCTAssertEqual(decoded.speechProvider, .whisper)
+        XCTAssertEqual(decoded.speechLocaleIdentifier, "en-US")
     }
 }
