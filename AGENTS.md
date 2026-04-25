@@ -4,16 +4,18 @@
 
 This project is intended to become a meeting agent for globalizing companies and their managers. The long-term product goal is to help managers run cross-border meetings by reducing language barriers, translating intent into localized language that sounds natural to local participants, analyzing meeting progress in real time, extracting summaries and decisions, and producing targeted analysis based on key topics and meeting goals. The agent should also help managers respond in the local language with culturally and contextually appropriate phrasing.
 
-The current code is only the first step toward that product. Today, this repository is a Swift Package for `CoreAudioTapProbe`, a macOS command-line prototype focused on system audio capture. It captures audio from a selected running process through Core Audio Process Tap APIs, can write captured audio to `.record/*.wav`, and can use the macOS Speech framework to write a matching `.record/*.txt` transcript.
+The current code is only the first step toward that product. Today, this repository is a Swift Package with a `MeetingAgentApp` macOS app prototype and a `CoreAudioTapProbe` command-line prototype focused on system audio capture. It captures audio from selected meeting processes through Core Audio Process Tap APIs, can write captured audio to WAV, and can use the macOS Speech framework to write a matching transcript.
 
-The package targets macOS 14+ and uses Swift 5.9.
+The package targets macOS 14.2+ and uses Swift 5.9.
 
 ## Repository Layout
 
-- `Package.swift` defines the Swift package, executable target, and test target.
-- `Sources/CoreAudioTapProbe/` contains the executable implementation.
+- `Package.swift` defines the Swift package, core library target, app target, CLI target, and test target.
+- `Sources/MeetingAgentCore/` contains shared meeting, capture, recording, process discovery, and transcription logic.
+- `Sources/MeetingAgentApp/` contains the macOS SwiftUI menu bar app prototype.
+- `Sources/CoreAudioTapProbe/` contains the command-line executable implementation.
 - `Sources/CoreAudioTapProbe/Info.plist` is embedded into the executable through linker flags and contains macOS permission usage strings.
-- `Tests/CoreAudioTapProbeTests/` contains XCTest coverage.
+- `Tests/MeetingAgentCoreTests/` contains XCTest coverage.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` contain historical design and implementation notes.
 - `.record/` is runtime output and must not be committed.
 
@@ -23,12 +25,18 @@ Use these from the repository root:
 
 ```sh
 swift test
+swift build --product MeetingAgentApp
+swift run MeetingAgentApp
+swift build --product CoreAudioTapProbe
 swift run CoreAudioTapProbe --list
 swift run CoreAudioTapProbe --seconds 10
 swift run CoreAudioTapProbe --seconds 10 --wav
 swift run CoreAudioTapProbe --seconds 10 --wav --stt-provider local --stt-locale zh-CN
 swift run CoreAudioTapProbe --pid <PID> --seconds 10 --wav capture.wav
 ```
+
+The app stores user meeting data under `~/Library/Application Support/MeetingAgent/Meetings/`.
+The CLI still writes debug output to `.record/`.
 
 When `--pid` is omitted, the program auto-selects the first preferred running meeting app or common Google Meet browser process. Use `--pid` to override that selection.
 The only implemented STT provider is currently `local`, backed by macOS Speech.
