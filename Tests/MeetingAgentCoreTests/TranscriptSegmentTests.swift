@@ -33,4 +33,12 @@ final class TranscriptSegmentTests: XCTestCase {
 
         XCTAssertEqual(output, "User A: hello")
     }
+
+    func testReplacingCurrentSpeechResultUsesDefaultSpeakerFormat() {
+        let output = TranscriptFormatter.render([
+            TranscriptSegment(text: "current partial result")
+        ])
+
+        XCTAssertEqual(output, "User A: current partial result")
+    }
 }

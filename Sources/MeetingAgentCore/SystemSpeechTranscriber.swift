@@ -74,7 +74,10 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
         let transcriber = SystemSpeechTranscriber(request: request, writer: writer)
         transcriber.task = recognizer.recognitionTask(with: request) { result, error in
             if let result {
-                try? writer.replace(with: result.bestTranscription.formattedString)
+                let transcript = TranscriptFormatter.render([
+                    TranscriptSegment(text: result.bestTranscription.formattedString)
+                ])
+                try? writer.replace(with: transcript)
             }
             if error != nil {
                 try? writer.close()
