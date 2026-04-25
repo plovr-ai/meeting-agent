@@ -61,3 +61,19 @@ When editing a linked worktree with `apply_patch`, use absolute paths or otherwi
 For worktree-based issue fixes, patch absolute paths under the issue worktree.
 
 ---
+
+## [15] Parallel SwiftPM commands in one worktree
+
+**Date**: 2026-04-25
+**Category**: test-mistake
+
+### What went wrong
+Focused `swift test --filter ...` commands were launched in parallel in the same worktree, causing SwiftPM to serialize on the shared `.build` directory and produce noisy waiting output.
+
+### Correct approach
+Run SwiftPM build and test commands one at a time per worktree, or use separate worktrees when true parallel SwiftPM verification is needed.
+
+### How to avoid
+Do not parallelize SwiftPM commands that share the same `.build` directory.
+
+---
