@@ -125,7 +125,10 @@ public final class MeetingRecorder {
         }
     }
 
-    public func stopRecording(at endedAt: Date = Date()) throws -> MeetingRecord? {
+    public func stopRecording(
+        at endedAt: Date = Date(),
+        endedReason: CaptureEndedReason = .saved
+    ) throws -> MeetingRecord? {
         try writer?.close()
         let activeTranscriber = transcriber
         activeTranscriber?.finish()
@@ -133,14 +136,17 @@ public final class MeetingRecorder {
             try markTranscriptionFailed(failureReason)
         }
         captureSession?.stop()
-        diagnosticsTracker?.finish(endedReason: .saved)
+        diagnosticsTracker?.finish(endedReason: endedReason)
         writer = nil
         transcriber = nil
         captureSession = nil
-        return try markStopped(at: endedAt)
+        return try markStopped(at: endedAt, endedReason: endedReason)
     }
 
-    public func markStopped(at endedAt: Date = Date()) throws -> MeetingRecord? {
+    public func markStopped(
+        at endedAt: Date = Date(),
+        endedReason: CaptureEndedReason = .saved
+    ) throws -> MeetingRecord? {
         guard var record = activeRecord else {
             state = .idle
             return nil
@@ -151,7 +157,7 @@ public final class MeetingRecorder {
             record.transcriptionStatus = .transcribed
             record.transcriptionFailureReason = nil
         }
-        diagnosticsTracker?.finish(endedReason: .saved)
+        diagnosticsTracker?.finish(endedReason: endedReason)
         try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
         diagnosticsTracker = nil
         try store.save(record)

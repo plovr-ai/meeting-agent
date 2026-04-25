@@ -105,8 +105,15 @@ struct ProbeMain {
         }
 
         let end = Date().addingTimeInterval(TimeInterval(options.seconds))
+        let processMonitor = MeetingProcessMonitor()
+        var endedReason = CaptureEndedReason.saved
         while Date() < end {
             try await Task.sleep(nanoseconds: 250_000_000)
+            let currentTargets = RunningProcessDiscovery.currentTargets()
+            let targetProcessEnded = processMonitor.hasProcessEnded(processID: target.processID, in: currentTargets)
+            if targetProcessEnded {
+                endedReason = .targetProcessEnded
+            }
             let bufferBacklog = frameBuffer.count
             let droppedFrameCount = frameBuffer.droppedFrameCount
             let frames = frameBuffer.drain()
@@ -117,6 +124,10 @@ struct ProbeMain {
             )
             if frames.isEmpty {
                 log("level=idle frames=0")
+                if targetProcessEnded {
+                    log("Target process ended: \(target.displayName) pid=\(target.processID)")
+                    break
+                }
                 continue
             }
 
@@ -132,11 +143,15 @@ struct ProbeMain {
             }
 
             log("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")
+            if targetProcessEnded {
+                log("Target process ended: \(target.displayName) pid=\(target.processID)")
+                break
+            }
         }
 
         try writer?.close()
         transcriptionFailureIsolator?.finish()
-        diagnosticsTracker.finish(endedReason: .saved)
+        diagnosticsTracker.finish(endedReason: endedReason)
         let diagnostics = diagnosticsTracker.snapshot()
         if let recordingOutput {
             try diagnostics.write(to: recordingOutput.diagnosticsURL)

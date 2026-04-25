@@ -47,6 +47,33 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRecording)
     }
 
+    func testDrainRecordingFramesStopsWhenTargetProcessEnds() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let targets: [AudioCaptureTarget] = []
+        let endedAt = Date(timeIntervalSince1970: 200)
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            processTargetsProvider: { targets }
+        )
+
+        viewModel.setPendingCandidate(target)
+        try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
+
+        viewModel.drainRecordingFrames(endedAt: endedAt)
+
+        XCTAssertEqual(viewModel.meetings.first?.endedAt, endedAt)
+        XCTAssertEqual(viewModel.statusText, "Target process ended: zoom.us")
+        XCTAssertFalse(viewModel.isRecording)
+
+        let data = try Data(contentsOf: XCTUnwrap(viewModel.meetings.first?.diagnosticsURL))
+        let diagnostics = try JSONDecoder.meetingAgent.decode(CaptureDiagnostics.self, from: data)
+        XCTAssertEqual(diagnostics.endedReason, .targetProcessEnded)
+        XCTAssertEqual(diagnostics.status, .targetProcessEnded)
+    }
+
     func testSpeechLocaleCanBeConfiguredForAppRecording() {
         let viewModel = MeetingAgentViewModel(
             speechConfiguration: SpeechTranscriptionConfiguration(

@@ -36,4 +36,12 @@ public final class MeetingProcessMonitor {
         promptedProcessIDs = promptedProcessIDs.intersection(runningProcessIDs)
         ignoredProcessIDs = ignoredProcessIDs.intersection(runningProcessIDs)
     }
+
+    public func isProcessRunning(processID: pid_t, in targets: [AudioCaptureTarget]) -> Bool {
+        targets.contains { $0.processID == processID }
+    }
+
+    public func hasProcessEnded(processID: pid_t, in targets: [AudioCaptureTarget]) -> Bool {
+        !isProcessRunning(processID: processID, in: targets)
+    }
 }
