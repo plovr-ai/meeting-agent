@@ -128,6 +128,89 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
             XCTAssertEqual(String(describing: error), "Speech recognition error: Whisper transcription unavailable: whisper-cli exited with status 2: model failed")
         }
     }
+
+    func testFactoryReturnsWhisperProvider() {
+        let provider = SpeechTranscriptionProviderFactory.provider(for: .whisper)
+
+        XCTAssertEqual(provider.provider, .whisper)
+    }
+
+    func testTranscriberRunsWhisperAndWritesTranscript() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = OutputWritingWhisperProcessRunner(outputText: "hello from whisper\n")
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory
+        )
+
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        transcriber.finish()
+
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "hello from whisper\n")
+        XCTAssertEqual(runner.languageCode, "en")
+        XCTAssertNotNil(runner.inputWavURL)
+    }
+
+    func testTranscriberWritesFailureReasonWhenRunnerFails() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = FailingWhisperProcessRunner()
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "zh-CN",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory
+        )
+
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        transcriber.finish()
+
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: process failed\n")
+    }
+
+    func testTranscriberWritesFailureReasonWhenNoFramesWereCaptured() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = OutputWritingWhisperProcessRunner(outputText: "hello from whisper\n")
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory
+        )
+
+        transcriber.finish()
+
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: no audio frames were captured\n")
+        XCTAssertNil(runner.inputWavURL)
+    }
 }
 
 private final class RecordingWhisperProcessRunner: WhisperProcessRunning {
@@ -158,5 +241,39 @@ private final class RecordingWhisperProcessRunner: WhisperProcessRunning {
         if exitCode != 0 {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: whisper-cli exited with status \(exitCode): \(stderr)")
         }
+    }
+}
+
+private final class OutputWritingWhisperProcessRunner: WhisperProcessRunning {
+    let outputText: String
+    private(set) var inputWavURL: URL?
+    private(set) var languageCode: String?
+
+    init(outputText: String) {
+        self.outputText = outputText
+    }
+
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws {
+        self.inputWavURL = inputWavURL
+        self.languageCode = languageCode
+        try outputText.write(to: outputBaseURL.appendingPathExtension("txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+private struct FailingWhisperProcessRunner: WhisperProcessRunning {
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws {
+        throw ProbeError.speechRecognition("Whisper transcription unavailable: process failed")
     }
 }

@@ -36,7 +36,7 @@ enum SpeechTranscriptionProviderFactory {
         case .local:
             return LocalSpeechTranscriptionProvider()
         case .whisper:
-            return LocalSpeechTranscriptionProvider()
+            return WhisperSpeechTranscriptionProvider()
         }
     }
 }
