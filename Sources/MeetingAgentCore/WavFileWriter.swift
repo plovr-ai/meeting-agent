@@ -1,6 +1,6 @@
 import Foundation
 
-final class WavFileWriter {
+public final class WavFileWriter {
     private let handle: FileHandle
     private let sampleRate: UInt32
     private let channelCount: UInt16
@@ -8,7 +8,7 @@ final class WavFileWriter {
     private var dataByteCount: UInt32 = 0
     private var isClosed = false
 
-    init(url: URL, sampleRate: UInt32, channelCount: UInt16) throws {
+    public init(url: URL, sampleRate: UInt32, channelCount: UInt16) throws {
         self.sampleRate = sampleRate
         self.channelCount = channelCount
 
@@ -17,14 +17,14 @@ final class WavFileWriter {
         try writePlaceholderHeader()
     }
 
-    func append(_ frame: AudioFrame) throws {
+    public func append(_ frame: AudioFrame) throws {
         guard !isClosed else { return }
         try handle.seekToEnd()
         try handle.write(contentsOf: frame.pcm)
         dataByteCount += UInt32(frame.pcm.count)
     }
 
-    func close() throws {
+    public func close() throws {
         guard !isClosed else { return }
         try handle.seek(toOffset: 0)
         try writeHeader(dataSize: dataByteCount)

@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 
-struct RunningProcessDiscovery {
-    static let preferredBundleIDs: Set<String> = [
+public struct RunningProcessDiscovery {
+    public static let preferredBundleIDs: Set<String> = [
         "us.zoom.xos",
         "com.microsoft.teams",
         "com.microsoft.teams2",
@@ -14,7 +14,7 @@ struct RunningProcessDiscovery {
         "com.tencent.meeting"
     ]
 
-    static func currentTargets() -> [AudioCaptureTarget] {
+    public static func currentTargets() -> [AudioCaptureTarget] {
         let apps = NSWorkspace.shared.runningApplications.map {
             RunningAppSnapshot(
                 processID: $0.processIdentifier,
@@ -25,7 +25,7 @@ struct RunningProcessDiscovery {
         return targets(from: apps, currentProcessID: ProcessInfo.processInfo.processIdentifier)
     }
 
-    static func targets(from apps: [RunningAppSnapshot], currentProcessID: pid_t) -> [AudioCaptureTarget] {
+    public static func targets(from apps: [RunningAppSnapshot], currentProcessID: pid_t) -> [AudioCaptureTarget] {
         apps.compactMap { app in
             guard app.processID != currentProcessID else { return nil }
             guard let name = app.displayName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -48,7 +48,7 @@ struct RunningProcessDiscovery {
         }
     }
 
-    static func automaticTarget(from targets: [AudioCaptureTarget]) -> AudioCaptureTarget? {
+    public static func automaticTarget(from targets: [AudioCaptureTarget]) -> AudioCaptureTarget? {
         targets.first { target in
             target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false
         }

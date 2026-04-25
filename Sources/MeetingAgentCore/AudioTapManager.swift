@@ -2,15 +2,17 @@ import CoreAudio
 import Foundation
 
 @available(macOS 14.2, *)
-final class AudioTapManager {
-    private(set) var tapID = AudioObjectID(kAudioObjectUnknown)
-    private(set) var tappedProcessCount = 0
+public final class AudioTapManager {
+    public private(set) var tapID = AudioObjectID(kAudioObjectUnknown)
+    public private(set) var tappedProcessCount = 0
 
-    var isRunning: Bool {
+    public var isRunning: Bool {
         tapID != AudioObjectID(kAudioObjectUnknown)
     }
 
-    func createTap(for target: AudioCaptureTarget) throws -> AudioObjectID {
+    public init() {}
+
+    public func createTap(for target: AudioCaptureTarget) throws -> AudioObjectID {
         guard !isRunning else {
             return tapID
         }
@@ -37,14 +39,14 @@ final class AudioTapManager {
         return createdTapID
     }
 
-    func tapUID() throws -> String {
+    public func tapUID() throws -> String {
         guard isRunning else {
             throw ProbeError.captureNotStarted
         }
         return try CoreAudioHelpers.stringProperty(objectID: tapID, selector: kAudioTapPropertyUID)
     }
 
-    func destroyTap() {
+    public func destroyTap() {
         guard isRunning else { return }
         AudioHardwareDestroyProcessTap(tapID)
         tapID = AudioObjectID(kAudioObjectUnknown)

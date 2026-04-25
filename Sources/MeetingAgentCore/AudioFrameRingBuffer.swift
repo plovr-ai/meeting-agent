@@ -1,15 +1,15 @@
 import Foundation
 
-final class AudioFrameRingBuffer {
+public final class AudioFrameRingBuffer {
     private let lock = NSLock()
     private let capacity: Int
     private var frames: [AudioFrame] = []
 
-    init(capacity: Int) {
+    public init(capacity: Int) {
         self.capacity = max(1, capacity)
     }
 
-    func push(_ frame: AudioFrame) {
+    public func push(_ frame: AudioFrame) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -19,7 +19,7 @@ final class AudioFrameRingBuffer {
         }
     }
 
-    func drain() -> [AudioFrame] {
+    public func drain() -> [AudioFrame] {
         lock.lock()
         defer { lock.unlock() }
 

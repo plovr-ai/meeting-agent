@@ -7,11 +7,21 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .library(name: "MeetingAgentCore", targets: ["MeetingAgentCore"]),
+        .executable(name: "MeetingAgentApp", targets: ["MeetingAgentApp"]),
         .executable(name: "CoreAudioTapProbe", targets: ["CoreAudioTapProbe"])
     ],
     targets: [
+        .target(
+            name: "MeetingAgentCore"
+        ),
+        .executableTarget(
+            name: "MeetingAgentApp",
+            dependencies: ["MeetingAgentCore"]
+        ),
         .executableTarget(
             name: "CoreAudioTapProbe",
+            dependencies: ["MeetingAgentCore"],
             exclude: ["Info.plist"],
             linkerSettings: [
                 .unsafeFlags([
@@ -23,8 +33,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "CoreAudioTapProbeTests",
-            dependencies: ["CoreAudioTapProbe"]
+            name: "MeetingAgentCoreTests",
+            dependencies: ["MeetingAgentCore"]
         )
     ]
 )

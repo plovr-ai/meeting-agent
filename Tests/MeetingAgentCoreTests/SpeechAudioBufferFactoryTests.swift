@@ -1,6 +1,6 @@
 import AVFoundation
 import XCTest
-@testable import CoreAudioTapProbe
+@testable import MeetingAgentCore
 
 final class SpeechAudioBufferFactoryTests: XCTestCase {
     func testCreatesMonoFloat32PCMBufferFromAudioFrame() throws {
