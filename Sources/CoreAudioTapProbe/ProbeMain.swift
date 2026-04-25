@@ -43,11 +43,22 @@ struct ProbeMain {
 
         let captureSession = AudioCaptureSession()
         let frameBuffer = captureSession.frameBuffer
+        let diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
         defer {
             captureSession.stop()
         }
 
-        try captureSession.start(target: target)
+        do {
+            try captureSession.start(target: target)
+        } catch {
+            diagnosticsTracker.finish(endedReason: .captureFailed)
+            logDiagnostics(diagnosticsTracker.snapshot())
+            throw error
+        }
+        diagnosticsTracker.markRecording(
+            sampleRate: captureSession.outputSampleRate,
+            channelCount: captureSession.outputChannelCount
+        )
 
         log("Capture started target=\(target.displayName)")
 
@@ -85,12 +96,20 @@ struct ProbeMain {
         if let recordingOutput {
             log("Recording audio to \(recordingOutput.wavURL.path)")
             log("Recording transcript to \(recordingOutput.transcriptURL.path)")
+            log("Recording diagnostics to \(recordingOutput.diagnosticsURL.path)")
         }
 
         let end = Date().addingTimeInterval(TimeInterval(options.seconds))
         while Date() < end {
             try await Task.sleep(nanoseconds: 250_000_000)
+            let bufferBacklog = frameBuffer.count
+            let droppedFrameCount = frameBuffer.droppedFrameCount
             let frames = frameBuffer.drain()
+            diagnosticsTracker.record(
+                frames: frames,
+                bufferBacklog: bufferBacklog,
+                droppedFrameCount: droppedFrameCount
+            )
             if frames.isEmpty {
                 log("level=idle frames=0")
                 continue
@@ -110,6 +129,12 @@ struct ProbeMain {
 
         try writer?.close()
         transcriber?.finish()
+        diagnosticsTracker.finish(endedReason: .saved)
+        let diagnostics = diagnosticsTracker.snapshot()
+        if let recordingOutput {
+            try diagnostics.write(to: recordingOutput.diagnosticsURL)
+        }
+        logDiagnostics(diagnostics)
         log("Capture stopped")
     }
 
@@ -131,5 +156,16 @@ struct ProbeMain {
     private static func log(_ message: String) {
         print(message)
         fflush(stdout)
+    }
+
+    private static func logDiagnostics(_ diagnostics: CaptureDiagnostics) {
+        log(
+            "diagnostics status=\(diagnostics.status.rawValue) " +
+                "framesCaptured=\(diagnostics.framesCaptured) " +
+                "durationSeconds=\(String(format: "%.3f", diagnostics.durationSeconds)) " +
+                "averageLevel=\(String(format: "%.4f", diagnostics.averageLevel)) " +
+                "peakLevel=\(String(format: "%.4f", diagnostics.peakLevel)) " +
+                "droppedFrameCount=\(diagnostics.droppedFrameCount)"
+        )
     }
 }

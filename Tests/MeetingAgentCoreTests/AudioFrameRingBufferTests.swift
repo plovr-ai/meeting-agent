@@ -23,4 +23,18 @@ final class AudioFrameRingBufferTests: XCTestCase {
 
         XCTAssertEqual(buffer.drain().map(\.pcm), [Data([2]), Data([3])])
     }
+
+    func testReportsBacklogAndDroppedFrameCount() {
+        let buffer = AudioFrameRingBuffer(capacity: 2)
+
+        buffer.push(AudioFrame(pcm: Data([1]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        buffer.push(AudioFrame(pcm: Data([2]), sampleRate: 16_000, channelCount: 1, timestampNanos: 2))
+        buffer.push(AudioFrame(pcm: Data([3]), sampleRate: 16_000, channelCount: 1, timestampNanos: 3))
+
+        XCTAssertEqual(buffer.count, 2)
+        XCTAssertEqual(buffer.droppedFrameCount, 1)
+        _ = buffer.drain()
+        XCTAssertEqual(buffer.count, 0)
+        XCTAssertEqual(buffer.droppedFrameCount, 1)
+    }
 }

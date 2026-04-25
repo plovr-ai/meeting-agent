@@ -20,8 +20,10 @@ final class RecordingOutputTests: XCTestCase {
         XCTAssertEqual(output.directory.path, expectedDirectory.path)
         XCTAssertEqual(output.wavURL.lastPathComponent, "capture.wav")
         XCTAssertEqual(output.transcriptURL.lastPathComponent, "capture.txt")
+        XCTAssertEqual(output.diagnosticsURL.lastPathComponent, "diagnostics.json")
         XCTAssertEqual(output.wavURL.deletingLastPathComponent(), output.directory)
         XCTAssertEqual(output.transcriptURL.deletingLastPathComponent(), output.directory)
+        XCTAssertEqual(output.diagnosticsURL.deletingLastPathComponent(), output.directory)
     }
 
     func testDefaultRecordingOutputUsesTimestampWhenWavPathIsEmpty() throws {
@@ -47,6 +49,7 @@ final class RecordingOutputTests: XCTestCase {
 
         XCTAssertEqual(output.wavURL.lastPathComponent, "20260425-132530.wav")
         XCTAssertEqual(output.transcriptURL.lastPathComponent, "20260425-132530.txt")
+        XCTAssertEqual(output.diagnosticsURL.lastPathComponent, "diagnostics.json")
     }
 
     func testWavFlagWithoutValueEnablesTimestampedRecording() throws {

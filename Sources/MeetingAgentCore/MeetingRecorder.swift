@@ -12,6 +12,7 @@ public final class MeetingRecorder {
     private var captureSession: AudioCaptureSession?
     private var writer: WavFileWriter?
     private var transcriber: AudioFrameTranscriber?
+    private var diagnosticsTracker: CaptureDiagnosticsTracker?
 
     public private(set) var state: MeetingRecorderState = .idle
 
@@ -32,6 +33,7 @@ public final class MeetingRecorder {
             startedAt: startedAt
         )
         activeRecord = stored.record
+        diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
         state = .prepared(stored.record.id)
         return stored.record
     }
@@ -47,8 +49,18 @@ public final class MeetingRecorder {
         }
 
         let session = AudioCaptureSession()
-        try session.start(target: target)
+        do {
+            try session.start(target: target)
+        } catch {
+            diagnosticsTracker?.finish(endedReason: .captureFailed)
+            try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
+            throw error
+        }
         captureSession = session
+        diagnosticsTracker?.markRecording(
+            sampleRate: session.outputSampleRate,
+            channelCount: session.outputChannelCount
+        )
 
         if let audioURL = record.audioURL {
             writer = try WavFileWriter(
@@ -60,10 +72,17 @@ public final class MeetingRecorder {
 
         if let transcriptURL = record.transcriptURL {
             let provider = SpeechTranscriptionProviderFactory.provider(for: speechProvider)
-            transcriber = try await provider.start(
-                transcriptURL: transcriptURL,
-                localeIdentifier: localeIdentifier
-            )
+            do {
+                transcriber = try await provider.start(
+                    transcriptURL: transcriptURL,
+                    localeIdentifier: localeIdentifier
+                )
+            } catch {
+                let transcriptWriter = try TranscriptFileWriter(url: transcriptURL)
+                try transcriptWriter.replace(with: "Speech recognition unavailable: \(error)")
+                try transcriptWriter.close()
+                transcriber = nil
+            }
         }
 
         state = .recording(record.id)
@@ -71,10 +90,23 @@ public final class MeetingRecorder {
 
     public func drainFrames() throws {
         guard let session = captureSession else { return }
+        let bufferBacklog = session.frameBuffer.count
+        let droppedFrameCount = session.frameBuffer.droppedFrameCount
         let frames = session.frameBuffer.drain()
+        diagnosticsTracker?.record(
+            frames: frames,
+            bufferBacklog: bufferBacklog,
+            droppedFrameCount: droppedFrameCount
+        )
         for frame in frames {
             try writer?.append(frame)
-            try transcriber?.append(frame)
+            do {
+                try transcriber?.append(frame)
+            } catch {
+                try persistTranscriptionFailure("Speech recognition failed: \(error)")
+                transcriber?.finish()
+                transcriber = nil
+            }
         }
     }
 
@@ -82,6 +114,7 @@ public final class MeetingRecorder {
         try writer?.close()
         transcriber?.finish()
         captureSession?.stop()
+        diagnosticsTracker?.finish(endedReason: .saved)
         writer = nil
         transcriber = nil
         captureSession = nil
@@ -95,9 +128,30 @@ public final class MeetingRecorder {
         }
 
         record.endedAt = endedAt
+        diagnosticsTracker?.finish(endedReason: .saved)
+        try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
+        diagnosticsTracker = nil
         try store.save(record)
         activeRecord = nil
         state = .idle
         return record
+    }
+
+    public var currentCaptureStatus: CaptureStatus? {
+        diagnosticsTracker?.liveStatus
+    }
+
+    private func persistTranscriptionFailure(_ message: String) throws {
+        guard let transcriptURL = activeRecord?.transcriptURL else { return }
+        let transcriptWriter = try TranscriptFileWriter(url: transcriptURL)
+        try transcriptWriter.replace(with: message)
+        try transcriptWriter.close()
+    }
+}
+
+private extension CaptureDiagnostics {
+    func writeIfPossible(to url: URL?) throws {
+        guard let url else { return }
+        try write(to: url)
     }
 }

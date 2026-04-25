@@ -33,4 +33,21 @@ final class MeetingRecordTests: XCTestCase {
 
         XCTAssertNil(record.endedAt)
     }
+
+    func testDecodesMetadataWithoutDiagnosticsURL() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.diagnosticsURL)
+    }
 }

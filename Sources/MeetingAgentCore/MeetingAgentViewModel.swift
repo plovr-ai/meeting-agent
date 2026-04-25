@@ -98,6 +98,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func drainRecordingFrames() {
         try? recorder.drainFrames()
+        updateRecordingStatus()
         objectWillChange.send()
     }
 
@@ -130,6 +131,26 @@ public final class MeetingAgentViewModel: ObservableObject {
         if case .recording = recorder.state { return true }
         if case .prepared = recorder.state { return true }
         return false
+    }
+
+    private func updateRecordingStatus() {
+        guard let activeTarget, let status = recorder.currentCaptureStatus else { return }
+        switch status {
+        case .preparingCapture:
+            statusText = "Preparing capture for \(activeTarget.displayName)"
+        case .recording:
+            statusText = "Recording \(activeTarget.displayName)"
+        case .recordingNoAudioDetected:
+            statusText = "Recording \(activeTarget.displayName), but no audio detected"
+        case .recordingSilentAudio:
+            statusText = "Recording silent audio from \(activeTarget.displayName)"
+        case .targetProcessEnded:
+            statusText = "Target process ended: \(activeTarget.displayName)"
+        case .captureFailed:
+            statusText = "Capture failed: \(activeTarget.displayName)"
+        case .recordingSaved:
+            statusText = "Recording saved: \(activeTarget.displayName)"
+        }
     }
 
     public var selectedMeeting: MeetingRecord? {
