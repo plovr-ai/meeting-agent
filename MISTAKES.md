@@ -29,3 +29,19 @@ Inject a suite-scoped `UserDefaults` through `SpeechTranscriptionConfigurationSt
 Never use process-global persistence directly in unit tests; inject an isolated store.
 
 ---
+
+## [7] Applying patches from a linked worktree
+
+**Date**: 2026-04-25
+**Category**: convention-violation
+
+### What went wrong
+The first design-document patch used relative paths while the active task was in a linked issue worktree, so the files landed in the original checkout before being moved.
+
+### Correct approach
+When editing a linked worktree with `apply_patch`, use absolute paths or otherwise verify the patch target is the issue worktree before writing files.
+
+### How to avoid
+For worktree-based issue fixes, patch absolute paths under the issue worktree.
+
+---
