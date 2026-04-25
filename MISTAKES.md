@@ -77,3 +77,19 @@ Run SwiftPM build and test commands one at a time per worktree, or use separate 
 Do not parallelize SwiftPM commands that share the same `.build` directory.
 
 ---
+
+## [6] Backfill derived artifact URLs for legacy metadata
+
+**Date**: 2026-04-25
+**Category**: wrong-assumption
+
+### What went wrong
+Adding optional summary artifact URLs to `MeetingRecord` initially handled new meetings but left older decoded metadata with nil summary paths, preventing regeneration for existing completed meetings.
+
+### Correct approach
+When adding derived artifact paths to persisted metadata, assign defaults during load as well as during creation.
+
+### How to avoid
+For every optional field added for Codable compatibility, decide whether consumers need a load-time default before using it in new workflows.
+
+---
