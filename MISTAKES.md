@@ -13,3 +13,19 @@ Plain-text fallback writes must clear the structured transcript document so read
 When adding a new source-of-truth file beside a legacy cache or fallback, update or invalidate both paths in every write mode.
 
 ---
+
+## [5] STT settings persistence test isolation
+
+**Date**: 2026-04-25
+**Category**: test-mistake
+
+### What went wrong
+The first persisted STT settings implementation used the default `UserDefaults` store in view-model tests, which allowed one test's settings to affect another test.
+
+### Correct approach
+Inject a suite-scoped `UserDefaults` through `SpeechTranscriptionConfigurationStore` in tests that read or write persisted settings.
+
+### How to avoid
+Never use process-global persistence directly in unit tests; inject an isolated store.
+
+---
