@@ -23,7 +23,14 @@ struct MainWindowView: View {
             }
             .navigationTitle("Meetings")
         } detail: {
-            MeetingDetailView(meeting: viewModel.selectedMeeting, statusText: viewModel.statusText)
+            MeetingDetailView(
+                meeting: viewModel.selectedMeeting,
+                statusText: viewModel.statusText,
+                isRecording: viewModel.isRecording,
+                stopRecording: {
+                    viewModel.stopRecording()
+                }
+            )
         }
         .alert(
             "Meeting detected",
@@ -38,7 +45,9 @@ struct MainWindowView: View {
             presenting: viewModel.pendingCandidate
         ) { _ in
             Button("Start Recording") {
-                try? viewModel.acceptPendingCandidate()
+                Task {
+                    try? await viewModel.startRecordingForPendingCandidate()
+                }
             }
             Button("Not Now", role: .cancel) {
                 viewModel.ignorePendingCandidate()
@@ -52,6 +61,8 @@ struct MainWindowView: View {
 private struct MeetingDetailView: View {
     let meeting: MeetingRecord?
     let statusText: String
+    let isRecording: Bool
+    let stopRecording: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -65,6 +76,10 @@ private struct MeetingDetailView: View {
                     LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
                 }
                 LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
+                Button("Stop Recording") {
+                    stopRecording()
+                }
+                .disabled(!isRecording)
                 Divider()
                 Text("Transcript")
                     .font(.headline)

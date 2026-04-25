@@ -4,12 +4,16 @@ import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem?
+    private var supportsUserNotifications = false
     var viewModel: MeetingAgentViewModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        supportsUserNotifications = AppRuntimeCapabilities.supportsUserNotifications()
+        if supportsUserNotifications {
+            UNUserNotificationCenter.current().delegate = self
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
         configureStatusItem()
     }
 
@@ -36,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func notifyMeetingDetected(_ target: AudioCaptureTarget) {
+        guard supportsUserNotifications else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "Meeting detected"
         content.body = "\(target.displayName) meeting detected. Open Meeting Agent to start recording."

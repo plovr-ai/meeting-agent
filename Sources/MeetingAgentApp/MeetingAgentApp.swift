@@ -19,6 +19,7 @@ struct MeetingAgentApp: App {
                         if let candidate = viewModel.pollForMeetingCandidates() {
                             appDelegate.notifyMeetingDetected(candidate)
                         }
+                        viewModel.drainRecordingFrames()
                         try? await Task.sleep(nanoseconds: 3_000_000_000)
                     }
                 }

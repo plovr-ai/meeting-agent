@@ -11,6 +11,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let store: MeetingStore
     private let recorder: MeetingRecorder
     private let processMonitor = MeetingProcessMonitor()
+    private var activeTarget: AudioCaptureTarget?
 
     public init(store: MeetingStore = MeetingStore(), recorder: MeetingRecorder? = nil) {
         self.store = store
@@ -46,6 +47,36 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingID = record.id
         pendingCandidate = nil
         statusText = "Recording \(record.name)"
+    }
+
+    public func startRecordingForPendingCandidate(localeIdentifier: String = "en-US") async throws {
+        guard let candidate = pendingCandidate else { return }
+        let record = try recorder.prepareRecord(for: candidate)
+        meetings.insert(record, at: 0)
+        selectedMeetingID = record.id
+        activeTarget = candidate
+        pendingCandidate = nil
+        try await recorder.startRecording(
+            target: candidate,
+            record: record,
+            speechProvider: .local,
+            localeIdentifier: localeIdentifier
+        )
+        statusText = "Recording \(record.name)"
+    }
+
+    public func drainRecordingFrames() {
+        try? recorder.drainFrames()
+        objectWillChange.send()
+    }
+
+    public func stopRecording(at endedAt: Date = Date()) {
+        if let stopped = try? recorder.stopRecording(at: endedAt),
+           let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+            meetings[index] = stopped
+        }
+        activeTarget = nil
+        statusText = "Idle"
     }
 
     public func selectMeeting(_ id: UUID?) {

@@ -29,4 +29,28 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.pendingCandidate)
         XCTAssertEqual(viewModel.meetings.first?.name, "zoom.us")
     }
+
+    func testStopRecordingUpdatesSelectedMeetingAndReturnsToIdle() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let viewModel = MeetingAgentViewModel(store: store)
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+
+        viewModel.setPendingCandidate(target)
+        try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
+
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(viewModel.meetings.first?.endedAt, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(viewModel.statusText, "Idle")
+        XCTAssertFalse(viewModel.isRecording)
+    }
+}
+
+final class AppRuntimeCapabilitiesTests: XCTestCase {
+    func testUserNotificationsRequireAppBundleRuntime() {
+        XCTAssertTrue(AppRuntimeCapabilities.supportsUserNotifications(bundleURL: URL(fileURLWithPath: "/Applications/MeetingAgent.app")))
+        XCTAssertFalse(AppRuntimeCapabilities.supportsUserNotifications(bundleURL: URL(fileURLWithPath: "/tmp/meeting-agent/.build/debug")))
+    }
 }

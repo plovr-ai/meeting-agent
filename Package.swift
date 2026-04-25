@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "MeetingAgent",
     platforms: [
-        .macOS(.v14)
+        .macOS("14.2")
     ],
     products: [
         .library(name: "MeetingAgentCore", targets: ["MeetingAgentCore"]),
