@@ -13,6 +13,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
+    private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
 
@@ -23,12 +24,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechProvider: SpeechProvider = .whisper,
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
-        exportService: MeetingExportService = MeetingExportService()
+        exportService: MeetingExportService = MeetingExportService(),
+        processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
         self.speechConfigurationStore = speechConfigurationStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
+        self.processTargetsProvider = processTargetsProvider
         if let speechConfiguration {
             self.speechConfiguration = speechConfiguration
         } else if speechProvider != .whisper || speechLocaleIdentifier != Locale.current.identifier {
@@ -71,6 +74,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
         pendingCandidate = nil
+        activeTarget = candidate
         statusText = "Recording \(record.name)"
     }
 
@@ -129,8 +133,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Recording failed: \(error)"
     }
 
-    public func drainRecordingFrames() {
+    public func drainRecordingFrames(endedAt: Date = Date()) {
         try? recorder.drainFrames()
+        if stopRecordingIfTargetProcessEnded(at: endedAt) {
+            objectWillChange.send()
+            return
+        }
         updateRecordingStatus()
         objectWillChange.send()
     }
@@ -237,7 +245,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func pollForMeetingCandidates() -> AudioCaptureTarget? {
-        let targets = RunningProcessDiscovery.currentTargets()
+        let targets = processTargetsProvider()
         processMonitor.reconcileRunningProcessIDs(Set(targets.map(\.processID)))
         let candidates = processMonitor.detectNewCandidates(
             in: targets,
@@ -272,6 +280,21 @@ public final class MeetingAgentViewModel: ObservableObject {
         case .recordingSaved:
             statusText = "Recording saved: \(activeTarget.displayName)"
         }
+    }
+
+    private func stopRecordingIfTargetProcessEnded(at endedAt: Date = Date()) -> Bool {
+        guard let activeTarget else { return false }
+        let targets = processTargetsProvider()
+        guard processMonitor.hasProcessEnded(processID: activeTarget.processID, in: targets) else {
+            return false
+        }
+        if let stopped = try? recorder.stopRecording(at: endedAt, endedReason: .targetProcessEnded),
+           let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+            meetings[index] = stopped
+        }
+        statusText = "Target process ended: \(activeTarget.displayName)"
+        self.activeTarget = nil
+        return true
     }
 
     public var selectedMeeting: MeetingRecord? {

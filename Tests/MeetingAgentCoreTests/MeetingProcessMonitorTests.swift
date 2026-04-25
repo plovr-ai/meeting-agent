@@ -66,4 +66,21 @@ final class MeetingProcessMonitorTests: XCTestCase {
         XCTAssertEqual(inactive, [])
         XCTAssertEqual(active, [activeChrome])
     }
+
+    func testDetectsRunningProcessIDFromTargets() {
+        let monitor = MeetingProcessMonitor()
+        let zoom = AudioCaptureTarget(processID: 123, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let chrome = AudioCaptureTarget(processID: 456, displayName: "Google Chrome", bundleIdentifier: "com.google.Chrome")
+
+        XCTAssertTrue(monitor.isProcessRunning(processID: 123, in: [zoom, chrome]))
+        XCTAssertFalse(monitor.isProcessRunning(processID: 789, in: [zoom, chrome]))
+    }
+
+    func testDetectsEndedProcessIDFromTargets() {
+        let monitor = MeetingProcessMonitor()
+        let zoom = AudioCaptureTarget(processID: 123, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+
+        XCTAssertFalse(monitor.hasProcessEnded(processID: 123, in: [zoom]))
+        XCTAssertTrue(monitor.hasProcessEnded(processID: 456, in: [zoom]))
+    }
 }
