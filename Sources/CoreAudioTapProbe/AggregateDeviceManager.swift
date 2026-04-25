@@ -9,7 +9,7 @@ final class AggregateDeviceManager {
         aggregateDeviceID != AudioObjectID(kAudioObjectUnknown)
     }
 
-    func createAggregateDevice(named name: String) throws -> AudioObjectID {
+    func createAggregateDevice(named name: String, tapUID: String) throws -> AudioObjectID {
         guard !isCreated else {
             return aggregateDeviceID
         }
@@ -17,7 +17,12 @@ final class AggregateDeviceManager {
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey as String: name,
             kAudioAggregateDeviceUIDKey as String: deviceUID,
-            kAudioAggregateDeviceIsPrivateKey as String: true
+            kAudioAggregateDeviceIsPrivateKey as String: true,
+            kAudioAggregateDeviceTapListKey as String: [
+                [
+                    kAudioSubTapUIDKey as String: tapUID
+                ]
+            ]
         ]
 
         var createdID = AudioObjectID(kAudioObjectUnknown)
@@ -28,21 +33,6 @@ final class AggregateDeviceManager {
 
         aggregateDeviceID = createdID
         return createdID
-    }
-
-    func attachTapUID(_ tapUID: String) throws {
-        guard isCreated else {
-            throw ProbeError.captureNotStarted
-        }
-
-        var address = CoreAudioHelpers.propertyAddress(kAudioAggregateDevicePropertyTapList)
-        var tapList = [tapUID as CFString] as CFArray
-        let size = UInt32(MemoryLayout<CFArray>.size)
-
-        try CoreAudioHelpers.check(
-            AudioObjectSetPropertyData(aggregateDeviceID, &address, 0, nil, size, &tapList),
-            "AudioObjectSetPropertyData(kAudioAggregateDevicePropertyTapList)"
-        )
     }
 
     func destroyAggregateDevice() {

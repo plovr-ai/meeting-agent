@@ -32,7 +32,7 @@ struct ProbeMain {
             throw ProbeError.targetNotFound(pid)
         }
 
-        print("Starting capture for \(target.displayName) pid=\(target.processID)")
+        log("Starting capture for \(target.displayName) pid=\(target.processID)")
 
         let tapManager = AudioTapManager()
         let aggregateManager = AggregateDeviceManager()
@@ -46,11 +46,10 @@ struct ProbeMain {
 
         let tapID = try tapManager.createTap(for: target)
         let tapUID = try tapManager.tapUID()
-        let aggregateID = try aggregateManager.createAggregateDevice(named: "MeetingAgent Probe Aggregate")
-        try aggregateManager.attachTapUID(tapUID)
+        let aggregateID = try aggregateManager.createAggregateDevice(named: "MeetingAgent Probe Aggregate", tapUID: tapUID)
         try reader.start(deviceID: aggregateID)
 
-        print("Capture started tapID=\(tapID) aggregateID=\(aggregateID)")
+        log("Capture started tapID=\(tapID) aggregateID=\(aggregateID)")
 
         let writer = try options.wavPath.map {
             try WavFileWriter(url: URL(fileURLWithPath: $0), sampleRate: 16_000, channelCount: 1)
@@ -61,7 +60,7 @@ struct ProbeMain {
             try await Task.sleep(nanoseconds: 250_000_000)
             let frames = frameBuffer.drain()
             if frames.isEmpty {
-                print("level=idle frames=0")
+                log("level=idle frames=0")
                 continue
             }
 
@@ -73,21 +72,26 @@ struct ProbeMain {
                 try writer?.append(frame)
             }
 
-            print("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")
+            log("level_peak_byte=\(peak) frames=\(frames.count) bytes=\(totalBytes)")
         }
 
         try writer?.close()
-        print("Capture stopped")
+        log("Capture stopped")
     }
 
     private static func printTargets() {
-        print("Running capture targets:")
+        log("Running capture targets:")
         for target in RunningProcessDiscovery.currentTargets() {
             let bundle = target.bundleIdentifier ?? "unknown-bundle"
-            print("\(target.processID)\t\(target.displayName)\t\(bundle)")
+            log("\(target.processID)\t\(target.displayName)\t\(bundle)")
         }
-        print("")
-        print("Usage: CoreAudioTapProbe --pid <process-id> [--seconds 10] [--wav /tmp/capture.wav]")
+        log("")
+        log("Usage: CoreAudioTapProbe --pid <process-id> [--seconds 10] [--wav /tmp/capture.wav]")
+    }
+
+    private static func log(_ message: String) {
+        print(message)
+        fflush(stdout)
     }
 }
 
