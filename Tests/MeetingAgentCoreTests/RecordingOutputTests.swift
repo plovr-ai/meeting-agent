@@ -20,9 +20,11 @@ final class RecordingOutputTests: XCTestCase {
         XCTAssertEqual(output.directory.path, expectedDirectory.path)
         XCTAssertEqual(output.wavURL.lastPathComponent, "capture.wav")
         XCTAssertEqual(output.transcriptURL.lastPathComponent, "capture.txt")
+        XCTAssertEqual(output.transcriptJSONURL.lastPathComponent, "capture.json")
         XCTAssertEqual(output.diagnosticsURL.lastPathComponent, "diagnostics.json")
         XCTAssertEqual(output.wavURL.deletingLastPathComponent(), output.directory)
         XCTAssertEqual(output.transcriptURL.deletingLastPathComponent(), output.directory)
+        XCTAssertEqual(output.transcriptJSONURL.deletingLastPathComponent(), output.directory)
         XCTAssertEqual(output.diagnosticsURL.deletingLastPathComponent(), output.directory)
     }
 
@@ -49,6 +51,7 @@ final class RecordingOutputTests: XCTestCase {
 
         XCTAssertEqual(output.wavURL.lastPathComponent, "20260425-132530.wav")
         XCTAssertEqual(output.transcriptURL.lastPathComponent, "20260425-132530.txt")
+        XCTAssertEqual(output.transcriptJSONURL.lastPathComponent, "20260425-132530.json")
         XCTAssertEqual(output.diagnosticsURL.lastPathComponent, "diagnostics.json")
     }
 
@@ -106,7 +109,11 @@ final class RecordingOutputTests: XCTestCase {
 
     func testTranscriptWriterReplacesPartialTextWithLatestText() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
-        defer { try? FileManager.default.removeItem(at: url) }
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
 
         let writer = try TranscriptFileWriter(url: url)
         try writer.replace(with: "hello")
@@ -114,5 +121,79 @@ final class RecordingOutputTests: XCTestCase {
         try writer.close()
 
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "hello world\n")
+        XCTAssertEqual(try TranscriptFileWriter.readDocument(from: jsonURL), TranscriptDocument())
+    }
+
+    func testTranscriptWriterPlainTextReplaceClearsStructuredSegments() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [TranscriptSegment(id: "segment-1", text: "structured text")])
+        try writer.replace(with: "Speech recognition unavailable")
+
+        XCTAssertEqual(TranscriptFileWriter.renderedTranscript(textURL: url, structuredURL: jsonURL), "Speech recognition unavailable\n")
+        XCTAssertEqual(try TranscriptFileWriter.readDocument(from: jsonURL), TranscriptDocument())
+    }
+
+    func testTranscriptWriterRendersTextFromStructuredSegments() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                startTimeSeconds: 0,
+                endTimeSeconds: 1.25,
+                text: "hello",
+                language: "en-US",
+                sourceProvider: "whisper",
+                isFinal: true,
+                confidence: 0.87,
+                createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+                timingSource: .approximate
+            )
+        ])
+        try writer.close()
+
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "User A:\nhello\n")
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.version, 1)
+        XCTAssertEqual(document.segments.first?.id, "segment-1")
+        XCTAssertEqual(document.segments.first?.speakerID, "speaker-1")
+        XCTAssertEqual(document.segments.first?.speakerLabel, "User A")
+        XCTAssertEqual(document.segments.first?.startTimeSeconds, 0)
+        XCTAssertEqual(document.segments.first?.endTimeSeconds, 1.25)
+        XCTAssertEqual(document.segments.first?.language, "en-US")
+        XCTAssertEqual(document.segments.first?.sourceProvider, "whisper")
+        XCTAssertEqual(document.segments.first?.isFinal, true)
+        XCTAssertEqual(document.segments.first?.confidence, 0.87)
+        XCTAssertEqual(document.segments.first?.timingSource, .approximate)
+    }
+
+    func testRenderedTranscriptPrefersStructuredSegmentsAndFallsBackToPlainText() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+
+        try "legacy text\n".write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(TranscriptFileWriter.renderedTranscript(textURL: url, structuredURL: jsonURL), "legacy text\n")
+
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [TranscriptSegment(id: "segment-1", text: "structured text")])
+
+        XCTAssertEqual(TranscriptFileWriter.renderedTranscript(textURL: url, structuredURL: jsonURL), "User A:\nstructured text")
     }
 }

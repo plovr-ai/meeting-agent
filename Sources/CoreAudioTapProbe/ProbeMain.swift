@@ -96,6 +96,7 @@ struct ProbeMain {
         if let recordingOutput {
             log("Recording audio to \(recordingOutput.wavURL.path)")
             log("Recording transcript to \(recordingOutput.transcriptURL.path)")
+            log("Recording structured transcript to \(recordingOutput.transcriptJSONURL.path)")
             log("Recording diagnostics to \(recordingOutput.diagnosticsURL.path)")
         }
 

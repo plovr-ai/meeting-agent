@@ -155,10 +155,12 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
     private let temporaryDirectory: URL
     private let configuration: WhisperConfiguration
     private let processRunner: WhisperProcessRunning
+    private let localeIdentifier: String
     private let languageCode: String?
     private let chunkDurationSeconds: Double
     private var chunkFrames: [AudioFrame] = []
     private var pendingChunkDurationSeconds = 0.0
+    private var transcribedDurationSeconds = 0.0
     private var chunkIndex = 0
     private var transcriptSegments: [TranscriptSegment] = []
     private var isFinished = false
@@ -168,6 +170,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         temporaryDirectory: URL,
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
+        localeIdentifier: String,
         languageCode: String?,
         chunkDurationSeconds: Double
     ) {
@@ -175,6 +178,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         self.temporaryDirectory = temporaryDirectory
         self.configuration = configuration
         self.processRunner = processRunner
+        self.localeIdentifier = localeIdentifier
         self.languageCode = languageCode
         self.chunkDurationSeconds = max(0.001, chunkDurationSeconds)
     }
@@ -195,6 +199,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             temporaryDirectory: temporaryDirectory,
             configuration: configuration,
             processRunner: processRunner,
+            localeIdentifier: localeIdentifier,
             languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier),
             chunkDurationSeconds: chunkDurationSeconds
         )
@@ -274,15 +279,29 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
         }
 
-        let transcript = normalizedTranscript(
+        let transcriptLines = normalizedTranscriptLines(
             try String(contentsOf: outputTextURL, encoding: .utf8)
         )
-        if !transcript.isEmpty {
-            transcriptSegments.append(TranscriptSegment(text: transcript))
-            try TranscriptFileWriter(url: transcriptURL).replace(with: TranscriptFormatter.render(transcriptSegments))
+        let chunkStartTime = transcribedDurationSeconds
+        let chunkEndTime = chunkStartTime + pendingChunkDurationSeconds
+        if !transcriptLines.isEmpty {
+            transcriptSegments += transcriptLines.enumerated().map { lineIndex, text in
+                TranscriptSegment(
+                    id: "whisper-\(chunkID)-\(lineIndex)",
+                    startTimeSeconds: chunkStartTime,
+                    endTimeSeconds: chunkEndTime,
+                    text: text,
+                    language: localeIdentifier,
+                    sourceProvider: "whisper",
+                    isFinal: true,
+                    timingSource: .approximate
+                )
+            }
+            try TranscriptFileWriter(url: transcriptURL).replace(with: transcriptSegments)
         }
 
         chunkFrames.removeAll(keepingCapacity: true)
+        transcribedDurationSeconds = chunkEndTime
         pendingChunkDurationSeconds = 0
         try? FileManager.default.removeItem(at: inputWavURL)
         try? FileManager.default.removeItem(at: outputTextURL)
@@ -295,12 +314,11 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         return Double(frameCount) / frame.sampleRate
     }
 
-    private func normalizedTranscript(_ text: String) -> String {
+    private func normalizedTranscriptLines(_ text: String) -> [String] {
         text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .filter { $0.caseInsensitiveCompare("[BLANK_AUDIO]") != .orderedSame }
-            .joined(separator: "\n")
     }
 }

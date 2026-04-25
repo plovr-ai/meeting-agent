@@ -158,6 +158,16 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
 
         XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello from whisper\n")
+        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        XCTAssertEqual(document.segments.count, 1)
+        XCTAssertEqual(document.segments.first?.id, "whisper-0-0")
+        XCTAssertEqual(document.segments.first?.speakerID, "speaker-1")
+        XCTAssertEqual(document.segments.first?.speakerLabel, "User A")
+        XCTAssertEqual(document.segments.first?.startTimeSeconds, 0)
+        XCTAssertEqual(document.segments.first?.endTimeSeconds, 0.000125)
+        XCTAssertEqual(document.segments.first?.language, "en-US")
+        XCTAssertEqual(document.segments.first?.sourceProvider, "whisper")
+        XCTAssertEqual(document.segments.first?.timingSource, .approximate)
         XCTAssertEqual(runner.languageCode, "en")
         XCTAssertNotNil(runner.inputWavURL)
     }
