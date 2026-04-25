@@ -42,18 +42,32 @@ public final class MeetingRecorder {
         target: AudioCaptureTarget,
         record: MeetingRecord,
         speechProvider: SpeechProvider = .local,
-        localeIdentifier: String = "en-US"
+        localeIdentifier: String = "en-US",
+        speechConfiguration: SpeechTranscriptionConfiguration? = nil
     ) async throws {
         guard case .prepared(record.id) = state else {
             throw ProbeError.invalidArguments("Meeting must be prepared before recording starts")
         }
+        var updatedRecord = record
+        let effectiveConfiguration = speechConfiguration ?? SpeechTranscriptionConfiguration(
+            provider: speechProvider,
+            localeIdentifier: localeIdentifier,
+            whisperBinaryPath: nil,
+            whisperModelPath: nil
+        )
+        updatedRecord.speechProvider = effectiveConfiguration.provider
+        updatedRecord.speechLocaleIdentifier = effectiveConfiguration.localeIdentifier
+        updatedRecord.transcriptionStatus = .transcribing
+        updatedRecord.transcriptionFailureReason = nil
+        activeRecord = updatedRecord
+        try store.save(updatedRecord)
 
         let session = AudioCaptureSession()
         do {
             try session.start(target: target)
         } catch {
             diagnosticsTracker?.finish(endedReason: .captureFailed)
-            try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
+            try diagnosticsTracker?.snapshot().writeIfPossible(to: updatedRecord.diagnosticsURL)
             throw error
         }
         captureSession = session
@@ -62,7 +76,7 @@ public final class MeetingRecorder {
             channelCount: session.outputChannelCount
         )
 
-        if let audioURL = record.audioURL {
+        if let audioURL = updatedRecord.audioURL {
             writer = try WavFileWriter(
                 url: audioURL,
                 sampleRate: UInt32(session.outputSampleRate.rounded()),
@@ -70,17 +84,18 @@ public final class MeetingRecorder {
             )
         }
 
-        if let transcriptURL = record.transcriptURL {
-            let provider = SpeechTranscriptionProviderFactory.provider(for: speechProvider)
+        if let transcriptURL = updatedRecord.transcriptURL {
+            let provider = SpeechTranscriptionProviderFactory.provider(
+                for: effectiveConfiguration.provider,
+                configuration: effectiveConfiguration
+            )
             do {
                 transcriber = try await provider.start(
                     transcriptURL: transcriptURL,
-                    localeIdentifier: localeIdentifier
+                    localeIdentifier: effectiveConfiguration.localeIdentifier
                 )
             } catch {
-                let transcriptWriter = try TranscriptFileWriter(url: transcriptURL)
-                try transcriptWriter.replace(with: "Speech recognition unavailable: \(error)")
-                try transcriptWriter.close()
+                try markTranscriptionFailed("Speech recognition unavailable: \(error)")
                 transcriber = nil
             }
         }
@@ -112,7 +127,11 @@ public final class MeetingRecorder {
 
     public func stopRecording(at endedAt: Date = Date()) throws -> MeetingRecord? {
         try writer?.close()
-        transcriber?.finish()
+        let activeTranscriber = transcriber
+        activeTranscriber?.finish()
+        if let failureReason = activeTranscriber?.failureReason {
+            try markTranscriptionFailed(failureReason)
+        }
         captureSession?.stop()
         diagnosticsTracker?.finish(endedReason: .saved)
         writer = nil
@@ -128,6 +147,10 @@ public final class MeetingRecorder {
         }
 
         record.endedAt = endedAt
+        if record.transcriptionStatus == .transcribing {
+            record.transcriptionStatus = .transcribed
+            record.transcriptionFailureReason = nil
+        }
         diagnosticsTracker?.finish(endedReason: .saved)
         try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
         diagnosticsTracker = nil
@@ -142,10 +165,15 @@ public final class MeetingRecorder {
     }
 
     private func persistTranscriptionFailure(_ message: String) throws {
-        guard let transcriptURL = activeRecord?.transcriptURL else { return }
-        let transcriptWriter = try TranscriptFileWriter(url: transcriptURL)
-        try transcriptWriter.replace(with: message)
-        try transcriptWriter.close()
+        try markTranscriptionFailed(message)
+    }
+
+    private func markTranscriptionFailed(_ message: String) throws {
+        guard var record = activeRecord else { return }
+        record.transcriptionStatus = .failed
+        record.transcriptionFailureReason = message
+        activeRecord = record
+        try store.save(record)
     }
 }
 

@@ -1,5 +1,13 @@
 import Foundation
 
+public enum TranscriptionStatus: String, Codable, Equatable {
+    case notStarted
+    case transcribing
+    case transcribed
+    case failed
+    case retryRequested
+}
+
 public struct MeetingRecord: Codable, Identifiable, Equatable {
     public let id: UUID
     public var name: String
@@ -9,6 +17,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var transcriptURL: URL?
     public var transcriptJSONURL: URL?
     public var diagnosticsURL: URL?
+    public var transcriptionStatus: TranscriptionStatus
+    public var transcriptionFailureReason: String?
+    public var speechProvider: SpeechProvider
+    public var speechLocaleIdentifier: String
 
     public init(
         id: UUID,
@@ -18,7 +30,11 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         audioURL: URL?,
         transcriptURL: URL?,
         transcriptJSONURL: URL? = nil,
-        diagnosticsURL: URL? = nil
+        diagnosticsURL: URL? = nil,
+        transcriptionStatus: TranscriptionStatus = .notStarted,
+        transcriptionFailureReason: String? = nil,
+        speechProvider: SpeechProvider = .whisper,
+        speechLocaleIdentifier: String = "en-US"
     ) {
         self.id = id
         self.name = name
@@ -28,6 +44,41 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.transcriptURL = transcriptURL
         self.transcriptJSONURL = transcriptJSONURL
         self.diagnosticsURL = diagnosticsURL
+        self.transcriptionStatus = transcriptionStatus
+        self.transcriptionFailureReason = transcriptionFailureReason
+        self.speechProvider = speechProvider
+        self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case startedAt
+        case endedAt
+        case audioURL
+        case transcriptURL
+        case transcriptJSONURL
+        case diagnosticsURL
+        case transcriptionStatus
+        case transcriptionFailureReason
+        case speechProvider
+        case speechLocaleIdentifier
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        audioURL = try container.decodeIfPresent(URL.self, forKey: .audioURL)
+        transcriptURL = try container.decodeIfPresent(URL.self, forKey: .transcriptURL)
+        transcriptJSONURL = try container.decodeIfPresent(URL.self, forKey: .transcriptJSONURL)
+        diagnosticsURL = try container.decodeIfPresent(URL.self, forKey: .diagnosticsURL)
+        transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
+        transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)
+        speechProvider = try container.decodeIfPresent(SpeechProvider.self, forKey: .speechProvider) ?? .whisper
+        speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
     }
 }
 

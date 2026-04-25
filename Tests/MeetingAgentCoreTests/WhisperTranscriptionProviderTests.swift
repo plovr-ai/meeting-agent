@@ -130,9 +130,41 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
     }
 
     func testFactoryReturnsWhisperProvider() {
-        let provider = SpeechTranscriptionProviderFactory.provider(for: .whisper)
+        let provider = SpeechTranscriptionProviderFactory.provider(for: .whisper, configuration: .default)
 
         XCTAssertEqual(provider.provider, .whisper)
+    }
+
+    func testTranscribesExistingAudioFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-retry-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let audioURL = directory.appendingPathComponent("audio.wav")
+        let transcriptURL = directory.appendingPathComponent("transcript.txt")
+        FileManager.default.createFile(atPath: audioURL.path, contents: Data([0x52, 0x49, 0x46, 0x46]))
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let runner = OutputWritingWhisperProcessRunner(outputText: "retry transcript\n")
+
+        try await WhisperSpeechTranscriptionProvider(
+            configuration: configuration,
+            processRunner: runner
+        )
+        .transcribeExistingAudio(
+            context: SpeechTranscriptionContext(
+                inputAudioURL: audioURL,
+                transcriptURL: transcriptURL,
+                localeIdentifier: "en-US",
+                meetingID: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+                previousTranscript: nil
+            )
+        )
+
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nretry transcript\n")
+        XCTAssertEqual(runner.inputWavURL, audioURL)
     }
 
     func testTranscriberRunsWhisperAndWritesTranscript() throws {
@@ -247,6 +279,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
 
         XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: process failed\n")
+        XCTAssertEqual(transcriber.failureReason, "Whisper transcription unavailable: process failed")
     }
 
     func testTranscriberWritesFailureReasonWhenNoFramesWereCaptured() throws {
@@ -271,6 +304,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
 
         XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: no audio frames were captured\n")
+        XCTAssertEqual(transcriber.failureReason, "Whisper transcription unavailable: no audio frames were captured")
         XCTAssertNil(runner.inputWavURL)
     }
 }
