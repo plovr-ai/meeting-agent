@@ -41,22 +41,15 @@ struct ProbeMain {
 
         log("Starting capture for \(target.displayName) pid=\(target.processID)")
 
-        let tapManager = AudioTapManager()
-        let aggregateManager = AggregateDeviceManager()
-        let frameBuffer = AudioFrameRingBuffer(capacity: 512)
-        let reader = AudioIOReader(frameBuffer: frameBuffer)
+        let captureSession = AudioCaptureSession()
+        let frameBuffer = captureSession.frameBuffer
         defer {
-            reader.stop()
-            aggregateManager.destroyAggregateDevice()
-            tapManager.destroyTap()
+            captureSession.stop()
         }
 
-        let tapID = try tapManager.createTap(for: target)
-        let tapUID = try tapManager.tapUID()
-        let aggregateID = try aggregateManager.createAggregateDevice(named: "MeetingAgent Probe Aggregate", tapUID: tapUID)
-        try reader.start(deviceID: aggregateID)
+        try captureSession.start(target: target)
 
-        log("Capture started tapID=\(tapID) aggregateID=\(aggregateID) tappedProcesses=\(tapManager.tappedProcessCount)")
+        log("Capture started target=\(target.displayName)")
 
         let recordingOutput = try options.wavPath.map {
             try RecordingOutput.defaultOutput(forRequestedWavPath: $0)
@@ -64,8 +57,8 @@ struct ProbeMain {
         let writer = try recordingOutput.map {
             try WavFileWriter(
                 url: $0.wavURL,
-                sampleRate: UInt32(reader.outputSampleRate.rounded()),
-                channelCount: UInt16(reader.outputChannelCount)
+                sampleRate: UInt32(captureSession.outputSampleRate.rounded()),
+                channelCount: UInt16(captureSession.outputChannelCount)
             )
         }
         let transcriber: AudioFrameTranscriber?
