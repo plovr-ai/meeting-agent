@@ -24,13 +24,31 @@ public struct TranscriptSegment: Equatable {
 public struct TranscriptFormatter {
     public static func render(_ segments: [TranscriptSegment]) -> String {
         var mapper = SpeakerLabelMapper()
-        return segments.compactMap { segment in
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return "\(mapper.label(for: segment.speaker)): \(text)"
+        return turns(from: segments).map { turn in
+            let label = mapper.label(for: turn.speaker)
+            return ([label + ":"] + turn.texts).joined(separator: "\n")
         }
-        .joined(separator: "\n")
+        .joined(separator: "\n\n")
     }
+
+    private static func turns(from segments: [TranscriptSegment]) -> [TranscriptTurn] {
+        var turns: [TranscriptTurn] = []
+        for segment in segments {
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            if let lastIndex = turns.indices.last, turns[lastIndex].speaker == segment.speaker {
+                turns[lastIndex].texts.append(text)
+            } else {
+                turns.append(TranscriptTurn(speaker: segment.speaker, texts: [text]))
+            }
+        }
+        return turns
+    }
+}
+
+private struct TranscriptTurn {
+    let speaker: TranscriptSpeaker
+    var texts: [String]
 }
 
 struct SpeakerLabelMapper {

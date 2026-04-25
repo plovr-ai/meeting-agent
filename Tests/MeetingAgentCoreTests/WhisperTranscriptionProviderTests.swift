@@ -157,7 +157,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
         transcriber.finish()
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A: hello from whisper\n")
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello from whisper\n")
         XCTAssertEqual(runner.languageCode, "en")
         XCTAssertNotNil(runner.inputWavURL)
     }
@@ -185,7 +185,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
 
         XCTAssertEqual(runner.runCount, 1)
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A: first chunk\n")
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nfirst chunk\n")
     }
 
     func testTranscriberFiltersBlankAudioMarker() throws {
@@ -211,7 +211,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
         try transcriber.append(AudioFrame(pcm: Data([0x00, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 2))
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A: hello\n")
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello\n")
     }
 
     func testTranscriberWritesFailureReasonWhenRunnerFails() throws {

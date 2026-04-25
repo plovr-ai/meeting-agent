@@ -7,10 +7,26 @@ final class TranscriptSegmentTests: XCTestCase {
             TranscriptSegment(text: "hello")
         ])
 
-        XCTAssertEqual(output, "User A: hello")
+        XCTAssertEqual(output, """
+        User A:
+        hello
+        """)
     }
 
-    func testSpeakerIdentifiersMapToStableLabels() {
+    func testConsecutiveSegmentsFromSameSpeakerRenderAsOneTurn() {
+        let output = TranscriptFormatter.render([
+            TranscriptSegment(text: "first chunk"),
+            TranscriptSegment(text: "second chunk")
+        ])
+
+        XCTAssertEqual(output, """
+        User A:
+        first chunk
+        second chunk
+        """)
+    }
+
+    func testSpeakerChangesStartNewTurnsAndReuseLabels() {
         let output = TranscriptFormatter.render([
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-2"), text: "second speaks first"),
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first speaks second"),
@@ -18,9 +34,14 @@ final class TranscriptSegmentTests: XCTestCase {
         ])
 
         XCTAssertEqual(output, """
-        User A: second speaks first
-        User B: first speaks second
-        User A: second again
+        User A:
+        second speaks first
+
+        User B:
+        first speaks second
+
+        User A:
+        second again
         """)
     }
 
@@ -31,7 +52,10 @@ final class TranscriptSegmentTests: XCTestCase {
             TranscriptSegment(text: "")
         ])
 
-        XCTAssertEqual(output, "User A: hello")
+        XCTAssertEqual(output, """
+        User A:
+        hello
+        """)
     }
 
     func testReplacingCurrentSpeechResultUsesDefaultSpeakerFormat() {
@@ -39,6 +63,9 @@ final class TranscriptSegmentTests: XCTestCase {
             TranscriptSegment(text: "current partial result")
         ])
 
-        XCTAssertEqual(output, "User A: current partial result")
+        XCTAssertEqual(output, """
+        User A:
+        current partial result
+        """)
     }
 }
