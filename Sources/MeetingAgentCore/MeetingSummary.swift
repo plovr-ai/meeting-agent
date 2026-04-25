@@ -91,3 +91,232 @@ public struct MeetingSummary: Codable, Equatable {
         self.failureReason = failureReason
     }
 }
+
+public struct MeetingSummaryInput: Equatable {
+    public let meetingName: String
+    public let startedAt: Date
+    public let endedAt: Date?
+    public let language: String?
+    public let meetingGoal: String?
+    public let segments: [TranscriptSegment]
+    public let generatedAt: Date
+
+    public init(
+        meetingName: String,
+        startedAt: Date,
+        endedAt: Date?,
+        language: String?,
+        meetingGoal: String?,
+        segments: [TranscriptSegment],
+        generatedAt: Date = Date()
+    ) {
+        self.meetingName = meetingName
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.language = language
+        self.meetingGoal = meetingGoal
+        self.segments = segments
+        self.generatedAt = generatedAt
+    }
+}
+
+public protocol MeetingSummaryProvider {
+    var providerName: String { get }
+    func generateSummary(input: MeetingSummaryInput) throws -> MeetingSummary
+}
+
+public struct ExtractiveMeetingSummaryProvider: MeetingSummaryProvider {
+    public let providerName = "extractive-local"
+
+    public init() {}
+
+    public func generateSummary(input: MeetingSummaryInput) throws -> MeetingSummary {
+        let usableSegments = input.segments.compactMap(SummarySegment.init(segment:))
+        guard !usableSegments.isEmpty else {
+            return MeetingSummary(
+                overview: "",
+                keyTopics: [],
+                decisions: [],
+                actionItems: [],
+                openQuestions: [],
+                risks: [],
+                followUps: [],
+                language: input.language,
+                sourceSegmentIDs: [],
+                generatedAt: input.generatedAt,
+                provider: providerName,
+                status: .failed,
+                failureReason: "No usable transcript segments were available for summary generation."
+            )
+        }
+
+        let decisions = usableSegments
+            .filter { containsAny($0.lowercasedText, keywords: Self.decisionKeywords) }
+            .map {
+                MeetingDecision(
+                    description: $0.text,
+                    participants: $0.speakerLabel.map { [$0] } ?? [],
+                    sourceSegmentIDs: [$0.id],
+                    confidence: 0.65
+                )
+            }
+
+        let actionItems = usableSegments
+            .filter { containsAny($0.lowercasedText, keywords: Self.actionKeywords) }
+            .map {
+                MeetingActionItem(
+                    description: $0.text,
+                    owner: inferredOwner(from: $0.text),
+                    dueDate: nil,
+                    sourceSegmentIDs: [$0.id],
+                    confidence: 0.6
+                )
+            }
+
+        let openQuestions = usableSegments
+            .filter { isQuestion($0.text) }
+            .map(\.text)
+
+        let risks = usableSegments
+            .filter { containsAny($0.lowercasedText, keywords: Self.riskKeywords) }
+            .map(\.text)
+
+        let overview = overview(from: usableSegments, meetingGoal: input.meetingGoal)
+        return MeetingSummary(
+            overview: overview,
+            keyTopics: keyTopics(from: usableSegments, meetingName: input.meetingName),
+            decisions: decisions,
+            actionItems: actionItems,
+            openQuestions: openQuestions,
+            risks: risks,
+            followUps: actionItems.map(\.description),
+            language: input.language ?? usableSegments.compactMap(\.language).first,
+            sourceSegmentIDs: usableSegments.map(\.id),
+            generatedAt: input.generatedAt,
+            provider: providerName,
+            status: .succeeded,
+            failureReason: nil
+        )
+    }
+
+    private static let decisionKeywords = ["decided", "decision", "approved", "agreed"]
+    private static let actionKeywords = ["action item", "todo", "follow up", "will", "need to"]
+    private static let questionKeywords = ["can ", "could ", "should ", "what ", "when ", "where ", "who ", "why ", "how "]
+    private static let riskKeywords = ["risk", "blocked", "concern", "delay", "issue"]
+
+    private func containsAny(_ text: String, keywords: [String]) -> Bool {
+        keywords.contains { text.contains($0) }
+    }
+
+    private func isQuestion(_ text: String) -> Bool {
+        let lowercased = text.lowercased()
+        return text.hasSuffix("?") || containsAny(lowercased, keywords: Self.questionKeywords)
+    }
+
+    private func overview(from segments: [SummarySegment], meetingGoal: String?) -> String {
+        if let meetingGoal, !meetingGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "The meeting focused on \(meetingGoal.trimmingCharacters(in: .whitespacesAndNewlines)). \(segments[0].text)"
+        }
+        return segments.prefix(2).map(\.text).joined(separator: " ")
+    }
+
+    private func keyTopics(from segments: [SummarySegment], meetingName: String) -> [String] {
+        let name = meetingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            return [name]
+        }
+        return Array(
+            Set(segments.flatMap { words(from: $0.text).filter { $0.count > 5 } })
+        )
+        .sorted()
+        .prefix(3)
+        .map { String($0) }
+    }
+
+    private func inferredOwner(from text: String) -> String? {
+        let words = text.split(separator: " ")
+        guard let first = words.first else { return nil }
+        let candidate = String(first).trimmingCharacters(in: .punctuationCharacters)
+        guard candidate.first?.isUppercase == true else { return nil }
+        return candidate
+    }
+
+    private func words(from text: String) -> [String] {
+        text.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+public enum MeetingSummaryMarkdownRenderer {
+    public static func render(_ summary: MeetingSummary) -> String {
+        var lines: [String] = [
+            "# Meeting Summary",
+            "",
+            "Status: \(summary.status.rawValue)",
+            "Provider: \(summary.provider)",
+            ""
+        ]
+
+        if let failureReason = summary.failureReason {
+            lines.append("Failure reason: \(failureReason)")
+            lines.append("")
+        }
+
+        appendSection("Overview", items: [summary.overview], to: &lines)
+        appendSection("Key Topics", items: summary.keyTopics, to: &lines)
+        appendSection("Decisions", items: summary.decisions.map(\.description), to: &lines)
+        appendSection("Action Items", items: summary.actionItems.map(\.description), to: &lines)
+        appendSection("Open Questions", items: summary.openQuestions, to: &lines)
+        appendSection("Risks", items: summary.risks, to: &lines)
+        appendSection("Follow Ups", items: summary.followUps, to: &lines)
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func appendSection(_ title: String, items: [String], to lines: inout [String]) {
+        let visibleItems = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !visibleItems.isEmpty else { return }
+        lines.append("## \(title)")
+        lines.append("")
+        if visibleItems.count == 1, title == "Overview" {
+            lines.append(visibleItems[0])
+        } else {
+            lines.append(contentsOf: visibleItems.map { "- \($0)" })
+        }
+        lines.append("")
+    }
+}
+
+public enum MeetingSummaryWriter {
+    public static func write(_ summary: MeetingSummary, jsonURL: URL, markdownURL: URL) throws {
+        let data = try JSONEncoder.meetingAgent.encode(summary)
+        try data.write(to: jsonURL, options: .atomic)
+        try MeetingSummaryMarkdownRenderer.render(summary).write(to: markdownURL, atomically: true, encoding: .utf8)
+    }
+
+    public static func read(from url: URL) throws -> MeetingSummary {
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder.meetingAgent.decode(MeetingSummary.self, from: data)
+    }
+}
+
+private struct SummarySegment {
+    let id: String
+    let text: String
+    let lowercasedText: String
+    let speakerLabel: String?
+    let language: String?
+
+    init?(segment: TranscriptSegment) {
+        let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        self.id = segment.id
+        self.text = text
+        self.lowercasedText = text.lowercased()
+        self.speakerLabel = segment.speakerLabel
+        self.language = segment.language
+    }
+}
