@@ -113,10 +113,10 @@ private struct MeetingDetailView: View {
     }
 
     private func transcriptText(for meeting: MeetingRecord) -> String {
-        guard let transcriptURL = meeting.transcriptURL,
-              let text = try? String(contentsOf: transcriptURL, encoding: .utf8),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
+        guard let text = TranscriptFileWriter.renderedTranscript(
+            textURL: meeting.transcriptURL,
+            structuredURL: meeting.transcriptJSONURL
+        ) else {
             return "Transcript will appear here while recording."
         }
         return text

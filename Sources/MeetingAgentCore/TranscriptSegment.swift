@@ -4,20 +4,75 @@ public struct TranscriptSpeaker: Equatable, Hashable {
     public static let `default` = TranscriptSpeaker(identifier: nil)
 
     public let identifier: String?
+    public let label: String?
 
-    public init(identifier: String?) {
+    public init(identifier: String?, label: String? = nil) {
         let trimmed = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.identifier = trimmed.flatMap { $0.isEmpty ? nil : $0 }
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.label = trimmedLabel.flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
-public struct TranscriptSegment: Equatable {
-    public let speaker: TranscriptSpeaker
-    public let text: String
+public enum TranscriptTimingSource: String, Codable, Equatable {
+    case precise
+    case approximate
+    case unavailable
+}
 
-    public init(speaker: TranscriptSpeaker = .default, text: String) {
-        self.speaker = speaker
+public struct TranscriptSegment: Codable, Equatable, Identifiable {
+    public let id: String
+    public let speakerID: String?
+    public let speakerLabel: String?
+    public let startTimeSeconds: Double?
+    public let endTimeSeconds: Double?
+    public let text: String
+    public let language: String?
+    public let sourceProvider: String
+    public let isFinal: Bool
+    public let confidence: Double?
+    public let createdAt: Date
+    public let timingSource: TranscriptTimingSource
+
+    public var speaker: TranscriptSpeaker {
+        TranscriptSpeaker(identifier: speakerID, label: speakerLabel)
+    }
+
+    public init(
+        id: String = UUID().uuidString,
+        speaker: TranscriptSpeaker = .default,
+        startTimeSeconds: Double? = nil,
+        endTimeSeconds: Double? = nil,
+        text: String,
+        language: String? = nil,
+        sourceProvider: String = "unknown",
+        isFinal: Bool = true,
+        confidence: Double? = nil,
+        createdAt: Date = Date(),
+        timingSource: TranscriptTimingSource = .unavailable
+    ) {
+        self.id = id
+        self.speakerID = speaker.identifier
+        self.speakerLabel = speaker.label
+        self.startTimeSeconds = startTimeSeconds
+        self.endTimeSeconds = endTimeSeconds
         self.text = text
+        self.language = language
+        self.sourceProvider = sourceProvider
+        self.isFinal = isFinal
+        self.confidence = confidence
+        self.createdAt = createdAt
+        self.timingSource = timingSource
+    }
+}
+
+public struct TranscriptDocument: Codable, Equatable {
+    public let version: Int
+    public var segments: [TranscriptSegment]
+
+    public init(version: Int = 1, segments: [TranscriptSegment] = []) {
+        self.version = version
+        self.segments = segments
     }
 }
 
@@ -56,6 +111,9 @@ struct SpeakerLabelMapper {
     private var nextIndex = 0
 
     mutating func label(for speaker: TranscriptSpeaker) -> String {
+        if let label = speaker.label {
+            return label
+        }
         if let existing = labelsBySpeaker[speaker] {
             return existing
         }

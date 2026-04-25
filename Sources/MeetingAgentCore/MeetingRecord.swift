@@ -7,6 +7,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var endedAt: Date?
     public var audioURL: URL?
     public var transcriptURL: URL?
+    public var transcriptJSONURL: URL?
     public var diagnosticsURL: URL?
 
     public init(
@@ -16,6 +17,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         endedAt: Date?,
         audioURL: URL?,
         transcriptURL: URL?,
+        transcriptJSONURL: URL? = nil,
         diagnosticsURL: URL? = nil
     ) {
         self.id = id
@@ -24,6 +26,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.endedAt = endedAt
         self.audioURL = audioURL
         self.transcriptURL = transcriptURL
+        self.transcriptJSONURL = transcriptJSONURL
         self.diagnosticsURL = diagnosticsURL
     }
 }

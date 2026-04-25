@@ -71,13 +71,22 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
         request.taskHint = .dictation
 
         let writer = try TranscriptFileWriter(url: transcriptURL)
-        let transcriber = SystemSpeechTranscriber(request: request, writer: writer)
+        let transcriber = SystemSpeechTranscriber(
+            request: request,
+            writer: writer
+        )
         transcriber.task = recognizer.recognitionTask(with: request) { result, error in
             if let result {
-                let transcript = TranscriptFormatter.render([
-                    TranscriptSegment(text: result.bestTranscription.formattedString)
+                try? writer.replace(with: [
+                    TranscriptSegment(
+                        id: "local-current",
+                        text: result.bestTranscription.formattedString,
+                        language: localeIdentifier,
+                        sourceProvider: "local",
+                        isFinal: result.isFinal,
+                        timingSource: .unavailable
+                    )
                 ])
-                try? writer.replace(with: transcript)
             }
             if error != nil {
                 try? writer.close()

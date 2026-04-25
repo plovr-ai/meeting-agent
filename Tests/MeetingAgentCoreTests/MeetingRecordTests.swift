@@ -12,7 +12,8 @@ final class MeetingRecordTests: XCTestCase {
             startedAt: startedAt,
             endedAt: endedAt,
             audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
-            transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt")
+            transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
+            transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json")
         )
 
         let data = try JSONEncoder.meetingAgent.encode(record)
@@ -49,5 +50,6 @@ final class MeetingRecordTests: XCTestCase {
         let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
 
         XCTAssertNil(decoded.diagnosticsURL)
+        XCTAssertNil(decoded.transcriptJSONURL)
     }
 }
