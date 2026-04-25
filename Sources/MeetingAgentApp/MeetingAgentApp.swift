@@ -15,12 +15,15 @@ struct MeetingAgentApp: App {
                 }
                 .task {
                     try? viewModel.loadMeetings()
+                    var lastProcessPoll = Date.distantPast
                     while !Task.isCancelled {
-                        if let candidate = viewModel.pollForMeetingCandidates() {
+                        if Date().timeIntervalSince(lastProcessPoll) >= 3,
+                           let candidate = viewModel.pollForMeetingCandidates() {
+                            lastProcessPoll = Date()
                             appDelegate.notifyMeetingDetected(candidate)
                         }
                         viewModel.drainRecordingFrames()
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        try? await Task.sleep(nanoseconds: 250_000_000)
                     }
                 }
         }

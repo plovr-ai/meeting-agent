@@ -46,6 +46,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Idle")
         XCTAssertFalse(viewModel.isRecording)
     }
+
+    func testSpeechLocaleCanBeConfiguredForAppRecording() {
+        let viewModel = MeetingAgentViewModel(speechLocaleIdentifier: "zh-CN")
+
+        XCTAssertEqual(viewModel.speechLocaleIdentifier, "zh-CN")
+        XCTAssertEqual(viewModel.speechProvider, .whisper)
+
+        viewModel.updateSpeechLocaleIdentifier(" ja-JP ")
+
+        XCTAssertEqual(viewModel.speechLocaleIdentifier, "ja-JP")
+    }
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {

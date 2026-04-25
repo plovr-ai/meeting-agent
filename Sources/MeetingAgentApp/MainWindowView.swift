@@ -6,19 +6,32 @@ struct MainWindowView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding(
-                get: { viewModel.selectedMeetingID },
-                set: { viewModel.selectMeeting($0) }
-            )) {
-                ForEach(viewModel.meetings) { meeting in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(meeting.name)
-                            .font(.headline)
-                        Text(meeting.startedAt, style: .date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                TextField(
+                    "STT Locale",
+                    text: Binding(
+                        get: { viewModel.speechLocaleIdentifier },
+                        set: { viewModel.updateSpeechLocaleIdentifier($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                .disabled(viewModel.isRecording)
+                .padding([.horizontal, .top], 12)
+
+                List(selection: Binding(
+                    get: { viewModel.selectedMeetingID },
+                    set: { viewModel.selectMeeting($0) }
+                )) {
+                    ForEach(viewModel.meetings) { meeting in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(meeting.name)
+                                .font(.headline)
+                            Text(meeting.startedAt, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .tag(Optional(meeting.id))
                     }
-                    .tag(Optional(meeting.id))
                 }
             }
             .navigationTitle("Meetings")
@@ -36,17 +49,17 @@ struct MainWindowView: View {
             "Meeting detected",
             isPresented: Binding(
                 get: { viewModel.pendingCandidate != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.ignorePendingCandidate()
-                    }
-                }
+                set: { _ in }
             ),
             presenting: viewModel.pendingCandidate
-        ) { _ in
+        ) { target in
             Button("Start Recording") {
                 Task {
-                    try? await viewModel.startRecordingForPendingCandidate()
+                    do {
+                        try await viewModel.startRecording(for: target)
+                    } catch {
+                        viewModel.setRecordingStartError(error)
+                    }
                 }
             }
             Button("Not Now", role: .cancel) {

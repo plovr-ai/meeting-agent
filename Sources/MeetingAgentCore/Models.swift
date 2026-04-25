@@ -5,11 +5,18 @@ public struct AudioCaptureTarget: Equatable, Identifiable {
     public let processID: pid_t
     public let displayName: String
     public let bundleIdentifier: String?
+    public let isAudioOutputActive: Bool
 
-    public init(processID: pid_t, displayName: String, bundleIdentifier: String?) {
+    public init(
+        processID: pid_t,
+        displayName: String,
+        bundleIdentifier: String?,
+        isAudioOutputActive: Bool = true
+    ) {
         self.processID = processID
         self.displayName = displayName
         self.bundleIdentifier = bundleIdentifier
+        self.isAudioOutputActive = isAudioOutputActive
     }
 }
 

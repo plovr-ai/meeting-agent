@@ -44,4 +44,26 @@ final class MeetingProcessMonitorTests: XCTestCase {
 
         XCTAssertEqual(candidates, [])
     }
+
+    func testDetectsPreferredTargetOnlyWhenAudioOutputIsActive() {
+        let inactiveChrome = AudioCaptureTarget(
+            processID: 456,
+            displayName: "Google Chrome",
+            bundleIdentifier: "com.google.Chrome",
+            isAudioOutputActive: false
+        )
+        let activeChrome = AudioCaptureTarget(
+            processID: 456,
+            displayName: "Google Chrome",
+            bundleIdentifier: "com.google.Chrome",
+            isAudioOutputActive: true
+        )
+        let monitor = MeetingProcessMonitor()
+
+        let inactive = monitor.detectNewCandidates(in: [inactiveChrome], isRecording: false)
+        let active = monitor.detectNewCandidates(in: [activeChrome], isRecording: false)
+
+        XCTAssertEqual(inactive, [])
+        XCTAssertEqual(active, [activeChrome])
+    }
 }

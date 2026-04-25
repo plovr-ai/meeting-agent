@@ -7,15 +7,24 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var selectedMeetingID: UUID?
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
     @Published public private(set) var statusText: String = "Idle"
+    @Published public private(set) var speechLocaleIdentifier: String
+    @Published public private(set) var speechProvider: SpeechProvider
 
     private let store: MeetingStore
     private let recorder: MeetingRecorder
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
 
-    public init(store: MeetingStore = MeetingStore(), recorder: MeetingRecorder? = nil) {
+    public init(
+        store: MeetingStore = MeetingStore(),
+        recorder: MeetingRecorder? = nil,
+        speechLocaleIdentifier: String = Locale.current.identifier,
+        speechProvider: SpeechProvider = .whisper
+    ) {
         self.store = store
         self.recorder = recorder ?? MeetingRecorder(store: store)
+        self.speechLocaleIdentifier = Self.normalizedSpeechLocaleIdentifier(speechLocaleIdentifier)
+        self.speechProvider = speechProvider
     }
 
     public func loadMeetings() throws {
@@ -49,20 +58,42 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Recording \(record.name)"
     }
 
-    public func startRecordingForPendingCandidate(localeIdentifier: String = "en-US") async throws {
+    public func updateSpeechLocaleIdentifier(_ localeIdentifier: String) {
+        speechLocaleIdentifier = Self.normalizedSpeechLocaleIdentifier(localeIdentifier)
+    }
+
+    public func startRecordingForPendingCandidate(localeIdentifier: String? = nil) async throws {
         guard let candidate = pendingCandidate else { return }
+        try await startRecording(for: candidate, localeIdentifier: localeIdentifier)
+    }
+
+    public func startRecording(for candidate: AudioCaptureTarget, localeIdentifier: String? = nil) async throws {
         let record = try recorder.prepareRecord(for: candidate)
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
         activeTarget = candidate
         pendingCandidate = nil
-        try await recorder.startRecording(
-            target: candidate,
-            record: record,
-            speechProvider: .local,
-            localeIdentifier: localeIdentifier
-        )
+        let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechLocaleIdentifier
+        do {
+            try await recorder.startRecording(
+                target: candidate,
+                record: record,
+                speechProvider: speechProvider,
+                localeIdentifier: recordingLocaleIdentifier
+            )
+        } catch {
+            if let stopped = try? recorder.stopRecording(),
+               let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+                meetings[index] = stopped
+            }
+            activeTarget = nil
+            throw error
+        }
         statusText = "Recording \(record.name)"
+    }
+
+    public func setRecordingStartError(_ error: Error) {
+        statusText = "Recording failed: \(error)"
     }
 
     public func drainRecordingFrames() {
@@ -103,5 +134,10 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public var selectedMeeting: MeetingRecord? {
         meetings.first { $0.id == selectedMeetingID }
+    }
+
+    private static func normalizedSpeechLocaleIdentifier(_ localeIdentifier: String) -> String {
+        let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "en-US" : trimmed
     }
 }

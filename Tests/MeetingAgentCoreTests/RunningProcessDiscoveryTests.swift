@@ -50,4 +50,25 @@ final class RunningProcessDiscoveryTests: XCTestCase {
 
         XCTAssertEqual(selected?.processID, 201)
     }
+
+    func testAutomaticTargetRequiresActiveAudioOutput() {
+        let targets = [
+            AudioCaptureTarget(
+                processID: 201,
+                displayName: "Google Chrome",
+                bundleIdentifier: "com.google.Chrome",
+                isAudioOutputActive: false
+            ),
+            AudioCaptureTarget(
+                processID: 202,
+                displayName: "zoom.us",
+                bundleIdentifier: "us.zoom.xos",
+                isAudioOutputActive: true
+            )
+        ]
+
+        let selected = RunningProcessDiscovery.automaticTarget(from: targets)
+
+        XCTAssertEqual(selected?.processID, 202)
+    }
 }

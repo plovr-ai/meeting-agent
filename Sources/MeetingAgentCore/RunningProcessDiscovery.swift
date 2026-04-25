@@ -23,6 +23,14 @@ public struct RunningProcessDiscovery {
             )
         }
         return targets(from: apps, currentProcessID: ProcessInfo.processInfo.processIdentifier)
+            .map { target in
+                AudioCaptureTarget(
+                    processID: target.processID,
+                    displayName: target.displayName,
+                    bundleIdentifier: target.bundleIdentifier,
+                    isAudioOutputActive: CoreAudioHelpers.isAudioOutputActive(for: target)
+                )
+            }
     }
 
     public static func targets(from apps: [RunningAppSnapshot], currentProcessID: pid_t) -> [AudioCaptureTarget] {
@@ -50,7 +58,8 @@ public struct RunningProcessDiscovery {
 
     public static func automaticTarget(from targets: [AudioCaptureTarget]) -> AudioCaptureTarget? {
         targets.first { target in
-            target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false
+            (target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false)
+                && target.isAudioOutputActive
         }
     }
 }

@@ -77,10 +77,10 @@ final class RecordingOutputTests: XCTestCase {
         XCTAssertEqual(options.speechLocaleIdentifier, "zh-CN")
     }
 
-    func testSpeechProviderDefaultsToLocal() throws {
+    func testSpeechProviderDefaultsToWhisper() throws {
         let options = try ProbeOptions(arguments: ["--seconds", "5"])
 
-        XCTAssertEqual(options.speechProvider, .local)
+        XCTAssertEqual(options.speechProvider, .whisper)
     }
 
     func testSpeechProviderCanBeConfiguredToLocal() throws {

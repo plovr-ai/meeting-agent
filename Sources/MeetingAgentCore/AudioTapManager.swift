@@ -24,7 +24,7 @@ public final class AudioTapManager {
         description.name = "MeetingAgent Tap: \(target.displayName)"
         description.processes = processObjectIDs
         description.isPrivate = true
-        description.isExclusive = true
+        description.isExclusive = false
         description.isMixdown = true
         description.isMono = true
         description.muteBehavior = .unmuted

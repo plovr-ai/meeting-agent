@@ -90,6 +90,31 @@ enum CoreAudioHelpers {
         return [try processObjectID(for: target.processID)]
     }
 
+    static func isAudioOutputActive(for target: AudioCaptureTarget) -> Bool {
+        do {
+            let processObjectIDs = try audioProcessObjectList()
+            return try processObjectIDs.contains { processObjectID in
+                let pid = try pid(forProcessObjectID: processObjectID)
+                if pid == target.processID {
+                    return try isRunningOutput(processObjectID: processObjectID)
+                }
+
+                guard try isRunningOutput(processObjectID: processObjectID) else {
+                    return false
+                }
+
+                guard let targetBundleID = target.bundleIdentifier,
+                      let processBundleID = try bundleID(forProcessObjectID: processObjectID) else {
+                    return false
+                }
+
+                return bundleID(processBundleID, matchesCaptureBundleID: targetBundleID)
+            }
+        } catch {
+            return false
+        }
+    }
+
     static func bundleID(_ bundleID: String, matchesCaptureBundleID captureBundleID: String) -> Bool {
         bundleID == captureBundleID || bundleID.hasPrefix("\(captureBundleID).")
     }

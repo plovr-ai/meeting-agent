@@ -14,7 +14,7 @@ public struct ProbeOptions {
         var parsedPID: pid_t?
         var parsedSeconds = 10
         var parsedWavPath: String?
-        var parsedSpeechProvider = SpeechProvider.local
+        var parsedSpeechProvider = SpeechProvider.whisper
         var parsedSpeechLocaleIdentifier = "en-US"
 
         var index = 0

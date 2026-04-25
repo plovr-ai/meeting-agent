@@ -41,6 +41,7 @@ The CLI still writes debug output to `.record/`.
 
 When `--pid` is omitted, the program auto-selects the first preferred running meeting app or common Google Meet browser process. Use `--pid` to override that selection.
 Implemented STT providers are `local`, backed by macOS Speech, and `whisper`, backed by a local `whisper.cpp` CLI and model.
+The default STT provider is `whisper` for both the app and CLI. Use `--stt-provider local` only when explicitly testing macOS Speech.
 The `whisper` STT provider uses a local `whisper.cpp` CLI and model. Configure it with `MEETING_AGENT_WHISPER_BIN` and `MEETING_AGENT_WHISPER_MODEL`, for example:
 
 ```sh
