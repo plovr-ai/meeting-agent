@@ -30,6 +30,22 @@ Never use process-global persistence directly in unit tests; inject an isolated 
 
 ---
 
+## [14] Apply patches in the active issue worktree
+
+**Date**: 2026-04-25
+**Category**: wrong-assumption
+
+### What went wrong
+The first regression test patch was applied from the original checkout after creating the issue worktree, so verification in the worktree did not compile or run the new test.
+
+### Correct approach
+Use absolute paths or verify `git status --short` in the issue worktree immediately after every patch when working outside the original checkout.
+
+### How to avoid
+After creating a worktree, apply patches with the worktree path and confirm the changed files are visible there before running tests.
+
+---
+
 ## [7] Applying patches from a linked worktree
 
 **Date**: 2026-04-25
