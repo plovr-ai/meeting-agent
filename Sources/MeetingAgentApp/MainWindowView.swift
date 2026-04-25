@@ -25,6 +25,27 @@ struct MainWindowView: View {
         } detail: {
             MeetingDetailView(meeting: viewModel.selectedMeeting, statusText: viewModel.statusText)
         }
+        .alert(
+            "Meeting detected",
+            isPresented: Binding(
+                get: { viewModel.pendingCandidate != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.ignorePendingCandidate()
+                    }
+                }
+            ),
+            presenting: viewModel.pendingCandidate
+        ) { _ in
+            Button("Start Recording") {
+                try? viewModel.acceptPendingCandidate()
+            }
+            Button("Not Now", role: .cancel) {
+                viewModel.ignorePendingCandidate()
+            }
+        } message: { target in
+            Text("\(target.displayName) detected. Start recording?")
+        }
     }
 }
 

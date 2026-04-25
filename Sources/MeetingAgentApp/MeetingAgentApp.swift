@@ -15,6 +15,12 @@ struct MeetingAgentApp: App {
                 }
                 .task {
                     try? viewModel.loadMeetings()
+                    while !Task.isCancelled {
+                        if let candidate = viewModel.pollForMeetingCandidates() {
+                            appDelegate.notifyMeetingDetected(candidate)
+                        }
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    }
                 }
         }
     }

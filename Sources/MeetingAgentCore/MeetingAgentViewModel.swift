@@ -10,6 +10,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private let store: MeetingStore
     private let recorder: MeetingRecorder
+    private let processMonitor = MeetingProcessMonitor()
 
     public init(store: MeetingStore = MeetingStore(), recorder: MeetingRecorder? = nil) {
         self.store = store
@@ -31,6 +32,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Idle"
     }
 
+    public func ignorePendingCandidate() {
+        if let pendingCandidate {
+            processMonitor.ignore(processID: pendingCandidate.processID)
+        }
+        rejectPendingCandidate()
+    }
+
     public func acceptPendingCandidate(startedAt: Date = Date()) throws {
         guard let candidate = pendingCandidate else { return }
         let record = try recorder.prepareRecord(for: candidate, startedAt: startedAt)
@@ -42,6 +50,24 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func selectMeeting(_ id: UUID?) {
         selectedMeetingID = id
+    }
+
+    public func pollForMeetingCandidates() -> AudioCaptureTarget? {
+        let targets = RunningProcessDiscovery.currentTargets()
+        processMonitor.reconcileRunningProcessIDs(Set(targets.map(\.processID)))
+        let candidates = processMonitor.detectNewCandidates(
+            in: targets,
+            isRecording: isRecording
+        )
+        guard let candidate = candidates.first else { return nil }
+        setPendingCandidate(candidate)
+        return candidate
+    }
+
+    public var isRecording: Bool {
+        if case .recording = recorder.state { return true }
+        if case .prepared = recorder.state { return true }
+        return false
     }
 
     public var selectedMeeting: MeetingRecord? {
