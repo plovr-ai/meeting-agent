@@ -63,4 +63,100 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(configuration.binaryURL, binURL)
         XCTAssertEqual(configuration.modelURL, modelURL)
     }
+
+    func testProcessRunnerBuildsExpectedArgumentsWithLanguage() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binaryURL = directory.appendingPathComponent("whisper-cli")
+        let modelURL = directory.appendingPathComponent("ggml-small.bin")
+        let inputURL = directory.appendingPathComponent("input.wav")
+        let outputBaseURL = directory.appendingPathComponent("transcript")
+        let outputTextURL = outputBaseURL.appendingPathExtension("txt")
+        FileManager.default.createFile(atPath: outputTextURL.path, contents: Data("hello\n".utf8))
+
+        let runner = RecordingWhisperProcessRunner(exitCode: 0)
+
+        try runner.run(
+            binaryURL: binaryURL,
+            modelURL: modelURL,
+            inputWavURL: inputURL,
+            outputBaseURL: outputBaseURL,
+            languageCode: "zh"
+        )
+
+        XCTAssertEqual(runner.recordedBinaryURL, binaryURL)
+        XCTAssertEqual(runner.recordedArguments, [
+            "-m", modelURL.path,
+            "-f", inputURL.path,
+            "-l", "zh",
+            "-otxt",
+            "-of", outputBaseURL.path
+        ])
+    }
+
+    func testProcessRunnerOmitsBlankLanguage() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runner = RecordingWhisperProcessRunner(exitCode: 0)
+
+        try runner.run(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin"),
+            inputWavURL: directory.appendingPathComponent("input.wav"),
+            outputBaseURL: directory.appendingPathComponent("transcript"),
+            languageCode: nil
+        )
+
+        XCTAssertFalse(runner.recordedArguments.contains("-l"))
+    }
+
+    func testProcessRunnerThrowsWhenExitCodeIsNonZero() {
+        let runner = RecordingWhisperProcessRunner(exitCode: 2, stderr: "model failed")
+        let directory = FileManager.default.temporaryDirectory
+
+        XCTAssertThrowsError(try runner.run(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin"),
+            inputWavURL: directory.appendingPathComponent("input.wav"),
+            outputBaseURL: directory.appendingPathComponent("transcript"),
+            languageCode: "en"
+        )) { error in
+            XCTAssertEqual(String(describing: error), "Speech recognition error: Whisper transcription unavailable: whisper-cli exited with status 2: model failed")
+        }
+    }
+}
+
+private final class RecordingWhisperProcessRunner: WhisperProcessRunning {
+    let exitCode: Int32
+    let stderr: String
+    private(set) var recordedBinaryURL: URL?
+    private(set) var recordedArguments: [String] = []
+
+    init(exitCode: Int32, stderr: String = "") {
+        self.exitCode = exitCode
+        self.stderr = stderr
+    }
+
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws {
+        recordedBinaryURL = binaryURL
+        recordedArguments = WhisperProcessRunner.arguments(
+            modelURL: modelURL,
+            inputWavURL: inputWavURL,
+            outputBaseURL: outputBaseURL,
+            languageCode: languageCode
+        )
+        if exitCode != 0 {
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: whisper-cli exited with status \(exitCode): \(stderr)")
+        }
+    }
 }

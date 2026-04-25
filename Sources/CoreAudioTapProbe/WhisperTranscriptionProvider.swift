@@ -68,3 +68,70 @@ enum WhisperLanguageMapper {
         return trimmed.components(separatedBy: separators).first.flatMap { $0.isEmpty ? nil : $0 }
     }
 }
+
+protocol WhisperProcessRunning {
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws
+}
+
+struct WhisperProcessRunner: WhisperProcessRunning {
+    func run(
+        binaryURL: URL,
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) throws {
+        let process = Process()
+        process.executableURL = binaryURL
+        process.arguments = Self.arguments(
+            modelURL: modelURL,
+            inputWavURL: inputWavURL,
+            outputBaseURL: outputBaseURL,
+            languageCode: languageCode
+        )
+
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: failed to launch whisper-cli: \(error)")
+        }
+
+        guard process.terminationStatus == 0 else {
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderr = String(data: stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = stderr.map { $0.isEmpty ? "" : ": \($0)" } ?? ""
+            throw ProbeError.speechRecognition("Whisper transcription unavailable: whisper-cli exited with status \(process.terminationStatus)\(suffix)")
+        }
+    }
+
+    static func arguments(
+        modelURL: URL,
+        inputWavURL: URL,
+        outputBaseURL: URL,
+        languageCode: String?
+    ) -> [String] {
+        var arguments = [
+            "-m", modelURL.path,
+            "-f", inputWavURL.path
+        ]
+        if let languageCode, !languageCode.isEmpty {
+            arguments += ["-l", languageCode]
+        }
+        arguments += [
+            "-otxt",
+            "-of", outputBaseURL.path
+        ]
+        return arguments
+    }
+}
