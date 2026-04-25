@@ -109,6 +109,15 @@ struct MainWindowView: View {
                     Task {
                         await viewModel.retryTranscription(for: meeting.id)
                     }
+                },
+                regenerateSummary: { meetingID in
+                    Task {
+                        do {
+                            try await viewModel.generateSummary(for: meetingID)
+                        } catch {
+                            viewModel.setRecordingStartError(error)
+                        }
+                    }
                 }
             )
         }
@@ -202,6 +211,7 @@ private struct MeetingDetailView: View {
     let exportMeetingData: (MeetingRecord) -> Void
     let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
+    let regenerateSummary: (UUID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -271,6 +281,14 @@ private struct MeetingDetailView: View {
                     }
                 }
                 Divider()
+                Text("Summary")
+                    .font(.headline)
+                summaryView(for: meeting)
+                Button("Regenerate Summary") {
+                    regenerateSummary(meeting.id)
+                }
+                .disabled(isRecording)
+                Divider()
                 Text("Transcript")
                     .font(.headline)
                 ScrollView {
@@ -312,5 +330,55 @@ private struct MeetingDetailView: View {
         case .retryRequested:
             return "Retry requested"
         }
+    }
+
+    @ViewBuilder
+    private func summaryView(for meeting: MeetingRecord) -> some View {
+        if let summary = summary(for: meeting) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if summary.status == .failed {
+                        Text(summary.failureReason ?? "Summary generation failed.")
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    } else {
+                        if !summary.overview.isEmpty {
+                            Text(summary.overview)
+                                .textSelection(.enabled)
+                        }
+                        summaryList(title: "Decisions", items: summary.decisions.map(\.description))
+                        summaryList(title: "Action Items", items: summary.actionItems.map(\.description))
+                        summaryList(title: "Open Questions", items: summary.openQuestions)
+                        summaryList(title: "Risks", items: summary.risks)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 120, maxHeight: 220)
+        } else {
+            Text("No summary generated yet.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func summaryList(title: String, items: [String]) -> some View {
+        let visibleItems = items.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !visibleItems.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                ForEach(Array(visibleItems.enumerated()), id: \.offset) { _, item in
+                    Text("- \(item)")
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func summary(for meeting: MeetingRecord) -> MeetingSummary? {
+        guard let summaryJSONURL = meeting.summaryJSONURL else { return nil }
+        return try? MeetingSummaryWriter.read(from: summaryJSONURL)
     }
 }
