@@ -4,6 +4,7 @@ public struct RecordingOutput {
     public let directory: URL
     public let wavURL: URL
     public let transcriptURL: URL
+    public let diagnosticsURL: URL
 
     public static func defaultOutput(
         forRequestedWavPath wavPath: String,
@@ -21,10 +22,16 @@ public struct RecordingOutput {
         }
         let wavURL = directory.appendingPathComponent(wavName)
         let transcriptURL = wavURL.deletingPathExtension().appendingPathExtension("txt")
+        let diagnosticsURL = directory.appendingPathComponent("diagnostics.json")
 
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        return RecordingOutput(directory: directory, wavURL: wavURL, transcriptURL: transcriptURL)
+        return RecordingOutput(
+            directory: directory,
+            wavURL: wavURL,
+            transcriptURL: transcriptURL,
+            diagnosticsURL: diagnosticsURL
+        )
     }
 
     private static func timestampedWavName(timestamp: Date, timeZone: TimeZone) -> String {

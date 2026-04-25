@@ -4,6 +4,7 @@ public final class AudioFrameRingBuffer {
     private let lock = NSLock()
     private let capacity: Int
     private var frames: [AudioFrame] = []
+    private var droppedFrames = 0
 
     public init(capacity: Int) {
         self.capacity = max(1, capacity)
@@ -15,7 +16,9 @@ public final class AudioFrameRingBuffer {
 
         frames.append(frame)
         if frames.count > capacity {
-            frames.removeFirst(frames.count - capacity)
+            let overflow = frames.count - capacity
+            frames.removeFirst(overflow)
+            droppedFrames += overflow
         }
     }
 
@@ -26,5 +29,19 @@ public final class AudioFrameRingBuffer {
         let drained = frames
         frames.removeAll(keepingCapacity: true)
         return drained
+    }
+
+    public var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return frames.count
+    }
+
+    public var droppedFrameCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return droppedFrames
     }
 }

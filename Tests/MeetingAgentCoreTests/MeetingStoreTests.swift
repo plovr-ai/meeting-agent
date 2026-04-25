@@ -17,6 +17,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(created.record.name, "Google Chrome")
         XCTAssertEqual(created.record.audioURL?.lastPathComponent, "audio.wav")
         XCTAssertEqual(created.record.transcriptURL?.lastPathComponent, "transcript.txt")
+        XCTAssertEqual(created.record.diagnosticsURL?.lastPathComponent, "diagnostics.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.directory.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.metadataURL.path))
     }

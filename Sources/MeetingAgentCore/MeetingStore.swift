@@ -40,7 +40,8 @@ public final class MeetingStore {
             startedAt: startedAt,
             endedAt: nil,
             audioURL: directory.appendingPathComponent("audio.wav"),
-            transcriptURL: directory.appendingPathComponent("transcript.txt")
+            transcriptURL: directory.appendingPathComponent("transcript.txt"),
+            diagnosticsURL: directory.appendingPathComponent("diagnostics.json")
         )
         try save(record)
         return StoredMeeting(
