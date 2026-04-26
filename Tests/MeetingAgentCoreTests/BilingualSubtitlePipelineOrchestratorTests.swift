@@ -70,6 +70,45 @@ final class BilingualSubtitlePipelineOrchestratorTests: XCTestCase {
         XCTAssertEqual(output.provenance.attemptedProviders, ["stt", "mt-primary", "mt-fallback"])
         XCTAssertEqual(output.provenance.fallbackReasons["mt-primary"], "Speech recognition error: translation timed out")
     }
+
+    func testFallsBackFromDirectBilingualProfileToTraditionalProfile() async throws {
+        let direct = FakeDirectBilingualProvider(id: "direct", result: .failure(ProbeError.speechRecognition("direct unavailable")))
+        let transcription = FakeAudioTranscriptionProvider(id: "stt", result: .success(TranscriptDocument(segments: [
+            TranscriptSegment(id: "segment-1", text: "hello", language: "en-US", sourceProvider: "stt")
+        ])))
+        let translation = FakeTextTranslationProvider(id: "mt", result: .success(TranslatedTranscript(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            segments: [
+                BilingualSubtitleSegment(id: "segment-1", sourceText: "hello", targetText: "你好", providerChain: ["stt", "mt"])
+            ],
+            provenance: PipelineProvenance(profileID: "traditional")
+        )))
+        let directProfile = BilingualPipelineProfile(id: "direct-profile", displayName: "Direct", steps: [
+            PipelineStep(capability: .bilingualSubtitle, primary: .provider("direct"), fallbacks: [.profile("traditional")])
+        ])
+        let traditionalProfile = BilingualPipelineProfile(id: "traditional", displayName: "Traditional", steps: [
+            PipelineStep(capability: .audioTranscription, primary: .provider("stt")),
+            PipelineStep(capability: .textTranslation, primary: .provider("mt"))
+        ])
+        let orchestrator = BilingualSubtitlePipelineOrchestrator(
+            profiles: [directProfile, traditionalProfile],
+            audioTranscriptionProviders: [transcription],
+            textTranslationProviders: [translation],
+            directBilingualProviders: [direct]
+        )
+
+        let output = try await orchestrator.generate(
+            audio: AudioInput(localeIdentifier: "en-US"),
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            profileID: "direct-profile"
+        )
+
+        XCTAssertEqual(output.segments.first?.targetText, "你好")
+        XCTAssertEqual(output.provenance.profileID, "direct-profile")
+        XCTAssertEqual(output.provenance.fallbackReasons["direct"], "Speech recognition error: direct unavailable")
+    }
 }
 
 private struct FakeAudioTranscriptionProvider: AudioTranscriptionProvider {
@@ -96,6 +135,20 @@ private struct FakeTextTranslationProvider: TextTranslationProvider {
     }
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try result.get()
+    }
+}
+
+private struct FakeDirectBilingualProvider: DirectBilingualSubtitleProvider {
+    let descriptor: ProviderDescriptor
+    let result: Result<BilingualTranscript, Error>
+
+    init(id: String, result: Result<BilingualTranscript, Error>) {
+        descriptor = ProviderDescriptor(id: id, displayName: id, capability: .bilingualSubtitle, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: ["*"], requiresNetwork: false, requiresAPIKey: false)
+        self.result = result
+    }
+
+    func generate(audio: AudioInput, options: BilingualSubtitleOptions) async throws -> BilingualTranscript {
         try result.get()
     }
 }
