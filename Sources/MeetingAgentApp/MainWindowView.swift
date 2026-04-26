@@ -2,65 +2,26 @@ import AppKit
 import MeetingAgentCore
 import SwiftUI
 
+private enum MainSidebarSelection: Hashable {
+    case meetings
+    case settings
+}
+
 struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
+    @State private var sidebarSelection: MainSidebarSelection? = .meetings
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("STT Provider", selection: Binding(
-                    get: { viewModel.speechProvider },
-                    set: { viewModel.updateSpeechProvider($0) }
-                )) {
-                    ForEach(SpeechProvider.allCases, id: \.self) { provider in
-                        Text(provider.rawValue).tag(provider)
-                    }
+            List(selection: $sidebarSelection) {
+                Section {
+                    Label("Meetings", systemImage: "waveform")
+                        .tag(Optional(MainSidebarSelection.meetings))
+                    Label("Settings", systemImage: "gearshape")
+                        .tag(Optional(MainSidebarSelection.settings))
                 }
-                .disabled(viewModel.isRecording)
-                .padding([.horizontal, .top], 12)
 
-                TextField(
-                    "STT Locale",
-                    text: Binding(
-                        get: { viewModel.speechLocaleIdentifier },
-                        set: { viewModel.updateSpeechLocaleIdentifier($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .disabled(viewModel.isRecording)
-                .padding(.horizontal, 12)
-
-                TextField(
-                    "Whisper Binary Path",
-                    text: Binding(
-                        get: { viewModel.speechConfiguration.whisperBinaryPath ?? "" },
-                        set: { viewModel.updateWhisperBinaryPath($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .disabled(viewModel.isRecording)
-                .padding(.horizontal, 12)
-
-                TextField(
-                    "Whisper Model Path",
-                    text: Binding(
-                        get: { viewModel.speechConfiguration.whisperModelPath ?? "" },
-                        set: { viewModel.updateWhisperModelPath($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .disabled(viewModel.isRecording)
-                .padding(.horizontal, 12)
-
-                Text(configurationStatusText)
-                    .font(.caption)
-                    .foregroundStyle(configurationStatusColor)
-                    .padding(.horizontal, 12)
-
-                List(selection: Binding(
-                    get: { viewModel.selectedMeetingID },
-                    set: { viewModel.selectMeeting($0) }
-                )) {
+                Section("Meetings") {
                     ForEach(viewModel.meetings) { meeting in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(meeting.name)
@@ -69,49 +30,65 @@ struct MainWindowView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        .tag(Optional(meeting.id))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            viewModel.selectMeeting(meeting.id)
+                            sidebarSelection = .meetings
+                        }
                     }
                 }
             }
-            .navigationTitle("Meetings")
+            .navigationTitle("Meeting Agent")
         } detail: {
-            MeetingDetailView(
-                meeting: viewModel.selectedMeeting,
-                statusText: viewModel.statusText,
-                isRecording: viewModel.isRecording,
-                stopRecording: {
-                    Task {
-                        do {
-                            try await viewModel.stopRecordingAndGenerateSummary()
-                        } catch {
-                            viewModel.setRecordingStartError(error)
+            switch sidebarSelection {
+            case .settings:
+                SettingsView(
+                    configuration: viewModel.speechConfiguration,
+                    profiles: BilingualPipelineFactory.builtInProfiles,
+                    localeIdentifiers: MeetingAgentViewModel.supportedLocaleIdentifiers,
+                    isRecording: viewModel.isRecording,
+                    status: viewModel.speechConfigurationStatus,
+                    save: { viewModel.saveSpeechConfiguration($0) }
+                )
+            default:
+                MeetingDetailView(
+                    meeting: viewModel.selectedMeeting,
+                    statusText: viewModel.statusText,
+                    isRecording: viewModel.isRecording,
+                    stopRecording: {
+                        Task {
+                            do {
+                                try await viewModel.stopRecordingAndGenerateSummary()
+                            } catch {
+                                viewModel.setRecordingStartError(error)
+                            }
+                        }
+                    },
+                    copySummary: { meeting in
+                        copySummary(for: meeting)
+                    },
+                    exportTranscript: { meeting in
+                        export("transcript.txt", for: meeting) { destination in
+                            try viewModel.exportTranscript(for: meeting.id, to: destination)
+                        }
+                    },
+                    exportMeetingData: { meeting in
+                        export("meeting.json", for: meeting) { destination in
+                            try viewModel.exportMeetingData(for: meeting.id, to: destination)
+                        }
+                    },
+                    exportReadinessReport: { meeting in
+                        export("readiness-report.md", for: meeting) { destination in
+                            try viewModel.exportReadinessReport(for: meeting.id, to: destination)
+                        }
+                    },
+                    retryTranscription: { meeting in
+                        Task {
+                            await viewModel.retryTranscription(for: meeting.id)
                         }
                     }
-                },
-                copySummary: { meeting in
-                    copySummary(for: meeting)
-                },
-                exportTranscript: { meeting in
-                    export("transcript.txt", for: meeting) { destination in
-                        try viewModel.exportTranscript(for: meeting.id, to: destination)
-                    }
-                },
-                exportMeetingData: { meeting in
-                    export("meeting.json", for: meeting) { destination in
-                        try viewModel.exportMeetingData(for: meeting.id, to: destination)
-                    }
-                },
-                exportReadinessReport: { meeting in
-                    export("readiness-report.md", for: meeting) { destination in
-                        try viewModel.exportReadinessReport(for: meeting.id, to: destination)
-                    }
-                },
-                retryTranscription: { meeting in
-                    Task {
-                        await viewModel.retryTranscription(for: meeting.id)
-                    }
-                }
-            )
+                )
+            }
         }
         .alert(
             "Meeting detected",
@@ -173,23 +150,6 @@ struct MainWindowView: View {
         return sanitized.isEmpty ? "meeting" : sanitized
     }
 
-    private var configurationStatusText: String {
-        switch viewModel.speechConfigurationStatus {
-        case .available:
-            return "STT configuration available"
-        case .unavailable(let reason):
-            return reason
-        }
-    }
-
-    private var configurationStatusColor: Color {
-        switch viewModel.speechConfigurationStatus {
-        case .available:
-            return .secondary
-        case .unavailable:
-            return .red
-        }
-    }
 }
 
 private struct MeetingDetailView: View {

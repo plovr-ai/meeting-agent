@@ -32,4 +32,17 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Label(\"Summary\", systemImage: \"text.badge.checkmark\")"))
         XCTAssertFalse(source.contains("Button(\"Regenerate Summary\")"))
     }
+
+    func testMainWindowHasSettingsDestinationAndNoInlineConfigurationFields() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("case settings"))
+        XCTAssertTrue(source.contains("SettingsView("))
+        XCTAssertFalse(source.contains("TextField("))
+        XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
+        XCTAssertFalse(source.contains("\"Whisper Model Path\""))
+        XCTAssertFalse(source.contains("\"STT Locale\""))
+    }
 }
