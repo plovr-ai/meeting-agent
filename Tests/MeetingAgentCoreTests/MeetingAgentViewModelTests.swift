@@ -47,6 +47,39 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRecording)
     }
 
+    func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US")
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+
+        viewModel.setPendingCandidate(target)
+        try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
+            TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
+        ])
+        try transcriptWriter.close()
+
+        try await viewModel.stopRecordingAndGenerateSummary(
+            at: Date(timeIntervalSince1970: 200),
+            generatedAt: Date(timeIntervalSince1970: 300)
+        )
+
+        let stopped = try XCTUnwrap(viewModel.meetings.first)
+        let summary = try MeetingSummaryWriter.read(from: XCTUnwrap(stopped.summaryJSONURL))
+        XCTAssertEqual(stopped.endedAt, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(summary.status, .succeeded)
+        XCTAssertEqual(summary.decisions.first?.sourceSegmentIDs, ["segment-1"])
+        XCTAssertEqual(summary.actionItems.first?.sourceSegmentIDs, ["segment-2"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(stopped.summaryMarkdownURL).path))
+        XCTAssertEqual(viewModel.statusText, "Summary generated")
+        XCTAssertFalse(viewModel.isRecording)
+    }
+
     func testDrainRecordingFramesStopsWhenTargetProcessEnds() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

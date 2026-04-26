@@ -152,6 +152,28 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Idle"
     }
 
+    public func stopRecordingAndGenerateSummary(
+        at endedAt: Date = Date(),
+        generatedAt: Date = Date()
+    ) async throws {
+        let stoppedID: UUID?
+        if let stopped = try? recorder.stopRecording(at: endedAt),
+           let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+            meetings[index] = stopped
+            stoppedID = stopped.id
+        } else {
+            stoppedID = nil
+        }
+        activeTarget = nil
+
+        guard let stoppedID else {
+            statusText = "Idle"
+            return
+        }
+
+        try await generateSummary(for: stoppedID, generatedAt: generatedAt)
+    }
+
     public func generateSummary(for meetingID: UUID, generatedAt: Date = Date()) async throws {
         guard let meeting = meetings.first(where: { $0.id == meetingID }) else {
             throw ProbeError.invalidArguments("Meeting not found")

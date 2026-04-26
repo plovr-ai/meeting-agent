@@ -80,7 +80,13 @@ struct MainWindowView: View {
                 statusText: viewModel.statusText,
                 isRecording: viewModel.isRecording,
                 stopRecording: {
-                    viewModel.stopRecording()
+                    Task {
+                        do {
+                            try await viewModel.stopRecordingAndGenerateSummary()
+                        } catch {
+                            viewModel.setRecordingStartError(error)
+                        }
+                    }
                 },
                 copySummary: { meeting in
                     copySummary(for: meeting)
@@ -88,11 +94,6 @@ struct MainWindowView: View {
                 exportTranscript: { meeting in
                     export("transcript.txt", for: meeting) { destination in
                         try viewModel.exportTranscript(for: meeting.id, to: destination)
-                    }
-                },
-                exportSummary: { meeting in
-                    export("summary.md", for: meeting) { destination in
-                        try viewModel.exportSummary(for: meeting.id, to: destination)
                     }
                 },
                 exportMeetingData: { meeting in
@@ -108,15 +109,6 @@ struct MainWindowView: View {
                 retryTranscription: { meeting in
                     Task {
                         await viewModel.retryTranscription(for: meeting.id)
-                    }
-                },
-                regenerateSummary: { meetingID in
-                    Task {
-                        do {
-                            try await viewModel.generateSummary(for: meetingID)
-                        } catch {
-                            viewModel.setRecordingStartError(error)
-                        }
                     }
                 }
             )
@@ -207,11 +199,9 @@ private struct MeetingDetailView: View {
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
-    let exportSummary: (MeetingRecord) -> Void
     let exportMeetingData: (MeetingRecord) -> Void
     let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
-    let regenerateSummary: (UUID) -> Void
 
     var body: some View {
         ScrollView {
@@ -262,13 +252,6 @@ private struct MeetingDetailView: View {
                             Label("Transcript", systemImage: "doc.text")
                         }
                         .disabled(isRecording || meeting.transcriptURL == nil)
-
-                        Button {
-                            exportSummary(meeting)
-                        } label: {
-                            Label("Summary", systemImage: "text.badge.checkmark")
-                        }
-                        .disabled(isRecording || meeting.summaryURL == nil)
                     }
                     HStack {
                         Button {
@@ -287,10 +270,6 @@ private struct MeetingDetailView: View {
                     Text("Summary")
                         .font(.headline)
                     summaryView(for: meeting)
-                    Button("Regenerate Summary") {
-                        regenerateSummary(meeting.id)
-                    }
-                    .disabled(isRecording)
                     Divider()
                     Text("Transcript")
                         .font(.headline)

@@ -23,4 +23,13 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(actionRow.contains("Button(\"Stop Recording\")"))
         XCTAssertTrue(actionRow.contains("Button(\"Retry Transcription\")"))
     }
+
+    func testSummaryDownloadAndRegenerateControlsAreRemoved() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertFalse(source.contains("Label(\"Summary\", systemImage: \"text.badge.checkmark\")"))
+        XCTAssertFalse(source.contains("Button(\"Regenerate Summary\")"))
+    }
 }
