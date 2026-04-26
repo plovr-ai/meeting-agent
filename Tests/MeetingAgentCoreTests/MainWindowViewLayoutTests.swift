@@ -38,11 +38,37 @@ final class MainWindowViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("case settings"))
+        XCTAssertTrue(source.contains("@State private var showSettings = false"))
         XCTAssertTrue(source.contains("SettingsView("))
         XCTAssertFalse(source.contains("TextField("))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))
+    }
+
+    func testMeetingRowsUseListSelectionTags() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("List(selection: Binding("))
+        XCTAssertTrue(source.contains(".tag(Optional(meeting.id))"))
+        XCTAssertFalse(source.contains(".onTapGesture {\n                            viewModel.selectMeeting(meeting.id)"))
+    }
+
+    func testSettingsEntryIsFixedAtBottomOfSidebar() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        guard let spacerRange = source.range(of: "Spacer()") else {
+            return XCTFail("Sidebar spacer is missing")
+        }
+        guard let settingsRange = source.range(of: "Button {") else {
+            return XCTFail("Settings bottom button is missing")
+        }
+
+        XCTAssertLessThan(spacerRange.lowerBound, settingsRange.lowerBound)
+        XCTAssertTrue(source.contains("showSettings = true"))
     }
 }

@@ -2,46 +2,51 @@ import AppKit
 import MeetingAgentCore
 import SwiftUI
 
-private enum MainSidebarSelection: Hashable {
-    case meetings
-    case settings
-}
-
 struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
-    @State private var sidebarSelection: MainSidebarSelection? = .meetings
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $sidebarSelection) {
-                Section {
-                    Label("Meetings", systemImage: "waveform")
-                        .tag(Optional(MainSidebarSelection.meetings))
-                    Label("Settings", systemImage: "gearshape")
-                        .tag(Optional(MainSidebarSelection.settings))
-                }
-
-                Section("Meetings") {
-                    ForEach(viewModel.meetings) { meeting in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(meeting.name)
-                                .font(.headline)
-                            Text(meeting.startedAt, style: .date)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.selectMeeting(meeting.id)
-                            sidebarSelection = .meetings
+            VStack(spacing: 0) {
+                List(selection: Binding(
+                    get: { showSettings ? nil : viewModel.selectedMeetingID },
+                    set: { id in
+                        showSettings = false
+                        viewModel.selectMeeting(id)
+                    }
+                )) {
+                    Section("Meetings") {
+                        ForEach(viewModel.meetings) { meeting in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(meeting.name)
+                                    .font(.headline)
+                                Text(meeting.startedAt, style: .date)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .tag(Optional(meeting.id))
                         }
                     }
                 }
+
+                Spacer()
+
+                Divider()
+
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(12)
+                .background(showSettings ? Color.accentColor.opacity(0.12) : Color.clear)
             }
             .navigationTitle("Meeting Agent")
         } detail: {
-            switch sidebarSelection {
-            case .settings:
+            if showSettings {
                 SettingsView(
                     configuration: viewModel.speechConfiguration,
                     profiles: BilingualPipelineFactory.builtInProfiles,
@@ -50,7 +55,7 @@ struct MainWindowView: View {
                     status: viewModel.speechConfigurationStatus,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
-            default:
+            } else {
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
                     statusText: viewModel.statusText,
