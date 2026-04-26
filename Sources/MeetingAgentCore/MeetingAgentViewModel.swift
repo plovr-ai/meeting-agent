@@ -116,7 +116,15 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocaleIdentifier: configuration.targetLocaleIdentifier,
             bilingualPipelineProfileID: configuration.bilingualPipelineProfileID,
             whisperBinaryPath: configuration.whisperBinaryPath,
-            whisperModelPath: configuration.whisperModelPath
+            whisperModelPath: configuration.whisperModelPath,
+            transcriptionExecutionMode: configuration.transcriptionExecutionMode,
+            translationExecutionMode: configuration.translationExecutionMode,
+            localTranscriptionProviderID: configuration.localTranscriptionProviderID,
+            localTranslationProviderID: configuration.localTranslationProviderID,
+            hostedTranscriptionProviderID: configuration.hostedTranscriptionProviderID,
+            hostedTranslationProviderID: configuration.hostedTranslationProviderID,
+            hostedTranscriptionModelID: configuration.hostedTranscriptionModelID,
+            hostedTranslationModelID: configuration.hostedTranslationModelID
         )
         persistSpeechConfiguration()
         statusText = "Settings saved"

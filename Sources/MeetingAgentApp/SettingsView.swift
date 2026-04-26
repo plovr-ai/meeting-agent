@@ -31,12 +31,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Speech") {
-                Picker("STT Provider", selection: $draft.provider) {
-                    ForEach(SpeechProvider.allCases, id: \.self) { provider in
-                        Text(provider.rawValue).tag(provider)
-                    }
-                }
-
                 Picker("Source Locale", selection: $draft.localeIdentifier) {
                     ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
                         Text(localeIdentifier).tag(localeIdentifier)
@@ -50,24 +44,72 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Bilingual Pipeline") {
-                Picker("Bilingual Pipeline Profile", selection: $draft.bilingualPipelineProfileID) {
-                    ForEach(profiles, id: \.id) { profile in
-                        Text(profile.displayName).tag(profile.id)
+            Section("Transcription Chain") {
+                Picker("Transcription Mode", selection: $draft.transcriptionExecutionMode) {
+                    Text("Local").tag(ProviderExecutionMode.local)
+                    Text("Hosted").tag(ProviderExecutionMode.hosted)
+                }
+
+                if draft.transcriptionExecutionMode == .local {
+                    Picker("Local Transcription Provider", selection: $draft.localTranscriptionProviderID) {
+                        Text("Whisper Local").tag("whisper-local")
+                        Text("macOS Speech").tag("macos-speech-local")
+                    }
+
+                    if draft.localTranscriptionProviderID == "whisper-local" {
+                        Picker("Whisper Binary Path", selection: whisperBinaryPathBinding) {
+                            ForEach(whisperBinaryPathOptions, id: \.self) { path in
+                                Text(path).tag(path)
+                            }
+                        }
+
+                        Picker("Whisper Model Path", selection: whisperModelPathBinding) {
+                            ForEach(whisperModelPathOptions, id: \.self) { path in
+                                Text(path).tag(path)
+                            }
+                        }
+                    }
+                } else {
+                    Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
+                        Text("OpenRouter").tag("openrouter-transcribe")
+                    }
+
+                    Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
+                        ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
                     }
                 }
             }
 
-            Section("Whisper") {
-                Picker("Whisper Binary Path", selection: whisperBinaryPathBinding) {
-                    ForEach(whisperBinaryPathOptions, id: \.self) { path in
-                        Text(path).tag(path)
-                    }
+            Section("Translation Chain") {
+                Picker("Translation Mode", selection: $draft.translationExecutionMode) {
+                    Text("Local").tag(ProviderExecutionMode.local)
+                    Text("Hosted").tag(ProviderExecutionMode.hosted)
                 }
 
-                Picker("Whisper Model Path", selection: whisperModelPathBinding) {
-                    ForEach(whisperModelPathOptions, id: \.self) { path in
-                        Text(path).tag(path)
+                if draft.translationExecutionMode == .local {
+                    Picker("Local Translation Provider", selection: $draft.localTranslationProviderID) {
+                        Text("Qwen Local Translation").tag("qwen-local-translation")
+                        Text("NLLB Local").tag("nllb-local")
+                    }
+                } else {
+                    Picker("Hosted Translation Provider", selection: $draft.hostedTranslationProviderID) {
+                        Text("OpenRouter").tag("openrouter-translation")
+                    }
+
+                    Picker("Hosted Translation Model", selection: $draft.hostedTranslationModelID) {
+                        ForEach(BilingualPipelineFactory.hostedTranslationModelOptions) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+                }
+            }
+
+            Section("Bilingual Pipeline") {
+                Picker("Bilingual Pipeline Profile", selection: $draft.bilingualPipelineProfileID) {
+                    ForEach(profiles, id: \.id) { profile in
+                        Text(profile.displayName).tag(profile.id)
                     }
                 }
             }
@@ -92,6 +134,23 @@ struct SettingsView: View {
         .disabled(isRecording)
         .padding(20)
         .navigationTitle("Settings")
+        .onChange(of: draft.localTranscriptionProviderID) { _, providerID in
+            draft.provider = providerID == "macos-speech-local" ? .local : .whisper
+        }
+        .onChange(of: draft.transcriptionExecutionMode) { _, mode in
+            if mode == .hosted {
+                draft.hostedTranscriptionProviderID = "openrouter-transcribe"
+                ensureHostedTranscriptionModel()
+            } else {
+                draft.provider = draft.localTranscriptionProviderID == "macos-speech-local" ? .local : .whisper
+            }
+        }
+        .onChange(of: draft.translationExecutionMode) { _, mode in
+            if mode == .hosted {
+                draft.hostedTranslationProviderID = "openrouter-translation"
+                ensureHostedTranslationModel()
+            }
+        }
     }
 
     private var whisperBinaryPathBinding: Binding<String> {
@@ -137,6 +196,22 @@ struct SettingsView: View {
             seen.insert(normalized)
             return normalized
         }
+    }
+
+    private func ensureHostedTranscriptionModel() {
+        if BilingualPipelineFactory.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
+            return
+        }
+        draft.hostedTranscriptionModelID = BilingualPipelineFactory.hostedTranscriptionModelOptions.first?.id
+            ?? SpeechTranscriptionConfiguration.defaultHostedTranscriptionModelID
+    }
+
+    private func ensureHostedTranslationModel() {
+        if BilingualPipelineFactory.hostedTranslationModelOptions.contains(where: { $0.id == draft.hostedTranslationModelID }) {
+            return
+        }
+        draft.hostedTranslationModelID = BilingualPipelineFactory.hostedTranslationModelOptions.first?.id
+            ?? SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
     }
 
     private var configurationStatusText: String {

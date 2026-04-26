@@ -249,7 +249,15 @@ final class MeetingAgentViewModelTests: XCTestCase {
             targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "local-whisper-local-translation",
             whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
-            whisperModelPath: "/Users/allan/models/ggml-medium.bin"
+            whisperModelPath: "/Users/allan/models/ggml-medium.bin",
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .hosted,
+            localTranscriptionProviderID: "macos-speech-local",
+            localTranslationProviderID: "nllb-local",
+            hostedTranscriptionProviderID: "openrouter-transcribe",
+            hostedTranslationProviderID: "openrouter-translation",
+            hostedTranscriptionModelID: "google/gemini-2.5-flash",
+            hostedTranslationModelID: "openai/gpt-4.1-mini"
         )
 
         viewModel.saveSpeechConfiguration(configuration)

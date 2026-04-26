@@ -7,7 +7,7 @@ public enum ProviderCapability: String, Codable, Equatable {
     case bilingualSubtitle
 }
 
-public enum ProviderExecutionMode: String, Codable, Equatable {
+public enum ProviderExecutionMode: String, Codable, Equatable, Hashable {
     case local
     case hosted
 }
