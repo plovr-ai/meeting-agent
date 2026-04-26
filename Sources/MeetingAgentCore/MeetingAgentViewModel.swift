@@ -3,6 +3,17 @@ import Foundation
 
 @MainActor
 public final class MeetingAgentViewModel: ObservableObject {
+    public static let supportedLocaleIdentifiers = [
+        "en-US",
+        "zh-CN",
+        "zh-TW",
+        "ja-JP",
+        "ko-KR",
+        "fr-FR",
+        "de-DE",
+        "es-ES"
+    ]
+
     @Published public private(set) var meetings: [MeetingRecord] = []
     @Published public private(set) var selectedMeetingID: UUID?
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
@@ -96,6 +107,19 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func updateWhisperModelPath(_ path: String) {
         speechConfiguration.whisperModelPath = SpeechTranscriptionConfiguration.normalized(path)
         persistSpeechConfiguration()
+    }
+
+    public func saveSpeechConfiguration(_ configuration: SpeechTranscriptionConfiguration) {
+        speechConfiguration = SpeechTranscriptionConfiguration(
+            provider: configuration.provider,
+            localeIdentifier: configuration.localeIdentifier,
+            targetLocaleIdentifier: configuration.targetLocaleIdentifier,
+            bilingualPipelineProfileID: configuration.bilingualPipelineProfileID,
+            whisperBinaryPath: configuration.whisperBinaryPath,
+            whisperModelPath: configuration.whisperModelPath
+        )
+        persistSpeechConfiguration()
+        statusText = "Settings saved"
     }
 
     public func startRecordingForPendingCandidate(localeIdentifier: String? = nil) async throws {

@@ -232,6 +232,45 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: stored.record.summaryMarkdownURL!.path))
         XCTAssertEqual(viewModel.statusText, "Summary generated")
     }
+
+    func testSaveSpeechConfigurationPersistsBilingualSettings() throws {
+        let suiteName = "meeting-vm-settings-save-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let viewModel = MeetingAgentViewModel(
+            speechConfigurationStore: configurationStore,
+            processTargetsProvider: { [] }
+        )
+
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .local,
+            localeIdentifier: "ja-JP",
+            targetLocaleIdentifier: "zh-CN",
+            bilingualPipelineProfileID: "local-whisper-local-translation",
+            whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
+            whisperModelPath: "/Users/allan/models/ggml-medium.bin"
+        )
+
+        viewModel.saveSpeechConfiguration(configuration)
+
+        XCTAssertEqual(viewModel.speechConfiguration, configuration)
+        XCTAssertEqual(try configurationStore.load(), configuration)
+        XCTAssertEqual(viewModel.statusText, "Settings saved")
+    }
+
+    func testSupportedLocaleIdentifiersIncludeInitialSettingsChoices() {
+        XCTAssertEqual(MeetingAgentViewModel.supportedLocaleIdentifiers, [
+            "en-US",
+            "zh-CN",
+            "zh-TW",
+            "ja-JP",
+            "ko-KR",
+            "fr-FR",
+            "de-DE",
+            "es-ES"
+        ])
+    }
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {
