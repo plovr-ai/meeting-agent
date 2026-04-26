@@ -127,7 +127,8 @@ public final class MeetingAgentViewModel: ObservableObject {
             hostedTranscriptionProviderID: configuration.hostedTranscriptionProviderID,
             hostedTranslationProviderID: configuration.hostedTranslationProviderID,
             hostedTranscriptionModelID: configuration.hostedTranscriptionModelID,
-            hostedTranslationModelID: configuration.hostedTranslationModelID
+            hostedTranslationModelID: configuration.hostedTranslationModelID,
+            openRouterAPIKey: configuration.openRouterAPIKey
         )
         persistSpeechConfiguration()
         statusText = "Settings saved"

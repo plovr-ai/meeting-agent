@@ -123,12 +123,29 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             hostedTranscriptionProviderID: "openrouter-transcribe",
             hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini"
+            hostedTranslationModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "settings-key"
         )
 
         try store.save(configuration)
 
         XCTAssertEqual(try store.load(), configuration)
+    }
+
+    func testHostedValidationUsesSettingsOpenRouterAPIKey() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .hosted,
+            hostedTranscriptionModelID: "google/gemini-2.5-flash",
+            hostedTranslationModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "settings-key"
+        )
+
+        XCTAssertEqual(configuration.validationStatus(environment: [:]), .available)
     }
 
     func testHostedValidationRequiresOpenRouterAPIKeyAndModels() {

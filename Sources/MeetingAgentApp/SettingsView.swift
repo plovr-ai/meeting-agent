@@ -106,6 +106,12 @@ struct SettingsView: View {
                 }
             }
 
+            if usesOpenRouter {
+                Section("OpenRouter") {
+                    SecureField("OpenRouter API Key", text: openRouterAPIKeyBinding)
+                }
+            }
+
             Section {
                 Text(configurationStatusText)
                     .font(.caption)
@@ -157,6 +163,17 @@ struct SettingsView: View {
             get: { draft.whisperModelPath ?? "" },
             set: { draft.whisperModelPath = SpeechTranscriptionConfiguration.normalized($0) }
         )
+    }
+
+    private var openRouterAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { draft.openRouterAPIKey ?? "" },
+            set: { draft.openRouterAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
+        )
+    }
+
+    private var usesOpenRouter: Bool {
+        draft.usesOpenRouter
     }
 
     private var whisperBinaryPathOptions: [String] {

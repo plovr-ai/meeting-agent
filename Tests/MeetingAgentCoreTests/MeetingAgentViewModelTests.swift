@@ -257,7 +257,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
             hostedTranscriptionProviderID: "openrouter-transcribe",
             hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini"
+            hostedTranslationModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "settings-key"
         )
 
         viewModel.saveSpeechConfiguration(configuration)

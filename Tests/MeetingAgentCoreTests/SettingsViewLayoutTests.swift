@@ -12,6 +12,8 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Picker(\"Local Transcription Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Model\""))
+        XCTAssertTrue(source.contains("SecureField(\"OpenRouter API Key\""))
+        XCTAssertTrue(source.contains("usesOpenRouter"))
         XCTAssertTrue(source.contains("Picker(\"Translation Mode\""))
         XCTAssertTrue(source.contains("Picker(\"Local Translation Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Translation Provider\""))

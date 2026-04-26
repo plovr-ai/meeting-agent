@@ -28,6 +28,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var hostedTranslationProviderID: String
     public var hostedTranscriptionModelID: String
     public var hostedTranslationModelID: String
+    public var openRouterAPIKey: String?
 
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
@@ -43,7 +44,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         hostedTranscriptionProviderID: defaultHostedTranscriptionProviderID,
         hostedTranslationProviderID: defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: defaultHostedTranscriptionModelID,
-        hostedTranslationModelID: defaultHostedTranslationModelID
+        hostedTranslationModelID: defaultHostedTranslationModelID,
+        openRouterAPIKey: nil
     )
 
     public init(
@@ -60,7 +62,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         hostedTranscriptionProviderID: String = defaultHostedTranscriptionProviderID,
         hostedTranslationProviderID: String = defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: String = defaultHostedTranscriptionModelID,
-        hostedTranslationModelID: String = defaultHostedTranslationModelID
+        hostedTranslationModelID: String = defaultHostedTranslationModelID,
+        openRouterAPIKey: String? = nil
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
@@ -97,6 +100,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             hostedTranslationModelID,
             fallback: Self.defaultHostedTranslationModelID
         ) ?? Self.defaultHostedTranslationModelID
+        self.openRouterAPIKey = Self.normalized(openRouterAPIKey)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -114,6 +118,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         case hostedTranslationProviderID
         case hostedTranscriptionModelID
         case hostedTranslationModelID
+        case openRouterAPIKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -132,7 +137,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             hostedTranscriptionProviderID: try container.decodeIfPresent(String.self, forKey: .hostedTranscriptionProviderID) ?? Self.defaultHostedTranscriptionProviderID,
             hostedTranslationProviderID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationProviderID) ?? Self.defaultHostedTranslationProviderID,
             hostedTranscriptionModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranscriptionModelID) ?? Self.defaultHostedTranscriptionModelID,
-            hostedTranslationModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationModelID) ?? Self.defaultHostedTranslationModelID
+            hostedTranslationModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationModelID) ?? Self.defaultHostedTranslationModelID,
+            openRouterAPIKey: try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey)
         )
     }
 
@@ -140,8 +146,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> SpeechConfigurationValidationStatus {
-        if transcriptionExecutionMode == .hosted || translationExecutionMode == .hosted {
-            guard Self.normalized(environment["MEETING_AGENT_OPENROUTER_API_KEY"]) != nil else {
+        if usesOpenRouter {
+            guard Self.normalized(openRouterAPIKey) != nil
+                || Self.normalized(environment["MEETING_AGENT_OPENROUTER_API_KEY"]) != nil
+            else {
                 return .unavailable("OpenRouter API key is not configured")
             }
         }
@@ -189,6 +197,11 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             return .unavailable("Whisper model is not readable at \(modelURL.path)")
         }
         return .available
+    }
+
+    public var usesOpenRouter: Bool {
+        (transcriptionExecutionMode == .hosted && hostedTranscriptionProviderID == Self.defaultHostedTranscriptionProviderID)
+            || (translationExecutionMode == .hosted && hostedTranslationProviderID == Self.defaultHostedTranslationProviderID)
     }
 
     public static func normalized(_ value: String?, fallback: String? = nil) -> String? {
