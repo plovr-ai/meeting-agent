@@ -98,7 +98,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         return .available
     }
 
-    static func normalized(_ value: String?, fallback: String? = nil) -> String? {
+    public static func normalized(_ value: String?, fallback: String? = nil) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return fallback
         }
