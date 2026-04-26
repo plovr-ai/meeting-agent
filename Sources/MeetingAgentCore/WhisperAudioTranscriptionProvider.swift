@@ -16,10 +16,14 @@ public struct WhisperAudioTranscriptionProvider: AudioTranscriptionProvider {
     private let fileManager: FileManager
 
     public init(
-        speechProvider: SpeechTranscriptionProvider = SpeechTranscriptionProviderFactory.provider(for: .whisper),
+        configuration: SpeechTranscriptionConfiguration = .default,
+        speechProvider: SpeechTranscriptionProvider? = nil,
         fileManager: FileManager = .default
     ) {
-        self.speechProvider = speechProvider
+        self.speechProvider = speechProvider ?? SpeechTranscriptionProviderFactory.provider(
+            for: .whisper,
+            configuration: configuration
+        )
         self.fileManager = fileManager
     }
 
