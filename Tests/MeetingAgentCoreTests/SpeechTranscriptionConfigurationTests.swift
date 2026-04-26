@@ -7,6 +7,11 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
 
         XCTAssertEqual(configuration.targetLocaleIdentifier, "zh-CN")
         XCTAssertEqual(configuration.bilingualPipelineProfileID, "local-whisper-hosted-translation")
+        XCTAssertEqual(configuration.transcriptionExecutionMode, .local)
+        XCTAssertEqual(configuration.translationExecutionMode, .hosted)
+        XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
+        XCTAssertEqual(configuration.hostedTranscriptionProviderID, "openrouter-transcribe")
+        XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
     }
 
     func testWhisperValidationReportsMissingPaths() {
@@ -18,7 +23,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            configuration.validationStatus(environment: [:], fileManager: .default),
+            configuration.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "test-key"], fileManager: .default),
             .unavailable("Whisper binary path is not configured")
         )
     }
@@ -41,7 +46,13 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperModelPath: modelURL.path
         )
 
-        XCTAssertEqual(configuration.validationStatus(fileManager: .default), .available)
+        XCTAssertEqual(
+            configuration.validationStatus(
+                environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "test-key"],
+                fileManager: .default
+            ),
+            .available
+        )
         XCTAssertEqual(try WhisperConfiguration.fromAppConfiguration(configuration, fileManager: .default).binaryURL, binaryURL)
     }
 
@@ -62,7 +73,10 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperBinaryPath: nil,
             whisperModelPath: modelURL.path
         )
-        let environment = ["PATH": directory.path]
+        let environment = [
+            "PATH": directory.path,
+            "MEETING_AGENT_OPENROUTER_API_KEY": "test-key"
+        ]
 
         XCTAssertEqual(
             configuration.validationStatus(environment: environment, fileManager: .default),
@@ -83,10 +97,56 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             provider: .local,
             localeIdentifier: "en-US",
             whisperBinaryPath: nil,
-            whisperModelPath: nil
+            whisperModelPath: nil,
+            translationExecutionMode: .local
         )
 
         XCTAssertEqual(configuration.validationStatus(fileManager: .default), .available)
+    }
+
+    func testConfigurationRoundTripsStepLevelProviderAndModelSettings() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            targetLocaleIdentifier: "zh-CN",
+            bilingualPipelineProfileID: "hosted-transcribe-hosted-translation",
+            whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
+            whisperModelPath: "/Users/allan/models/ggml-small.bin",
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .hosted,
+            localTranscriptionProviderID: "whisper-local",
+            localTranslationProviderID: "qwen-local-translation",
+            hostedTranscriptionProviderID: "openrouter-transcribe",
+            hostedTranslationProviderID: "openrouter-translation",
+            hostedTranscriptionModelID: "google/gemini-2.5-flash",
+            hostedTranslationModelID: "openai/gpt-4.1-mini"
+        )
+
+        try store.save(configuration)
+
+        XCTAssertEqual(try store.load(), configuration)
+    }
+
+    func testHostedValidationRequiresOpenRouterAPIKeyAndModels() {
+        let missingKey = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .hosted,
+            hostedTranscriptionModelID: "google/gemini-2.5-flash",
+            hostedTranslationModelID: "openai/gpt-4.1-mini"
+        )
+
+        XCTAssertEqual(
+            missingKey.validationStatus(environment: [:]),
+            .unavailable("OpenRouter API key is not configured")
+        )
     }
 
     func testConfigurationStorePersistsUserSettings() throws {
