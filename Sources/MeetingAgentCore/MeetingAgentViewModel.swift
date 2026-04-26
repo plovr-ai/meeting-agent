@@ -114,7 +114,10 @@ public final class MeetingAgentViewModel: ObservableObject {
             provider: configuration.provider,
             localeIdentifier: configuration.localeIdentifier,
             targetLocaleIdentifier: configuration.targetLocaleIdentifier,
-            bilingualPipelineProfileID: configuration.bilingualPipelineProfileID,
+            bilingualPipelineProfileID: Self.derivedBilingualPipelineProfileID(
+                transcriptionExecutionMode: configuration.transcriptionExecutionMode,
+                translationExecutionMode: configuration.translationExecutionMode
+            ),
             whisperBinaryPath: configuration.whisperBinaryPath,
             whisperModelPath: configuration.whisperModelPath,
             transcriptionExecutionMode: configuration.transcriptionExecutionMode,
@@ -401,6 +404,20 @@ public final class MeetingAgentViewModel: ObservableObject {
     private static func normalizedSpeechLocaleIdentifier(_ localeIdentifier: String) -> String {
         let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "en-US" : trimmed
+    }
+
+    private static func derivedBilingualPipelineProfileID(
+        transcriptionExecutionMode: ProviderExecutionMode,
+        translationExecutionMode: ProviderExecutionMode
+    ) -> String {
+        switch (transcriptionExecutionMode, translationExecutionMode) {
+        case (.hosted, .hosted):
+            return "hosted-transcribe-hosted-translation"
+        case (.local, .local):
+            return "local-whisper-local-translation"
+        default:
+            return "local-whisper-hosted-translation"
+        }
     }
 
     private static func summaryProvider(

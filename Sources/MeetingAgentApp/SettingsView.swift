@@ -106,14 +106,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Bilingual Pipeline") {
-                Picker("Bilingual Pipeline Profile", selection: $draft.bilingualPipelineProfileID) {
-                    ForEach(profiles, id: \.id) { profile in
-                        Text(profile.displayName).tag(profile.id)
-                    }
-                }
-            }
-
             Section {
                 Text(configurationStatusText)
                     .font(.caption)

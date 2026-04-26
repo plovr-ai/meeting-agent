@@ -262,9 +262,37 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         viewModel.saveSpeechConfiguration(configuration)
 
-        XCTAssertEqual(viewModel.speechConfiguration, configuration)
-        XCTAssertEqual(try configurationStore.load(), configuration)
+        var expectedConfiguration = configuration
+        expectedConfiguration.bilingualPipelineProfileID = "hosted-transcribe-hosted-translation"
+        XCTAssertEqual(viewModel.speechConfiguration, expectedConfiguration)
+        XCTAssertEqual(try configurationStore.load(), expectedConfiguration)
         XCTAssertEqual(viewModel.statusText, "Settings saved")
+    }
+
+    func testSaveSpeechConfigurationDerivesPipelineProfileFromStepModes() throws {
+        let suiteName = "meeting-vm-derived-profile-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let viewModel = MeetingAgentViewModel(
+            speechConfigurationStore: configurationStore,
+            processTargetsProvider: { [] }
+        )
+        let staleProfileConfiguration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            targetLocaleIdentifier: "zh-CN",
+            bilingualPipelineProfileID: "local-whisper-local-translation",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .hosted
+        )
+
+        viewModel.saveSpeechConfiguration(staleProfileConfiguration)
+
+        XCTAssertEqual(viewModel.speechConfiguration.bilingualPipelineProfileID, "hosted-transcribe-hosted-translation")
+        XCTAssertEqual(try configurationStore.load().bilingualPipelineProfileID, "hosted-transcribe-hosted-translation")
     }
 
     func testSupportedLocaleIdentifiersIncludeInitialSettingsChoices() {
