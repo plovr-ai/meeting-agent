@@ -55,7 +55,7 @@ final class MeetingSummaryProviderTests: XCTestCase {
     }
 
     func testOpenRouterProviderBuildsRequestAndParsesSummary() async throws {
-        let client = RecordingOpenRouterSummaryClient(responseContent: """
+        let client = RecordingOpenRouterChatClient(responseContent: """
         {
           "overview": "The team aligned on launch scope.",
           "keyTopics": ["Launch"],
@@ -82,7 +82,7 @@ final class MeetingSummaryProviderTests: XCTestCase {
         }
         """)
         let provider = OpenRouterMeetingSummaryProvider(
-            configuration: OpenRouterSummaryConfiguration(apiKey: "test-key", model: "openai/gpt-4.1-mini"),
+            configuration: OpenRouterChatConfiguration(apiKey: "test-key", model: "openai/gpt-4.1-mini"),
             client: client
         )
 
@@ -112,6 +112,7 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertEqual(summary.actionItems.first?.owner, "Alex")
         XCTAssertEqual(client.requests.first?.apiKey, "test-key")
         XCTAssertEqual(client.requests.first?.model, "openai/gpt-4.1-mini")
+        XCTAssertEqual(client.requests.first?.responseFormat?.type, "json_object")
         XCTAssertEqual(client.requests.first?.messages.first?.role, "system")
         XCTAssertTrue(client.requests.first?.messages.last?.content.contains("segment-1") == true)
     }
@@ -119,7 +120,7 @@ final class MeetingSummaryProviderTests: XCTestCase {
     func testOpenRouterProviderFailsWhenConfigurationIsMissing() async throws {
         let provider = OpenRouterMeetingSummaryProvider(
             configuration: .unavailable("OpenRouter API key is not configured"),
-            client: RecordingOpenRouterSummaryClient(responseContent: "{}")
+            client: RecordingOpenRouterChatClient(responseContent: "{}")
         )
 
         let summary = try await provider.generateSummary(
@@ -212,11 +213,12 @@ final class MeetingSummaryProviderTests: XCTestCase {
     }
 }
 
-private final class RecordingOpenRouterSummaryClient: OpenRouterSummaryClient {
+private final class RecordingOpenRouterChatClient: OpenRouterChatClient {
     struct Request: Equatable {
         let apiKey: String
         let model: String
         let messages: [OpenRouterChatMessage]
+        let responseFormat: OpenRouterResponseFormat?
     }
 
     private(set) var requests: [Request] = []
@@ -226,8 +228,17 @@ private final class RecordingOpenRouterSummaryClient: OpenRouterSummaryClient {
         self.responseContent = responseContent
     }
 
-    func complete(apiKey: String, model: String, messages: [OpenRouterChatMessage]) async throws -> String {
-        requests.append(Request(apiKey: apiKey, model: model, messages: messages))
+    func complete(
+        configuration: OpenRouterChatConfiguration,
+        messages: [OpenRouterChatMessage],
+        responseFormat: OpenRouterResponseFormat?
+    ) async throws -> String {
+        requests.append(Request(
+            apiKey: configuration.apiKey,
+            model: configuration.model,
+            messages: messages,
+            responseFormat: responseFormat
+        ))
         return responseContent
     }
 }

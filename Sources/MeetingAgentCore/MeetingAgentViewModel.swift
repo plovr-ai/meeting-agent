@@ -402,7 +402,10 @@ public final class MeetingAgentViewModel: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if provider == "openrouter" {
-            return OpenRouterMeetingSummaryProvider(configuration: .environment(environment))
+            return OpenRouterMeetingSummaryProvider(configuration: .environment(
+                model: environment["MEETING_AGENT_OPENROUTER_MODEL"],
+                environment: environment
+            ))
         }
         return ExtractiveMeetingSummaryProvider()
     }
