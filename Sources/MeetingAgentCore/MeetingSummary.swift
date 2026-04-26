@@ -122,7 +122,7 @@ public struct MeetingSummaryInput: Equatable {
 
 public protocol MeetingSummaryProvider {
     var providerName: String { get }
-    func generateSummary(input: MeetingSummaryInput) throws -> MeetingSummary
+    func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary
 }
 
 public struct ExtractiveMeetingSummaryProvider: MeetingSummaryProvider {
@@ -130,7 +130,7 @@ public struct ExtractiveMeetingSummaryProvider: MeetingSummaryProvider {
 
     public init() {}
 
-    public func generateSummary(input: MeetingSummaryInput) throws -> MeetingSummary {
+    public func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
         let usableSegments = input.segments.compactMap(SummarySegment.init(segment:))
         guard !usableSegments.isEmpty else {
             return MeetingSummary(

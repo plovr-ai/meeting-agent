@@ -188,8 +188,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
 
         let transcript = try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        let provider = ExtractiveMeetingSummaryProvider()
-        let summary = try provider.generateSummary(
+        let provider = Self.summaryProvider()
+        let summary = try await provider.generateSummary(
             input: MeetingSummaryInput(
                 meetingName: meeting.name,
                 startedAt: meeting.startedAt,
@@ -369,6 +369,18 @@ public final class MeetingAgentViewModel: ObservableObject {
     private static func normalizedSpeechLocaleIdentifier(_ localeIdentifier: String) -> String {
         let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "en-US" : trimmed
+    }
+
+    private static func summaryProvider(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> MeetingSummaryProvider {
+        let provider = environment["MEETING_AGENT_SUMMARY_PROVIDER"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if provider == "openrouter" {
+            return OpenRouterMeetingSummaryProvider(configuration: .environment(environment))
+        }
+        return ExtractiveMeetingSummaryProvider()
     }
 
     private func persistSpeechConfiguration() {

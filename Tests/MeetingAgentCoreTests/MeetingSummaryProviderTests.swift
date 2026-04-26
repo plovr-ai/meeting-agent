@@ -2,9 +2,9 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class MeetingSummaryProviderTests: XCTestCase {
-    func testExtractiveProviderSeparatesSummarySectionsWithSourceIDs() throws {
+    func testExtractiveProviderSeparatesSummarySectionsWithSourceIDs() async throws {
         let provider = ExtractiveMeetingSummaryProvider()
-        let summary = try provider.generateSummary(
+        let summary = try await provider.generateSummary(
             input: MeetingSummaryInput(
                 meetingName: "Launch Review",
                 startedAt: Date(timeIntervalSince1970: 1_777_000_000),
@@ -34,10 +34,10 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertEqual(summary.followUps, ["Alex will follow up with legal."])
     }
 
-    func testExtractiveProviderFailsForEmptyTranscript() throws {
+    func testExtractiveProviderFailsForEmptyTranscript() async throws {
         let provider = ExtractiveMeetingSummaryProvider()
 
-        let summary = try provider.generateSummary(
+        let summary = try await provider.generateSummary(
             input: MeetingSummaryInput(
                 meetingName: "Empty Meeting",
                 startedAt: Date(timeIntervalSince1970: 1_777_000_000),
@@ -52,6 +52,92 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertEqual(summary.status, .failed)
         XCTAssertEqual(summary.failureReason, "No usable transcript segments were available for summary generation.")
         XCTAssertEqual(summary.sourceSegmentIDs, [])
+    }
+
+    func testOpenRouterProviderBuildsRequestAndParsesSummary() async throws {
+        let client = RecordingOpenRouterSummaryClient(responseContent: """
+        {
+          "overview": "The team aligned on launch scope.",
+          "keyTopics": ["Launch"],
+          "decisions": [
+            {
+              "description": "Approved the launch date.",
+              "participants": ["Alex"],
+              "sourceSegmentIDs": ["segment-1"],
+              "confidence": 0.82
+            }
+          ],
+          "actionItems": [
+            {
+              "description": "Alex will follow up with legal.",
+              "owner": "Alex",
+              "dueDate": null,
+              "sourceSegmentIDs": ["segment-2"],
+              "confidence": 0.76
+            }
+          ],
+          "openQuestions": ["Can support staff the launch?"],
+          "risks": ["Legal review may delay launch."],
+          "followUps": ["Alex will follow up with legal."]
+        }
+        """)
+        let provider = OpenRouterMeetingSummaryProvider(
+            configuration: OpenRouterSummaryConfiguration(apiKey: "test-key", model: "openai/gpt-4.1-mini"),
+            client: client
+        )
+
+        let summary = try await provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: "Launch Review",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                endedAt: Date(timeIntervalSince1970: 1_777_000_600),
+                language: "en-US",
+                meetingGoal: nil,
+                segments: [
+                    TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
+                    TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
+                ],
+                generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
+            )
+        )
+
+        XCTAssertEqual(summary.status, .succeeded)
+        XCTAssertEqual(summary.provider, "openrouter:openai/gpt-4.1-mini")
+        XCTAssertEqual(summary.language, "en-US")
+        XCTAssertEqual(summary.generatedAt, Date(timeIntervalSince1970: 1_777_000_700))
+        XCTAssertEqual(summary.sourceSegmentIDs, ["segment-1", "segment-2"])
+        XCTAssertEqual(summary.overview, "The team aligned on launch scope.")
+        XCTAssertEqual(summary.decisions.first?.description, "Approved the launch date.")
+        XCTAssertEqual(summary.decisions.first?.sourceSegmentIDs, ["segment-1"])
+        XCTAssertEqual(summary.actionItems.first?.owner, "Alex")
+        XCTAssertEqual(client.requests.first?.apiKey, "test-key")
+        XCTAssertEqual(client.requests.first?.model, "openai/gpt-4.1-mini")
+        XCTAssertEqual(client.requests.first?.messages.first?.role, "system")
+        XCTAssertTrue(client.requests.first?.messages.last?.content.contains("segment-1") == true)
+    }
+
+    func testOpenRouterProviderFailsWhenConfigurationIsMissing() async throws {
+        let provider = OpenRouterMeetingSummaryProvider(
+            configuration: .unavailable("OpenRouter API key is not configured"),
+            client: RecordingOpenRouterSummaryClient(responseContent: "{}")
+        )
+
+        let summary = try await provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: "Launch Review",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                endedAt: nil,
+                language: "en-US",
+                meetingGoal: nil,
+                segments: [TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.")],
+                generatedAt: Date(timeIntervalSince1970: 1_777_000_100)
+            )
+        )
+
+        XCTAssertEqual(summary.status, .failed)
+        XCTAssertEqual(summary.provider, "openrouter")
+        XCTAssertEqual(summary.failureReason, "OpenRouter API key is not configured")
+        XCTAssertEqual(summary.sourceSegmentIDs, ["segment-1"])
     }
 
     func testSummaryWriterWritesJSONAndMarkdownTogether() throws {
@@ -123,5 +209,25 @@ final class MeetingSummaryProviderTests: XCTestCase {
 
         XCTAssertTrue(markdown.contains("Status: failed"))
         XCTAssertTrue(markdown.contains("No transcript was available."))
+    }
+}
+
+private final class RecordingOpenRouterSummaryClient: OpenRouterSummaryClient {
+    struct Request: Equatable {
+        let apiKey: String
+        let model: String
+        let messages: [OpenRouterChatMessage]
+    }
+
+    private(set) var requests: [Request] = []
+    private let responseContent: String
+
+    init(responseContent: String) {
+        self.responseContent = responseContent
+    }
+
+    func complete(apiKey: String, model: String, messages: [OpenRouterChatMessage]) async throws -> String {
+        requests.append(Request(apiKey: apiKey, model: model, messages: messages))
+        return responseContent
     }
 }

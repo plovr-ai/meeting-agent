@@ -49,6 +49,14 @@ export MEETING_AGENT_WHISPER_BIN=/opt/homebrew/bin/whisper-cli
 export MEETING_AGENT_WHISPER_MODEL=/Users/allan/models/ggml-small.bin
 ```
 
+The default summary provider is `extractive-local`. To generate summaries with OpenRouter, configure the provider, API key, and model:
+
+```sh
+export MEETING_AGENT_SUMMARY_PROVIDER=openrouter
+export MEETING_AGENT_OPENROUTER_API_KEY=<your-openrouter-key>
+export MEETING_AGENT_OPENROUTER_MODEL=openai/gpt-4.1-mini
+```
+
 Use `--stt-locale` to match the meeting language. The default is `en-US`; Chinese recognition should usually use `zh-CN`.
 
 When `--wav` is provided without a filename, the program writes timestamped files such as:
