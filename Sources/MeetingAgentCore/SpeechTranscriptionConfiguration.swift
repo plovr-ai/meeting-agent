@@ -8,12 +8,16 @@ public enum SpeechConfigurationValidationStatus: Equatable {
 public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var provider: SpeechProvider
     public var localeIdentifier: String
+    public var targetLocaleIdentifier: String
+    public var bilingualPipelineProfileID: String
     public var whisperBinaryPath: String?
     public var whisperModelPath: String?
 
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
         localeIdentifier: "en-US",
+        targetLocaleIdentifier: "zh-CN",
+        bilingualPipelineProfileID: "local-whisper-hosted-translation",
         whisperBinaryPath: nil,
         whisperModelPath: nil
     )
@@ -21,13 +25,41 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public init(
         provider: SpeechProvider,
         localeIdentifier: String,
+        targetLocaleIdentifier: String = "zh-CN",
+        bilingualPipelineProfileID: String = "local-whisper-hosted-translation",
         whisperBinaryPath: String?,
         whisperModelPath: String?
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
+        self.targetLocaleIdentifier = Self.normalized(targetLocaleIdentifier, fallback: "zh-CN") ?? "zh-CN"
+        self.bilingualPipelineProfileID = Self.normalized(
+            bilingualPipelineProfileID,
+            fallback: "local-whisper-hosted-translation"
+        ) ?? "local-whisper-hosted-translation"
         self.whisperBinaryPath = Self.normalized(whisperBinaryPath)
         self.whisperModelPath = Self.normalized(whisperModelPath)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+        case localeIdentifier
+        case targetLocaleIdentifier
+        case bilingualPipelineProfileID
+        case whisperBinaryPath
+        case whisperModelPath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            provider: try container.decode(SpeechProvider.self, forKey: .provider),
+            localeIdentifier: try container.decode(String.self, forKey: .localeIdentifier),
+            targetLocaleIdentifier: try container.decodeIfPresent(String.self, forKey: .targetLocaleIdentifier) ?? "zh-CN",
+            bilingualPipelineProfileID: try container.decodeIfPresent(String.self, forKey: .bilingualPipelineProfileID) ?? "local-whisper-hosted-translation",
+            whisperBinaryPath: try container.decodeIfPresent(String.self, forKey: .whisperBinaryPath),
+            whisperModelPath: try container.decodeIfPresent(String.self, forKey: .whisperModelPath)
+        )
     }
 
     public func validationStatus(

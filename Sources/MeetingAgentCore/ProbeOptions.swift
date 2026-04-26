@@ -7,6 +7,8 @@ public struct ProbeOptions {
     public let wavPath: String?
     public let speechProvider: SpeechProvider
     public let speechLocaleIdentifier: String
+    public let targetLocaleIdentifier: String
+    public let bilingualPipelineProfileID: String
 
     public init(arguments: [String]) throws {
         listOnly = arguments.isEmpty || arguments.contains("--list")
@@ -16,6 +18,8 @@ public struct ProbeOptions {
         var parsedWavPath: String?
         var parsedSpeechProvider = SpeechProvider.whisper
         var parsedSpeechLocaleIdentifier = "en-US"
+        var parsedTargetLocaleIdentifier = "zh-CN"
+        var parsedBilingualPipelineProfileID = "local-whisper-hosted-translation"
 
         var index = 0
         while index < arguments.count {
@@ -58,6 +62,18 @@ public struct ProbeOptions {
                 }
                 parsedSpeechProvider = provider
                 index += 2
+            case "--target-locale":
+                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
+                    throw ProbeError.invalidArguments("--target-locale requires a locale identifier such as zh-CN or ja-JP")
+                }
+                parsedTargetLocaleIdentifier = arguments[index + 1]
+                index += 2
+            case "--bilingual-profile":
+                guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
+                    throw ProbeError.invalidArguments("--bilingual-profile requires a pipeline profile id")
+                }
+                parsedBilingualPipelineProfileID = arguments[index + 1]
+                index += 2
             default:
                 throw ProbeError.invalidArguments("Unknown argument \(arg)")
             }
@@ -68,5 +84,7 @@ public struct ProbeOptions {
         wavPath = parsedWavPath
         speechProvider = parsedSpeechProvider
         speechLocaleIdentifier = parsedSpeechLocaleIdentifier
+        targetLocaleIdentifier = parsedTargetLocaleIdentifier
+        bilingualPipelineProfileID = parsedBilingualPipelineProfileID
     }
 }

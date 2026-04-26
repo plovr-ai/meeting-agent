@@ -171,7 +171,7 @@ struct ProbeMain {
             log("\(target.processID)\t\(target.displayName)\t\(bundle)")
         }
         log("")
-        log("Usage: CoreAudioTapProbe [--pid <process-id>] [--seconds 10] [--wav [capture.wav]] [--stt-provider local|whisper] [--stt-locale en-US]")
+        log("Usage: CoreAudioTapProbe [--pid <process-id>] [--seconds 10] [--wav [capture.wav]] [--stt-provider local|whisper] [--stt-locale en-US] [--target-locale zh-CN] [--bilingual-profile local-whisper-hosted-translation]")
         log("When --wav is provided, audio and transcript files are written to .record/")
     }
 

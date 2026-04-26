@@ -2,6 +2,13 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class SpeechTranscriptionConfigurationTests: XCTestCase {
+    func testDefaultBilingualSettings() {
+        let configuration = SpeechTranscriptionConfiguration.default
+
+        XCTAssertEqual(configuration.targetLocaleIdentifier, "zh-CN")
+        XCTAssertEqual(configuration.bilingualPipelineProfileID, "local-whisper-hosted-translation")
+    }
+
     func testWhisperValidationReportsMissingPaths() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
