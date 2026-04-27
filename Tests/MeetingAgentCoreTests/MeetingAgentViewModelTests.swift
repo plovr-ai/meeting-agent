@@ -652,6 +652,38 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Transcript exported")
     }
 
+    func testUpdateSpeakerLabelRefreshesTranscriptArtifactsAndLiveCaptions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
+                text: "Hello",
+                language: "en-US"
+            )
+        ])
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(stored.record.id)
+        viewModel.drainRecordingFrames()
+
+        try await viewModel.updateSpeakerLabel(
+            for: stored.record.id,
+            speakerID: "speaker-1",
+            label: "Allan"
+        )
+
+        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(stored.record.transcriptJSONURL))
+        XCTAssertEqual(document.segments.first?.speakerLabel, "Allan")
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(stored.record.transcriptURL), encoding: .utf8), "Allan:\nHello\n")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.speaker.label, "Allan")
+        XCTAssertEqual(viewModel.statusText, "Speaker label updated")
+    }
+
     func testExportHelpersWriteSummaryDataAndReadinessReports() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

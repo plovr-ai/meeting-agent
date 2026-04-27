@@ -408,6 +408,25 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    public func updateSpeakerLabel(
+        for meetingID: UUID,
+        speakerID: String,
+        label: String
+    ) async throws {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else {
+            throw MeetingExportError.missingArtifact("meeting")
+        }
+        try TranscriptFileWriter.updateSpeakerLabel(
+            speakerID: speakerID,
+            label: label,
+            textURL: record.transcriptURL,
+            structuredURL: record.transcriptJSONURL
+        )
+        refreshLiveCaptionTurnsFromSelectedMeeting()
+        statusText = "Speaker label updated"
+        objectWillChange.send()
+    }
+
     public func retryTranscription(for meetingID: UUID) async {
         guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else { return }
         var record = meetings[index]

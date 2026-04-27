@@ -91,4 +91,30 @@ final class TranscriptFileWriterTests: XCTestCase {
 
         XCTAssertEqual(TranscriptFileWriter.renderedTranscript(textURL: url, structuredURL: jsonURL), "User A:\nstructured text")
     }
+
+    func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"), text: "Hello"),
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-2", label: "User B"), text: "Hi"),
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"), text: "Next")
+        ])
+
+        try TranscriptFileWriter.updateSpeakerLabel(
+            speakerID: "speaker-1",
+            label: "Allan",
+            textURL: url,
+            structuredURL: jsonURL
+        )
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.speakerLabel), ["Allan", "User B", "Allan"])
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "Allan:\nHello\n\nUser B:\nHi\n\nAllan:\nNext\n")
+    }
 }

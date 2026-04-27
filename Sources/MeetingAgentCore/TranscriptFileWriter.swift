@@ -71,6 +71,45 @@ public final class TranscriptFileWriter {
         return text
     }
 
+    public static func updateSpeakerLabel(
+        speakerID: String,
+        label: String,
+        textURL: URL?,
+        structuredURL: URL?
+    ) throws {
+        guard let structuredURL else {
+            throw MeetingExportError.missingArtifact("structured transcript")
+        }
+        let normalizedSpeakerID = speakerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSpeakerID.isEmpty, !normalizedLabel.isEmpty else {
+            throw ProbeError.invalidArguments("Speaker ID and label are required")
+        }
+        let document = try readDocument(from: structuredURL)
+        let updatedSegments = document.segments.map { segment in
+            guard segment.speakerID == normalizedSpeakerID else { return segment }
+            return TranscriptSegment(
+                id: segment.id,
+                speaker: TranscriptSpeaker(identifier: normalizedSpeakerID, label: normalizedLabel),
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                text: segment.text,
+                language: segment.language,
+                sourceProvider: segment.sourceProvider,
+                isFinal: segment.isFinal,
+                confidence: segment.confidence,
+                createdAt: segment.createdAt,
+                timingSource: segment.timingSource
+            )
+        }
+        let updatedDocument = TranscriptDocument(version: document.version, segments: updatedSegments)
+        let data = try JSONEncoder.meetingAgent.encode(updatedDocument)
+        try data.write(to: structuredURL, options: .atomic)
+        if let textURL {
+            try (TranscriptFormatter.render(updatedSegments) + "\n").write(to: textURL, atomically: true, encoding: .utf8)
+        }
+    }
+
     private func writeDocument(_ document: TranscriptDocument) throws {
         let data = try JSONEncoder.meetingAgent.encode(document)
         try data.write(to: structuredURL, options: .atomic)
