@@ -108,19 +108,44 @@ private struct TranscriptTurn {
 
 struct SpeakerLabelMapper {
     private var labelsBySpeaker: [TranscriptSpeaker: String] = [:]
+    private var labelsByIdentifier: [String: String] = [:]
+    private var usedLabels = Set<String>()
     private var nextIndex = 0
 
     mutating func label(for speaker: TranscriptSpeaker) -> String {
         if let label = speaker.label {
+            remember(label: label, for: speaker)
             return label
+        }
+        if let identifier = speaker.identifier,
+           let existing = labelsByIdentifier[identifier] {
+            remember(label: existing, for: speaker)
+            return existing
         }
         if let existing = labelsBySpeaker[speaker] {
             return existing
         }
-        let label = "User \(Self.letter(for: nextIndex))"
-        labelsBySpeaker[speaker] = label
-        nextIndex += 1
+        let label = nextUnusedLabel()
+        remember(label: label, for: speaker)
         return label
+    }
+
+    private mutating func remember(label: String, for speaker: TranscriptSpeaker) {
+        labelsBySpeaker[speaker] = label
+        if let identifier = speaker.identifier {
+            labelsByIdentifier[identifier] = label
+        }
+        usedLabels.insert(label)
+    }
+
+    private mutating func nextUnusedLabel() -> String {
+        while true {
+            let label = "User \(Self.letter(for: nextIndex))"
+            nextIndex += 1
+            if !usedLabels.contains(label) {
+                return label
+            }
+        }
     }
 
     private static func letter(for index: Int) -> String {

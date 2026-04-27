@@ -51,6 +51,58 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.text, "hello live")
         XCTAssertEqual(document.segments.first?.sourceProvider, "deepgram-transcribe")
     }
+
+    func testStreamingResponseSplitsFinalTranscriptByConsecutiveDeepgramSpeakers() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-speakers-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let session = FakeDeepgramStreamingSession()
+        let client = FakeDeepgramStreamingClient(session: session)
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 48_000,
+            channelCount: 1
+        ))
+
+        session.yieldJSON("""
+        {
+          "is_final": true,
+          "channel": {
+            "alternatives": [
+              {
+                "transcript": "hello team yes",
+                "confidence": 0.92,
+                "words": [
+                  { "word": "hello", "punctuated_word": "Hello", "start": 0.0, "end": 0.4, "speaker": 0 },
+                  { "word": "team", "punctuated_word": "team.", "start": 0.4, "end": 0.8, "speaker": 0 },
+                  { "word": "yes", "punctuated_word": "Yes.", "start": 0.9, "end": 1.1, "speaker": 1 }
+                ]
+              }
+            ]
+          }
+        }
+        """)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        transcriber.finish()
+
+        let document = try TranscriptFileWriter.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.segments.map(\.speakerID), ["deepgram-speaker-0", "deepgram-speaker-1"])
+        XCTAssertEqual(document.segments.map(\.speakerLabel), ["User A", "User B"])
+        XCTAssertEqual(document.segments.map(\.text), ["Hello team.", "Yes."])
+        XCTAssertEqual(document.segments.map(\.startTimeSeconds), [0.0, 0.9])
+        XCTAssertEqual(document.segments.map(\.endTimeSeconds), [0.8, 1.1])
+    }
 }
 
 private final class FakeDeepgramStreamingClient: DeepgramStreamingTranscriptionClient {
@@ -109,5 +161,15 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
 
     func yield(_ segment: TranscriptSegment) {
         continuation?.yield(segment)
+    }
+
+    func yieldJSON(_ json: String) {
+        for segment in DeepgramStreamingResponseMapper.segments(
+            from: Data(json.utf8),
+            localeIdentifier: "en-US",
+            providerID: "deepgram-transcribe"
+        ) {
+            continuation?.yield(segment)
+        }
     }
 }

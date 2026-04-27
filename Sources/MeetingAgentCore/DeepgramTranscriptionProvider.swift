@@ -196,30 +196,83 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     }
 
     private func yieldSegments(from data: Data) {
+        for segment in DeepgramStreamingResponseMapper.segments(
+            from: data,
+            localeIdentifier: localeIdentifier,
+            providerID: "deepgram-transcribe"
+        ) {
+            continuation?.yield(segment)
+        }
+    }
+}
+
+public enum DeepgramStreamingResponseMapper {
+    public static func segments(
+        from data: Data,
+        localeIdentifier: String,
+        providerID: String
+    ) -> [TranscriptSegment] {
         guard let response = try? JSONDecoder.meetingAgent.decode(DeepgramStreamingResponse.self, from: data),
               response.isFinal == true,
               let alternative = response.channel?.alternatives.first
         else {
-            return
+            return []
         }
-        let text = alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
         let words = alternative.words ?? []
-        let firstWord = words.first
-        let lastWord = words.last
-        let speaker = firstWord?.speaker.map {
-            TranscriptSpeaker(identifier: "speaker-\($0)", label: "Speaker \($0)")
-        } ?? .default
-        continuation?.yield(TranscriptSegment(
-            speaker: speaker,
-            startTimeSeconds: firstWord?.start,
-            endTimeSeconds: lastWord?.end,
-            text: text,
-            language: localeIdentifier,
-            sourceProvider: "deepgram-transcribe",
-            confidence: alternative.confidence,
-            timingSource: firstWord?.start == nil && lastWord?.end == nil ? .unavailable : .precise
-        ))
+        let runs = speakerRuns(from: words)
+        if runs.isEmpty {
+            let text = alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return [] }
+            return [
+                TranscriptSegment(
+                    text: text,
+                    language: localeIdentifier,
+                    sourceProvider: providerID,
+                    confidence: alternative.confidence
+                )
+            ]
+        }
+        return runs.compactMap { run in
+            let text = run.words
+                .map { $0.displayText }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let firstWord = run.words.first
+            let lastWord = run.words.last
+            return TranscriptSegment(
+                speaker: speaker(for: run.speaker),
+                startTimeSeconds: firstWord?.start,
+                endTimeSeconds: lastWord?.end,
+                text: text,
+                language: localeIdentifier,
+                sourceProvider: providerID,
+                confidence: alternative.confidence,
+                timingSource: firstWord?.start == nil && lastWord?.end == nil ? .unavailable : .precise
+            )
+        }
+    }
+
+    private static func speakerRuns(from words: [DeepgramStreamingResponse.Word]) -> [SpeakerRun] {
+        var runs: [SpeakerRun] = []
+        for word in words where !word.displayText.isEmpty {
+            if let lastIndex = runs.indices.last, runs[lastIndex].speaker == word.speaker {
+                runs[lastIndex].words.append(word)
+            } else {
+                runs.append(SpeakerRun(speaker: word.speaker, words: [word]))
+            }
+        }
+        return runs
+    }
+
+    private static func speaker(for deepgramSpeaker: Int?) -> TranscriptSpeaker {
+        guard let deepgramSpeaker else { return .default }
+        return TranscriptSpeaker(identifier: "deepgram-speaker-\(deepgramSpeaker)")
+    }
+
+    private struct SpeakerRun {
+        let speaker: Int?
+        var words: [DeepgramStreamingResponse.Word]
     }
 }
 
@@ -352,9 +405,7 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
         let utteranceSegments = response.results?.utterances?.compactMap { utterance -> TranscriptSegment? in
             let text = utterance.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            let speaker = utterance.speaker.map { value in
-                TranscriptSpeaker(identifier: "speaker-\(value)", label: "Speaker \(value)")
-            } ?? .default
+            let speaker = Self.speaker(for: utterance.speaker)
             return TranscriptSegment(
                 id: SpeechTranscriptionConfiguration.normalized(utterance.id) ?? UUID().uuidString,
                 speaker: speaker,
@@ -382,6 +433,11 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
                 confidence: alternative.confidence
             )
         }
+    }
+
+    private static func speaker(for deepgramSpeaker: Int?) -> TranscriptSpeaker {
+        guard let deepgramSpeaker else { return .default }
+        return TranscriptSpeaker(identifier: "deepgram-speaker-\(deepgramSpeaker)")
     }
 }
 
@@ -433,7 +489,7 @@ private struct DeepgramResponse: Decodable {
     }
 }
 
-private struct DeepgramStreamingResponse: Decodable {
+public struct DeepgramStreamingResponse: Decodable {
     let isFinal: Bool?
     let channel: Channel?
 
@@ -453,8 +509,22 @@ private struct DeepgramStreamingResponse: Decodable {
     }
 
     struct Word: Decodable {
+        let word: String?
+        let punctuatedWord: String?
         let start: Double?
         let end: Double?
         let speaker: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case word
+            case punctuatedWord = "punctuated_word"
+            case start
+            case end
+            case speaker
+        }
+
+        var displayText: String {
+            (punctuatedWord ?? word ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 }

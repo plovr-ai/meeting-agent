@@ -43,8 +43,64 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(client.requests.first?.wavURL, wavURL)
         XCTAssertEqual(output.segments.first?.id, "utt-1")
         XCTAssertEqual(output.segments.first?.text, "hello team")
-        XCTAssertEqual(output.segments.first?.speaker.label, "Speaker 2")
+        XCTAssertEqual(output.segments.first?.speakerID, "deepgram-speaker-2")
+        XCTAssertNil(output.segments.first?.speakerLabel)
         XCTAssertEqual(output.segments.first?.sourceProvider, "deepgram-transcribe")
+    }
+
+    func testProviderWritesDeepgramSpeakersIntoUserLabelsThroughTranscriptWriter() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-users-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let client = RecordingDeepgramClient(response: """
+        {
+          "results": {
+            "utterances": [
+              { "id": "utt-1", "start": 0.0, "end": 1.0, "confidence": 0.91, "transcript": "hello", "speaker": 2 },
+              { "id": "utt-2", "start": 1.1, "end": 2.0, "confidence": 0.89, "transcript": "hi", "speaker": 7 },
+              { "id": "utt-3", "start": 2.1, "end": 3.0, "confidence": 0.90, "transcript": "again", "speaker": 2 }
+            ]
+          }
+        }
+        """)
+        let provider = DeepgramAudioTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+
+        let output = try await provider.transcribe(
+            audio: AudioInput(wavURL: URL(fileURLWithPath: "/tmp/capture.wav"), localeIdentifier: "en-US"),
+            options: TranscriptionOptions(sourceLocale: "en-US")
+        )
+        try TranscriptFileWriter(url: transcriptURL).replace(with: output.segments)
+
+        let document = try TranscriptFileWriter.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.segments.map(\.speakerID), [
+            "deepgram-speaker-2",
+            "deepgram-speaker-7",
+            "deepgram-speaker-2"
+        ])
+        XCTAssertEqual(document.segments.map(\.speakerLabel), ["User A", "User B", "User A"])
+        XCTAssertEqual(
+            try String(contentsOf: transcriptURL, encoding: .utf8),
+            """
+            User A:
+            hello
+
+            User B:
+            hi
+
+            User A:
+            again
+
+            """
+        )
     }
 
     func testProviderFallsBackToChannelTranscriptWhenUtterancesAreAbsent() async throws {
