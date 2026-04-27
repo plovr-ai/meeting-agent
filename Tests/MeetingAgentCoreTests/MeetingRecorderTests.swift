@@ -45,4 +45,27 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(diagnostics.endedReason, .targetProcessEnded)
         XCTAssertEqual(diagnostics.status, .targetProcessEnded)
     }
+
+    func testRecorderCanFanOutFramesToRealtimeConsumerWithoutThrowing() throws {
+        let storeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-recorder-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storeRoot) }
+        let store = MeetingStore(baseDirectory: storeRoot)
+        let recorder = MeetingRecorder(store: store)
+        let consumer = CapturingRealtimeFrameConsumer()
+
+        recorder.realtimeFrameConsumer = consumer
+        let frame = AudioFrame(pcm: Data([1, 2, 3]), sampleRate: 24_000, channelCount: 1, timestampNanos: 0)
+
+        recorder.deliverFramesToRealtimeConsumerForTesting([frame])
+
+        XCTAssertEqual(consumer.receivedFrames, [frame])
+    }
+}
+
+private final class CapturingRealtimeFrameConsumer: RealtimeFrameConsumer {
+    var receivedFrames: [AudioFrame] = []
+
+    func consumeRealtimeFrames(_ frames: [AudioFrame]) {
+        receivedFrames.append(contentsOf: frames)
+    }
 }

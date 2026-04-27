@@ -15,6 +15,7 @@ public final class MeetingRecorder {
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
 
     public private(set) var state: MeetingRecorderState = .idle
+    public weak var realtimeFrameConsumer: RealtimeFrameConsumer?
 
     public init(store: MeetingStore = MeetingStore()) {
         self.store = store
@@ -123,6 +124,7 @@ public final class MeetingRecorder {
                 transcriber = nil
             }
         }
+        deliverFramesToRealtimeConsumerForTesting(frames)
     }
 
     public func stopRecording(
@@ -168,6 +170,11 @@ public final class MeetingRecorder {
 
     public var currentCaptureStatus: CaptureStatus? {
         diagnosticsTracker?.liveStatus
+    }
+
+    public func deliverFramesToRealtimeConsumerForTesting(_ frames: [AudioFrame]) {
+        guard !frames.isEmpty else { return }
+        realtimeFrameConsumer?.consumeRealtimeFrames(frames)
     }
 
     private func persistTranscriptionFailure(_ message: String) throws {
