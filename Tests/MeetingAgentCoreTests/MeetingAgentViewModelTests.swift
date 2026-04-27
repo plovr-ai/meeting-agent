@@ -432,6 +432,42 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Summary generated")
     }
 
+    func testRetryTranscriptionClearsDownstreamSummaryArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Demo", startedAt: Date()).record
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(text: "old", language: "en-US", sourceProvider: "test")
+        ])
+        try transcriptWriter.close()
+        try MeetingSummaryWriter.write(MeetingSummary(
+            overview: "old summary",
+            keyTopics: [],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: [],
+            generatedAt: Date(),
+            provider: "test",
+            status: .succeeded,
+            failureReason: nil
+        ), jsonURL: XCTUnwrap(record.summaryJSONURL), markdownURL: XCTUnwrap(record.summaryMarkdownURL))
+
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        await viewModel.invalidateDownstreamArtifactsAfterTranscriptChange(for: record.id)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(record.summaryJSONURL).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(record.summaryMarkdownURL).path))
+        XCTAssertEqual(viewModel.statusText, "Transcript updated; summary needs regeneration")
+    }
+
     func testGenerateSummaryReportsMissingInputsAndFailedSummaryStatus() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -521,7 +557,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
         var expectedConfiguration = configuration
         expectedConfiguration.bilingualPipelineProfileID = "hosted-transcribe-hosted-translation"
         XCTAssertEqual(viewModel.speechConfiguration, expectedConfiguration)
-        XCTAssertEqual(try configurationStore.load(), expectedConfiguration)
+        var expectedPersistedConfiguration = expectedConfiguration
+        expectedPersistedConfiguration.openRouterAPIKey = nil
+        expectedPersistedConfiguration.openAIRealtimeAPIKey = nil
+        expectedPersistedConfiguration.deepgramAPIKey = nil
+        XCTAssertEqual(try configurationStore.load(), expectedPersistedConfiguration)
         XCTAssertEqual(viewModel.statusText, "Settings saved")
     }
 

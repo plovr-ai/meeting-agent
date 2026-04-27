@@ -372,6 +372,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
             record.transcriptionStatus = .transcribed
             record.transcriptionFailureReason = nil
+            await invalidateDownstreamArtifactsAfterTranscriptChange(for: meetingID)
             statusText = "Transcript regenerated"
         } catch {
             record.transcriptionStatus = .failed
@@ -381,6 +382,20 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         meetings[index] = record
         try? store.save(record)
+    }
+
+    public func invalidateDownstreamArtifactsAfterTranscriptChange(for meetingID: UUID) async {
+        guard let meeting = meetings.first(where: { $0.id == meetingID }) else { return }
+        let urls = Set([
+            meeting.summaryURL,
+            meeting.summaryJSONURL,
+            meeting.summaryMarkdownURL
+        ].compactMap { $0 })
+        for url in urls {
+            try? FileManager.default.removeItem(at: url)
+        }
+        statusText = "Transcript updated; summary needs regeneration"
+        objectWillChange.send()
     }
 
     public func pollForMeetingCandidates() -> AudioCaptureTarget? {
