@@ -139,15 +139,32 @@ protocol RealtimeWebSocketTransport: AnyObject {
     func close() async
 }
 
+protocol URLSessionRealtimeWebSocketTask: AnyObject {
+    func resume()
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+}
+
+extension URLSessionWebSocketTask: URLSessionRealtimeWebSocketTask {}
+
 final class URLSessionRealtimeWebSocketTransport: NSObject, RealtimeWebSocketTransport, URLSessionWebSocketDelegate {
     private let url: URL
     private let apiKey: String
-    private var task: URLSessionWebSocketTask?
+    private let webSocketFactory: (URLRequest, URLSessionWebSocketDelegate) -> URLSessionRealtimeWebSocketTask
+    private var task: URLSessionRealtimeWebSocketTask?
     private var continuation: AsyncStream<Data>.Continuation?
 
-    init(url: URL, apiKey: String) {
+    init(
+        url: URL,
+        apiKey: String,
+        webSocketFactory: @escaping (URLRequest, URLSessionWebSocketDelegate) -> URLSessionRealtimeWebSocketTask = { request, delegate in
+            URLSession(configuration: .default, delegate: delegate, delegateQueue: nil).webSocketTask(with: request)
+        }
+    ) {
         self.url = url
         self.apiKey = apiKey
+        self.webSocketFactory = webSocketFactory
     }
 
     var incomingMessages: AsyncStream<Data> {
@@ -160,10 +177,12 @@ final class URLSessionRealtimeWebSocketTransport: NSObject, RealtimeWebSocketTra
     func connect() async throws {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-        let task = session.webSocketTask(with: request)
+        let task = webSocketFactory(request, self)
         self.task = task
         task.resume()
+        if continuation != nil {
+            receiveNext()
+        }
     }
 
     func send(_ data: Data) async throws {

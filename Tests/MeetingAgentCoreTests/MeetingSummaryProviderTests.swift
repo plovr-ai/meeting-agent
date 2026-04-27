@@ -54,6 +54,56 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertEqual(summary.sourceSegmentIDs, [])
     }
 
+    func testExtractiveProviderUsesMeetingGoalBlankNameKeywordsAndLanguageFallback() async throws {
+        let provider = ExtractiveMeetingSummaryProvider()
+
+        let summary = try await provider.generateSummary(input: MeetingSummaryInput(
+            meetingName: " ",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            language: nil,
+            meetingGoal: " reduce support risk ",
+            segments: [
+                TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "alex", label: "Alex"), text: "Alex approved the migration plan.", language: "en-US"),
+                TranscriptSegment(id: "segment-2", text: "support owners need to document rollout concerns", language: "en-US"),
+                TranscriptSegment(id: "segment-3", text: "What risks remain", language: "en-US")
+            ],
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
+        ))
+
+        XCTAssertEqual(summary.status, .succeeded)
+        XCTAssertTrue(summary.overview.hasPrefix("The meeting focused on reduce support risk."))
+        XCTAssertEqual(summary.language, "en-US")
+        XCTAssertEqual(summary.decisions.first?.participants, ["Alex"])
+        XCTAssertEqual(summary.actionItems.first?.owner, nil)
+        XCTAssertEqual(summary.openQuestions, ["What risks remain"])
+        XCTAssertTrue(summary.keyTopics.contains("approved"))
+    }
+
+    func testMarkdownRendererOmitsBlankSectionsAndRendersLists() {
+        let summary = MeetingSummary(
+            overview: " ",
+            keyTopics: ["Launch", " "],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: ["Call legal"],
+            language: nil,
+            sourceSegmentIDs: [],
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            provider: "extractive-local",
+            status: .succeeded,
+            failureReason: nil
+        )
+
+        let markdown = MeetingSummaryMarkdownRenderer.render(summary)
+
+        XCTAssertFalse(markdown.contains("## Overview"))
+        XCTAssertTrue(markdown.contains("## Key Topics\n\n- Launch"))
+        XCTAssertTrue(markdown.contains("## Follow Ups\n\n- Call legal"))
+    }
+
     func testOpenRouterProviderBuildsRequestAndParsesSummary() async throws {
         let client = RecordingOpenRouterChatClient(responseContent: """
         {

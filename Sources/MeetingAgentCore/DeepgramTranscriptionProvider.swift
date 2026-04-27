@@ -111,8 +111,17 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
 }
 
 public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStreamingTranscriptionClient {
-    public init() {}
+    private let webSocketFactory: (URLRequest) -> DeepgramWebSocketTask
 
+    public convenience init() {
+        self.init(webSocketFactory: { request in
+            URLSession.shared.webSocketTask(with: request)
+        })
+    }
+
+    init(webSocketFactory: @escaping (URLRequest) -> DeepgramWebSocketTask) {
+        self.webSocketFactory = webSocketFactory
+    }
     public func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
@@ -142,19 +151,28 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
 
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
-        let task = URLSession.shared.webSocketTask(with: request)
+        let task = webSocketFactory(request)
         let session = URLSessionDeepgramStreamingSession(task: task, localeIdentifier: localeIdentifier)
         task.resume()
         return session
     }
 }
 
+protocol DeepgramWebSocketTask: AnyObject {
+    func resume()
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+}
+
+extension URLSessionWebSocketTask: DeepgramWebSocketTask {}
+
 final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
-    private let task: URLSessionWebSocketTask
+    private let task: DeepgramWebSocketTask
     private let localeIdentifier: String
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
 
-    init(task: URLSessionWebSocketTask, localeIdentifier: String) {
+    init(task: DeepgramWebSocketTask, localeIdentifier: String) {
         self.task = task
         self.localeIdentifier = localeIdentifier
     }

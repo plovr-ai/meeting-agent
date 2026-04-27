@@ -1,5 +1,10 @@
 import Foundation
 
+public protocol AudioFrameWriting: AnyObject {
+    func append(_ frame: AudioFrame) throws
+    func close() throws
+}
+
 public final class WavFileWriter {
     private let handle: FileHandle
     private let sampleRate: UInt32
@@ -61,6 +66,8 @@ public final class WavFileWriter {
         try? close()
     }
 }
+
+extension WavFileWriter: AudioFrameWriting {}
 
 private extension Data {
     mutating func appendASCII(_ value: String) {

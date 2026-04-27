@@ -2,6 +2,92 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
+    func testURLSessionStreamingClientBuildsRequestAndStartsSession() async throws {
+        let task = FakeDeepgramWebSocketTask()
+        var capturedRequest: URLRequest?
+        let client = URLSessionDeepgramStreamingTranscriptionClient { request in
+            capturedRequest = request
+            return task
+        }
+
+        let session = try await client.connect(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            sampleRate: 16_000.4,
+            channelCount: 0,
+            localeIdentifier: "zh-CN"
+        )
+
+        XCTAssertTrue(session is URLSessionDeepgramStreamingSession)
+        XCTAssertEqual(task.resumeCallCount, 1)
+        XCTAssertEqual(capturedRequest?.value(forHTTPHeaderField: "Authorization"), "Token key")
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capturedRequest?.url), resolvingAgainstBaseURL: false))
+        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(query["model"], "nova-3")
+        XCTAssertEqual(query["language"], "zh-CN")
+        XCTAssertEqual(query["sample_rate"], "16000")
+        XCTAssertEqual(query["channels"], "1")
+        XCTAssertEqual(query["interim_results"], "true")
+    }
+
+    func testURLSessionStreamingClientRejectsUnavailableConfiguration() async {
+        let client = URLSessionDeepgramStreamingTranscriptionClient { _ in FakeDeepgramWebSocketTask() }
+
+        do {
+            _ = try await client.connect(
+                configuration: DeepgramTranscriptionConfiguration(apiKey: nil, model: "nova-3"),
+                sampleRate: 16_000,
+                channelCount: 1,
+                localeIdentifier: "en-US"
+            )
+            XCTFail("Expected unavailable configuration")
+        } catch {
+            XCTAssertEqual(String(describing: error), "Deepgram configuration is unavailable")
+        }
+    }
+
+    func testURLSessionStreamingSessionSendsReceivesAndClosesSocket() async throws {
+        let task = FakeDeepgramWebSocketTask()
+        let session = URLSessionDeepgramStreamingSession(task: task, localeIdentifier: "en-US")
+        var received: [TranscriptSegment] = []
+        let receiveTask = Task {
+            for await segment in session.segments {
+                received.append(segment)
+            }
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        task.completeReceive(.success(.string("""
+        {
+          "is_final": true,
+          "channel": {
+            "alternatives": [
+              { "transcript": "hello", "confidence": 0.7, "words": [] }
+            ]
+          }
+        }
+        """)))
+        task.completeReceive(.success(.data(Data(#"{"is_final":false}"#.utf8))))
+        task.completeReceive(.failure(ProbeError.speechRecognition("closed")))
+        try await session.send(AudioFrame(pcm: Data([1, 2, 3]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        await session.close()
+        await receiveTask.value
+
+        XCTAssertEqual(received.map(\.text), ["hello"])
+        XCTAssertEqual(task.sentMessages.count, 2)
+        if case .data(let data) = task.sentMessages.first {
+            XCTAssertEqual(data, Data([1, 2, 3]))
+        } else {
+            XCTFail("Expected data message")
+        }
+        if case .string(let text) = task.sentMessages.last {
+            XCTAssertEqual(text, #"{"type":"Finalize"}"#)
+        } else {
+            XCTFail("Expected finalize message")
+        }
+        XCTAssertEqual(task.cancelCloseCode, .normalClosure)
+    }
+
     func testStreamingProviderSendsAudioFramesAndWritesIncomingTranscriptSegments() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-\(UUID().uuidString)")
@@ -102,6 +188,43 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.text), ["Hello team.", "Yes."])
         XCTAssertEqual(document.segments.map(\.startTimeSeconds), [0.0, 0.9])
         XCTAssertEqual(document.segments.map(\.endTimeSeconds), [0.8, 1.1])
+    }
+}
+
+private final class FakeDeepgramWebSocketTask: DeepgramWebSocketTask {
+    var resumeCallCount = 0
+    var sentMessages: [URLSessionWebSocketTask.Message] = []
+    var cancelCloseCode: URLSessionWebSocketTask.CloseCode?
+    private var receiveHandlers: [(Result<URLSessionWebSocketTask.Message, Error>) -> Void] = []
+    private var pendingResults: [Result<URLSessionWebSocketTask.Message, Error>] = []
+
+    func resume() {
+        resumeCallCount += 1
+    }
+
+    func send(_ message: URLSessionWebSocketTask.Message) async throws {
+        sentMessages.append(message)
+    }
+
+    func receive(completionHandler: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
+        if !pendingResults.isEmpty {
+            completionHandler(pendingResults.removeFirst())
+            return
+        }
+        receiveHandlers.append(completionHandler)
+    }
+
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        cancelCloseCode = closeCode
+    }
+
+    func completeReceive(_ result: Result<URLSessionWebSocketTask.Message, Error>) {
+        guard !receiveHandlers.isEmpty else {
+            pendingResults.append(result)
+            return
+        }
+        let handler = receiveHandlers.removeFirst()
+        handler(result)
     }
 }
 

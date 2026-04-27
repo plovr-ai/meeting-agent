@@ -2,6 +2,10 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class RunningProcessDiscoveryTests: XCTestCase {
+    func testCurrentTargetsCanEnumerateRunningApplications() {
+        _ = RunningProcessDiscovery.currentTargets()
+    }
+
     func testTargetsExcludeCurrentProcessAndNamelessApps() {
         let currentPID = pid_t(42)
         let apps = [
@@ -27,6 +31,19 @@ final class RunningProcessDiscoveryTests: XCTestCase {
         let targets = RunningProcessDiscovery.targets(from: apps, currentProcessID: 999)
 
         XCTAssertEqual(targets.map(\.displayName), ["Google Chrome", "zoom.us", "Notes"])
+    }
+
+    func testTargetsTrimBlankNamesAndSortCaseInsensitivelyWithUnknownBundles() {
+        let apps = [
+            RunningAppSnapshot(processID: 1, displayName: " beta", bundleIdentifier: nil),
+            RunningAppSnapshot(processID: 2, displayName: "Alpha", bundleIdentifier: nil),
+            RunningAppSnapshot(processID: 3, displayName: "   ", bundleIdentifier: nil),
+            RunningAppSnapshot(processID: 4, displayName: "teams", bundleIdentifier: "com.microsoft.teams2")
+        ]
+
+        let targets = RunningProcessDiscovery.targets(from: apps, currentProcessID: 999)
+
+        XCTAssertEqual(targets.map(\.displayName), ["teams", " beta", "Alpha"])
     }
 
     func testEdgeIsPreferredAsGoogleMeetBrowser() {
@@ -70,5 +87,14 @@ final class RunningProcessDiscoveryTests: XCTestCase {
         let selected = RunningProcessDiscovery.automaticTarget(from: targets)
 
         XCTAssertEqual(selected?.processID, 202)
+    }
+
+    func testAutomaticTargetReturnsNilWhenNoPreferredActiveTargetExists() {
+        let targets = [
+            AudioCaptureTarget(processID: 1, displayName: "Notes", bundleIdentifier: "com.apple.Notes"),
+            AudioCaptureTarget(processID: 2, displayName: "Chrome", bundleIdentifier: "com.google.Chrome", isAudioOutputActive: false)
+        ]
+
+        XCTAssertNil(RunningProcessDiscovery.automaticTarget(from: targets))
     }
 }

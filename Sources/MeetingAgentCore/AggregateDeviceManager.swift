@@ -1,15 +1,45 @@
 import CoreAudio
 import Foundation
 
+public protocol AggregateDeviceClient {
+    func createAggregateDevice(description: [String: Any]) throws -> AudioObjectID
+    func destroyAggregateDevice(_ deviceID: AudioObjectID)
+}
+
+public struct SystemAggregateDeviceClient: AggregateDeviceClient {
+    public init() {}
+
+    public func createAggregateDevice(description: [String: Any]) throws -> AudioObjectID {
+        var createdID = AudioObjectID(kAudioObjectUnknown)
+        try CoreAudioHelpers.check(
+            AudioHardwareCreateAggregateDevice(description as CFDictionary, &createdID),
+            "AudioHardwareCreateAggregateDevice"
+        )
+        return createdID
+    }
+
+    public func destroyAggregateDevice(_ deviceID: AudioObjectID) {
+        AudioHardwareDestroyAggregateDevice(deviceID)
+    }
+}
+
+public protocol AggregateDeviceManaging: AnyObject {
+    func createAggregateDevice(named name: String, tapUID: String) throws -> AudioObjectID
+    func destroyAggregateDevice()
+}
+
 public final class AggregateDeviceManager {
     public private(set) var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
     private let deviceUID = "com.meetingagent.MeetingAgentApp.aggregate.\(UUID().uuidString)"
+    private let client: AggregateDeviceClient
 
     public var isCreated: Bool {
         aggregateDeviceID != AudioObjectID(kAudioObjectUnknown)
     }
 
-    public init() {}
+    public init(client: AggregateDeviceClient = SystemAggregateDeviceClient()) {
+        self.client = client
+    }
 
     public func createAggregateDevice(named name: String, tapUID: String) throws -> AudioObjectID {
         guard !isCreated else {
@@ -27,11 +57,7 @@ public final class AggregateDeviceManager {
             ]
         ]
 
-        var createdID = AudioObjectID(kAudioObjectUnknown)
-        try CoreAudioHelpers.check(
-            AudioHardwareCreateAggregateDevice(description as CFDictionary, &createdID),
-            "AudioHardwareCreateAggregateDevice"
-        )
+        let createdID = try client.createAggregateDevice(description: description)
 
         aggregateDeviceID = createdID
         return createdID
@@ -39,7 +65,7 @@ public final class AggregateDeviceManager {
 
     public func destroyAggregateDevice() {
         guard isCreated else { return }
-        AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
+        client.destroyAggregateDevice(aggregateDeviceID)
         aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
     }
 
@@ -47,3 +73,5 @@ public final class AggregateDeviceManager {
         destroyAggregateDevice()
     }
 }
+
+extension AggregateDeviceManager: AggregateDeviceManaging {}

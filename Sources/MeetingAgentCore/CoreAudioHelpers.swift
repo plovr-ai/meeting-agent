@@ -1,7 +1,52 @@
 import CoreAudio
 import Foundation
 
+protocol CoreAudioClient {
+    func getPropertyDataSize(
+        objectID: AudioObjectID,
+        address: inout AudioObjectPropertyAddress,
+        qualifierDataSize: UInt32,
+        qualifierData: UnsafeRawPointer?,
+        dataSize: inout UInt32
+    ) -> OSStatus
+
+    func getPropertyData(
+        objectID: AudioObjectID,
+        address: inout AudioObjectPropertyAddress,
+        qualifierDataSize: UInt32,
+        qualifierData: UnsafeRawPointer?,
+        dataSize: inout UInt32,
+        data: UnsafeMutableRawPointer?
+    ) -> OSStatus
+}
+
+struct SystemCoreAudioClient: CoreAudioClient {
+    func getPropertyDataSize(
+        objectID: AudioObjectID,
+        address: inout AudioObjectPropertyAddress,
+        qualifierDataSize: UInt32,
+        qualifierData: UnsafeRawPointer?,
+        dataSize: inout UInt32
+    ) -> OSStatus {
+        AudioObjectGetPropertyDataSize(objectID, &address, qualifierDataSize, qualifierData, &dataSize)
+    }
+
+    func getPropertyData(
+        objectID: AudioObjectID,
+        address: inout AudioObjectPropertyAddress,
+        qualifierDataSize: UInt32,
+        qualifierData: UnsafeRawPointer?,
+        dataSize: inout UInt32,
+        data: UnsafeMutableRawPointer?
+    ) -> OSStatus {
+        guard let data else { return kAudioHardwareBadObjectError }
+        return AudioObjectGetPropertyData(objectID, &address, qualifierDataSize, qualifierData, &dataSize, data)
+    }
+}
+
 enum CoreAudioHelpers {
+    private static let defaultClient = SystemCoreAudioClient()
+
     static func check(_ status: OSStatus, _ operation: String) throws {
         guard status == noErr else {
             throw ProbeError.coreAudio("\(operation) failed with OSStatus \(status)")
@@ -20,13 +65,17 @@ enum CoreAudioHelpers {
         )
     }
 
-    static func stringProperty(objectID: AudioObjectID, selector: AudioObjectPropertySelector) throws -> String {
+    static func stringProperty(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+        client: CoreAudioClient = defaultClient
+    ) throws -> String {
         var address = propertyAddress(selector)
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
 
         try check(
-            AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &value),
+            client.getPropertyData(objectID: objectID, address: &address, qualifierDataSize: 0, qualifierData: nil, dataSize: &size, data: &value),
             "AudioObjectGetPropertyData(\(selector))"
         )
 
@@ -37,7 +86,10 @@ enum CoreAudioHelpers {
         return value.takeUnretainedValue() as String
     }
 
-    static func processObjectID(for pid: pid_t) throws -> AudioObjectID {
+    static func processObjectID(
+        for pid: pid_t,
+        client: CoreAudioClient = defaultClient
+    ) throws -> AudioObjectID {
         var address = propertyAddress(kAudioHardwarePropertyTranslatePIDToProcessObject)
         var qualifierPID = pid
         var processObjectID = AudioObjectID(kAudioObjectUnknown)
@@ -45,13 +97,13 @@ enum CoreAudioHelpers {
         let qualifierSize = UInt32(MemoryLayout<pid_t>.size)
 
         try check(
-            AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject),
-                &address,
-                qualifierSize,
-                &qualifierPID,
-                &size,
-                &processObjectID
+            client.getPropertyData(
+                objectID: AudioObjectID(kAudioObjectSystemObject),
+                address: &address,
+                qualifierDataSize: qualifierSize,
+                qualifierData: &qualifierPID,
+                dataSize: &size,
+                data: &processObjectID
             ),
             "AudioObjectGetPropertyData(kAudioHardwarePropertyTranslatePIDToProcessObject)"
         )
@@ -63,20 +115,23 @@ enum CoreAudioHelpers {
         return processObjectID
     }
 
-    static func outputProcessObjectIDs(for target: AudioCaptureTarget) throws -> [AudioObjectID] {
-        let processObjectIDs = try audioProcessObjectList()
+    static func outputProcessObjectIDs(
+        for target: AudioCaptureTarget,
+        client: CoreAudioClient = defaultClient
+    ) throws -> [AudioObjectID] {
+        let processObjectIDs = try audioProcessObjectList(client: client)
         let matchingProcesses = try processObjectIDs.filter { processObjectID in
-            let pid = try pid(forProcessObjectID: processObjectID)
+            let pid = try pid(forProcessObjectID: processObjectID, client: client)
             if pid == target.processID {
                 return true
             }
 
-            guard try isRunningOutput(processObjectID: processObjectID) else {
+            guard try isRunningOutput(processObjectID: processObjectID, client: client) else {
                 return false
             }
 
             guard let targetBundleID = target.bundleIdentifier,
-                  let processBundleID = try bundleID(forProcessObjectID: processObjectID) else {
+                  let processBundleID = try bundleID(forProcessObjectID: processObjectID, client: client) else {
                 return false
             }
 
@@ -87,24 +142,27 @@ enum CoreAudioHelpers {
             return matchingProcesses
         }
 
-        return [try processObjectID(for: target.processID)]
+        return [try processObjectID(for: target.processID, client: client)]
     }
 
-    static func isAudioOutputActive(for target: AudioCaptureTarget) -> Bool {
+    static func isAudioOutputActive(
+        for target: AudioCaptureTarget,
+        client: CoreAudioClient = defaultClient
+    ) -> Bool {
         do {
-            let processObjectIDs = try audioProcessObjectList()
+            let processObjectIDs = try audioProcessObjectList(client: client)
             return try processObjectIDs.contains { processObjectID in
-                let pid = try pid(forProcessObjectID: processObjectID)
+                let pid = try pid(forProcessObjectID: processObjectID, client: client)
                 if pid == target.processID {
-                    return try isRunningOutput(processObjectID: processObjectID)
+                    return try isRunningOutput(processObjectID: processObjectID, client: client)
                 }
 
-                guard try isRunningOutput(processObjectID: processObjectID) else {
+                guard try isRunningOutput(processObjectID: processObjectID, client: client) else {
                     return false
                 }
 
                 guard let targetBundleID = target.bundleIdentifier,
-                      let processBundleID = try bundleID(forProcessObjectID: processObjectID) else {
+                      let processBundleID = try bundleID(forProcessObjectID: processObjectID, client: client) else {
                     return false
                 }
 
@@ -119,12 +177,18 @@ enum CoreAudioHelpers {
         bundleID == captureBundleID || bundleID.hasPrefix("\(captureBundleID).")
     }
 
-    private static func audioProcessObjectList() throws -> [AudioObjectID] {
+    private static func audioProcessObjectList(client: CoreAudioClient) throws -> [AudioObjectID] {
         var address = propertyAddress(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
 
         try check(
-            AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size),
+            client.getPropertyDataSize(
+                objectID: AudioObjectID(kAudioObjectSystemObject),
+                address: &address,
+                qualifierDataSize: 0,
+                qualifierData: nil,
+                dataSize: &size
+            ),
             "AudioObjectGetPropertyDataSize(kAudioHardwarePropertyProcessObjectList)"
         )
 
@@ -141,7 +205,14 @@ enum CoreAudioHelpers {
             }
 
             try check(
-                AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, baseAddress),
+                client.getPropertyData(
+                    objectID: AudioObjectID(kAudioObjectSystemObject),
+                    address: &address,
+                    qualifierDataSize: 0,
+                    qualifierData: nil,
+                    dataSize: &size,
+                    data: baseAddress
+                ),
                 "AudioObjectGetPropertyData(kAudioHardwarePropertyProcessObjectList)"
             )
         }
@@ -149,25 +220,45 @@ enum CoreAudioHelpers {
         return processObjectIDs.filter { $0 != AudioObjectID(kAudioObjectUnknown) }
     }
 
-    private static func pid(forProcessObjectID processObjectID: AudioObjectID) throws -> pid_t {
+    private static func pid(
+        forProcessObjectID processObjectID: AudioObjectID,
+        client: CoreAudioClient
+    ) throws -> pid_t {
         var address = propertyAddress(kAudioProcessPropertyPID)
         var pid = pid_t(0)
         var size = UInt32(MemoryLayout<pid_t>.size)
 
         try check(
-            AudioObjectGetPropertyData(processObjectID, &address, 0, nil, &size, &pid),
+            client.getPropertyData(
+                objectID: processObjectID,
+                address: &address,
+                qualifierDataSize: 0,
+                qualifierData: nil,
+                dataSize: &size,
+                data: &pid
+            ),
             "AudioObjectGetPropertyData(kAudioProcessPropertyPID)"
         )
 
         return pid
     }
 
-    private static func bundleID(forProcessObjectID processObjectID: AudioObjectID) throws -> String? {
+    private static func bundleID(
+        forProcessObjectID processObjectID: AudioObjectID,
+        client: CoreAudioClient
+    ) throws -> String? {
         var address = propertyAddress(kAudioProcessPropertyBundleID)
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
 
-        let status = AudioObjectGetPropertyData(processObjectID, &address, 0, nil, &size, &value)
+        let status = client.getPropertyData(
+            objectID: processObjectID,
+            address: &address,
+            qualifierDataSize: 0,
+            qualifierData: nil,
+            dataSize: &size,
+            data: &value
+        )
         guard status == noErr else {
             return nil
         }
@@ -175,13 +266,23 @@ enum CoreAudioHelpers {
         return value?.takeRetainedValue() as String?
     }
 
-    private static func isRunningOutput(processObjectID: AudioObjectID) throws -> Bool {
+    private static func isRunningOutput(
+        processObjectID: AudioObjectID,
+        client: CoreAudioClient
+    ) throws -> Bool {
         var address = propertyAddress(kAudioProcessPropertyIsRunningOutput)
         var value: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
 
         try check(
-            AudioObjectGetPropertyData(processObjectID, &address, 0, nil, &size, &value),
+            client.getPropertyData(
+                objectID: processObjectID,
+                address: &address,
+                qualifierDataSize: 0,
+                qualifierData: nil,
+                dataSize: &size,
+                data: &value
+            ),
             "AudioObjectGetPropertyData(kAudioProcessPropertyIsRunningOutput)"
         )
 

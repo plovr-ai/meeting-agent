@@ -48,56 +48,161 @@ enum SpeechAudioBufferFactory {
     }
 }
 
-final class SystemSpeechTranscriber: AudioFrameTranscriber {
-    private let request: SFSpeechAudioBufferRecognitionRequest
-    private let writer: TranscriptFileWriter
-    private var task: SFSpeechRecognitionTask?
+struct SystemSpeechRecognitionUpdate {
+    let text: String?
+    let isFinal: Bool
+    let error: Error?
 
-    private init(request: SFSpeechAudioBufferRecognitionRequest, writer: TranscriptFileWriter) {
+    static func result(text: String, isFinal: Bool) -> Self {
+        Self(text: text, isFinal: isFinal, error: nil)
+    }
+
+    static func failure(_ error: Error) -> Self {
+        Self(text: nil, isFinal: false, error: error)
+    }
+}
+
+protocol SystemSpeechTasking: AnyObject {
+    func finish()
+    func cancel()
+}
+
+protocol SystemSpeechRequesting: AnyObject {
+    func configureForDictation()
+    func append(_ buffer: AVAudioPCMBuffer)
+    func endAudio()
+}
+
+protocol SystemSpeechRecognizing {
+    var isAvailable: Bool { get }
+    func recognitionTask(
+        request: SystemSpeechRequesting,
+        onUpdate: @escaping (SystemSpeechRecognitionUpdate) -> Void
+    ) -> SystemSpeechTasking?
+}
+
+protocol SystemSpeechAuthorizing {
+    func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus
+}
+
+protocol SystemSpeechWriting: AnyObject {
+    func replace(with segments: [TranscriptSegment]) throws
+    func close() throws
+}
+
+struct SystemSpeechEnvironment {
+    let authorizer: SystemSpeechAuthorizing
+    let recognizerFactory: (Locale) -> SystemSpeechRecognizing?
+    let requestFactory: () -> SystemSpeechRequesting
+    let writerFactory: (URL) throws -> SystemSpeechWriting
+
+    static let live = SystemSpeechEnvironment(
+        authorizer: LiveSystemSpeechAuthorizer(),
+        recognizerFactory: { LiveSystemSpeechRecognizer(locale: $0) },
+        requestFactory: { LiveSystemSpeechRequest() },
+        writerFactory: { try TranscriptFileWriter(url: $0) }
+    )
+}
+
+struct LiveSystemSpeechAuthorizer: SystemSpeechAuthorizing {
+    func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+}
+
+final class LiveSystemSpeechRecognizer: SystemSpeechRecognizing {
+    private let recognizer: SFSpeechRecognizer?
+
+    init(locale: Locale) {
+        recognizer = SFSpeechRecognizer(locale: locale)
+    }
+
+    var isAvailable: Bool {
+        recognizer?.isAvailable == true
+    }
+
+    func recognitionTask(
+        request: SystemSpeechRequesting,
+        onUpdate: @escaping (SystemSpeechRecognitionUpdate) -> Void
+    ) -> SystemSpeechTasking? {
+        guard let liveRequest = request as? LiveSystemSpeechRequest else { return nil }
+        return recognizer?.recognitionTask(with: liveRequest.request) { result, error in
+            if let result {
+                onUpdate(.result(text: result.bestTranscription.formattedString, isFinal: result.isFinal))
+            }
+            if let error {
+                onUpdate(.failure(error))
+            }
+        }
+    }
+}
+
+final class LiveSystemSpeechRequest: SystemSpeechRequesting {
+    let request = SFSpeechAudioBufferRecognitionRequest()
+
+    func configureForDictation() {
+        request.shouldReportPartialResults = true
+        request.taskHint = .dictation
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        request.append(buffer)
+    }
+
+    func endAudio() {
+        request.endAudio()
+    }
+}
+
+extension SFSpeechRecognitionTask: SystemSpeechTasking {}
+extension TranscriptFileWriter: SystemSpeechWriting {}
+
+final class SystemSpeechTranscriber: AudioFrameTranscriber {
+    private let request: SystemSpeechRequesting
+    private let writer: SystemSpeechWriting
+    private var task: SystemSpeechTasking?
+
+    private init(request: SystemSpeechRequesting, writer: SystemSpeechWriting) {
         self.request = request
         self.writer = writer
     }
 
     static func start(transcriptURL: URL, localeIdentifier: String) async throws -> SystemSpeechTranscriber {
-        try await requestAuthorization()
+        try await start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: localeIdentifier,
+            environment: .live
+        )
+    }
+
+    static func start(
+        transcriptURL: URL,
+        localeIdentifier: String,
+        environment: SystemSpeechEnvironment
+    ) async throws -> SystemSpeechTranscriber {
+        try await requestAuthorization(authorizer: environment.authorizer)
 
         let locale = Locale(identifier: localeIdentifier)
-        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+        guard let recognizer = environment.recognizerFactory(locale), recognizer.isAvailable else {
             throw ProbeError.speechRecognition("System speech recognizer is unavailable for locale \(localeIdentifier)")
         }
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.taskHint = .dictation
+        let request = environment.requestFactory()
+        request.configureForDictation()
 
-        let writer = try TranscriptFileWriter(url: transcriptURL)
-        let transcriber = SystemSpeechTranscriber(
-            request: request,
-            writer: writer
-        )
-        transcriber.task = recognizer.recognitionTask(with: request) { result, error in
-            if let result {
-                try? writer.replace(with: [
-                    TranscriptSegment(
-                        id: "local-current",
-                        text: result.bestTranscription.formattedString,
-                        language: localeIdentifier,
-                        sourceProvider: "local",
-                        isFinal: result.isFinal,
-                        timingSource: .unavailable
-                    )
-                ])
-            }
-            if error != nil {
-                try? writer.close()
-            }
-        }
+        let writer = try environment.writerFactory(transcriptURL)
+        let transcriber = SystemSpeechTranscriber(request: request, writer: writer)
+        transcriber.task = recognizer.recognitionTask(with: request, localeIdentifier: localeIdentifier, writer: writer)
 
         return transcriber
     }
 
     func append(_ frame: AudioFrame) throws {
-        try request.append(SpeechAudioBufferFactory.buffer(from: frame))
+        request.append(try SpeechAudioBufferFactory.buffer(from: frame))
     }
 
     func finish() {
@@ -110,15 +215,36 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
         try? writer.close()
     }
 
-    private static func requestAuthorization() async throws {
-        let status = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
-
+    private static func requestAuthorization(authorizer: SystemSpeechAuthorizing) async throws {
+        let status = await authorizer.requestAuthorization()
         guard status == .authorized else {
             throw ProbeError.speechRecognition("Speech recognition permission is \(status)")
+        }
+    }
+}
+
+private extension SystemSpeechRecognizing {
+    func recognitionTask(
+        with request: SystemSpeechRequesting,
+        localeIdentifier: String,
+        writer: SystemSpeechWriting
+    ) -> SystemSpeechTasking? {
+        recognitionTask(request: request) { update in
+            if let text = update.text {
+                try? writer.replace(with: [
+                    TranscriptSegment(
+                        id: "local-current",
+                        text: text,
+                        language: localeIdentifier,
+                        sourceProvider: "local",
+                        isFinal: update.isFinal,
+                        timingSource: .unavailable
+                    )
+                ])
+            }
+            if update.error != nil {
+                try? writer.close()
+            }
         }
     }
 }

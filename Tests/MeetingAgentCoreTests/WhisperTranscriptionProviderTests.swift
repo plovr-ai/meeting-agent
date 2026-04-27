@@ -64,6 +64,41 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(configuration.modelURL, modelURL)
     }
 
+    func testConfigurationReportsMissingBinaryModelAndPermissions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-config-missing-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let missingBinary = directory.appendingPathComponent("missing-whisper")
+        let nonExecutableBinary = directory.appendingPathComponent("not-executable")
+        let modelURL = directory.appendingPathComponent("ggml-small.bin")
+        FileManager.default.createFile(atPath: nonExecutableBinary.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: nonExecutableBinary.path)
+
+        XCTAssertThrowsError(try WhisperConfiguration.fromEnvironment([
+            "MEETING_AGENT_WHISPER_BIN": missingBinary.path,
+            "MEETING_AGENT_WHISPER_MODEL": modelURL.path
+        ])) { error in
+            XCTAssertTrue(String(describing: error).contains("Whisper binary does not exist"))
+        }
+
+        XCTAssertThrowsError(try WhisperConfiguration.fromEnvironment([
+            "MEETING_AGENT_WHISPER_BIN": nonExecutableBinary.path,
+            "MEETING_AGENT_WHISPER_MODEL": modelURL.path
+        ])) { error in
+            XCTAssertTrue(String(describing: error).contains("Whisper binary is not executable"))
+        }
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: nonExecutableBinary.path)
+        XCTAssertThrowsError(try WhisperConfiguration.fromEnvironment([
+            "MEETING_AGENT_WHISPER_BIN": nonExecutableBinary.path,
+            "MEETING_AGENT_WHISPER_MODEL": directory.appendingPathComponent("missing-model.bin").path
+        ])) { error in
+            XCTAssertTrue(String(describing: error).contains("Whisper model does not exist"))
+        }
+    }
+
     func testConfigurationFindsBinaryOnPathWhenEnvironmentVariableIsUnset() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-config-path-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -149,10 +184,67 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         }
     }
 
+    func testRealProcessRunnerSurfacesLaunchAndExitFailures() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-real-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runner = WhisperProcessRunner()
+
+        XCTAssertThrowsError(try runner.run(
+            binaryURL: directory.appendingPathComponent("missing-whisper"),
+            modelURL: directory.appendingPathComponent("model.bin"),
+            inputWavURL: directory.appendingPathComponent("input.wav"),
+            outputBaseURL: directory.appendingPathComponent("transcript"),
+            languageCode: "en"
+        )) { error in
+            XCTAssertTrue(String(describing: error).contains("failed to launch whisper-cli"))
+        }
+
+        XCTAssertThrowsError(try runner.run(
+            binaryURL: URL(fileURLWithPath: "/bin/sh"),
+            modelURL: directory.appendingPathComponent("model.bin"),
+            inputWavURL: directory.appendingPathComponent("input.wav"),
+            outputBaseURL: directory.appendingPathComponent("transcript"),
+            languageCode: nil
+        )) { error in
+            XCTAssertTrue(String(describing: error).contains("whisper-cli exited with status"))
+        }
+    }
+
     func testFactoryReturnsWhisperProvider() {
         let provider = SpeechTranscriptionProviderFactory.provider(for: .whisper, configuration: .default)
 
         XCTAssertEqual(provider.provider, .whisper)
+    }
+
+    func testProviderStartUsesConfiguredWhisperTranscriberAndRetryRequiresAudioURL() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-provider-start-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let provider = WhisperSpeechTranscriptionProvider(
+            configuration: configuration,
+            processRunner: OutputWritingWhisperProcessRunner(outputText: "hello\n")
+        )
+
+        let transcriber = try await provider.start(
+            transcriptURL: directory.appendingPathComponent("capture.txt"),
+            localeIdentifier: "en-US"
+        )
+        transcriber.finish()
+
+        await XCTAssertThrowsErrorAsync(try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
+            inputAudioURL: nil,
+            transcriptURL: directory.appendingPathComponent("retry.txt"),
+            localeIdentifier: "en-US",
+            meetingID: UUID(),
+            previousTranscript: nil
+        ))) { error in
+            XCTAssertEqual(String(describing: error), "Speech recognition error: Whisper transcription unavailable: no audio file is available for retry")
+        }
     }
 
     func testTranscribesExistingAudioFile() async throws {
@@ -422,5 +514,19 @@ private struct FailingWhisperProcessRunner: WhisperProcessRunning {
         languageCode: String?
     ) throws {
         throw ProbeError.speechRecognition("Whisper transcription unavailable: process failed")
+    }
+}
+
+private func XCTAssertThrowsErrorAsync(
+    _ expression: @autoclosure () async throws -> some Any,
+    _ verify: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected error to be thrown", file: file, line: line)
+    } catch {
+        verify(error)
     }
 }

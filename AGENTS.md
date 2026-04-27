@@ -21,7 +21,7 @@ The package targets macOS 14.2+ and uses Swift 5.9.
 Use these from the repository root:
 
 ```sh
-swift test
+make test
 swift build --product MeetingAgentApp
 swift run MeetingAgentApp
 ```
@@ -52,7 +52,7 @@ Use the app settings to match the meeting language. The default is `en-US`; Chin
 - Prefer small, focused changes that match the existing Swift style.
 - Keep platform-sensitive Core Audio and Speech behavior isolated behind small testable types where possible.
 - Add or update tests for behavior changes. For bug fixes, write the failing test first when feasible.
-- Run `swift test` before claiming a change is complete.
+- Run `make test` before claiming a change is complete. This is the required unit-test entrypoint and enforces code coverage.
 - Do not commit generated files from `.build/`, `.swiftpm/`, or `DerivedData/`.
 - Do not remove or weaken macOS permission strings in `Info.plist` unless the related capability is removed.
 

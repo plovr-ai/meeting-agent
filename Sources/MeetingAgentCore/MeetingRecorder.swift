@@ -9,16 +9,45 @@ public enum MeetingRecorderState: Equatable {
 public final class MeetingRecorder {
     private let store: MeetingStore
     private var activeRecord: MeetingRecord?
-    private var captureSession: AudioCaptureSession?
-    private var writer: WavFileWriter?
+    private let captureSessionFactory: () -> AudioCaptureSessionManaging
+    private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
+    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int) async throws -> AudioFrameTranscriber
+    private var captureSession: AudioCaptureSessionManaging?
+    private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
 
     public private(set) var state: MeetingRecorderState = .idle
     public weak var realtimeFrameConsumer: RealtimeFrameConsumer?
 
-    public init(store: MeetingStore = MeetingStore()) {
+    public convenience init(store: MeetingStore = MeetingStore()) {
+        self.init(
+            store: store,
+            captureSessionFactory: { AudioCaptureSession() },
+            wavWriterFactory: { url, sampleRate, channelCount in
+                try WavFileWriter(url: url, sampleRate: sampleRate, channelCount: channelCount)
+            },
+            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount in
+                try await StreamingSpeechTranscriberFactory.startTranscriber(
+                    configuration: configuration,
+                    transcriptURL: transcriptURL,
+                    sampleRate: sampleRate,
+                    channelCount: channelCount
+                )
+            }
+        )
+    }
+
+    init(
+        store: MeetingStore,
+        captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
+        wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
+        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int) async throws -> AudioFrameTranscriber
+    ) {
         self.store = store
+        self.captureSessionFactory = captureSessionFactory
+        self.wavWriterFactory = wavWriterFactory
+        self.transcriberFactory = transcriberFactory
     }
 
     public func prepareRecord(
@@ -63,7 +92,7 @@ public final class MeetingRecorder {
         activeRecord = updatedRecord
         try store.save(updatedRecord)
 
-        let session = AudioCaptureSession()
+        let session = captureSessionFactory()
         do {
             try session.start(target: target)
         } catch {
@@ -78,20 +107,20 @@ public final class MeetingRecorder {
         )
 
         if let audioURL = updatedRecord.audioURL {
-            writer = try WavFileWriter(
-                url: audioURL,
-                sampleRate: UInt32(session.outputSampleRate.rounded()),
-                channelCount: UInt16(session.outputChannelCount)
+            writer = try wavWriterFactory(
+                audioURL,
+                UInt32(session.outputSampleRate.rounded()),
+                UInt16(session.outputChannelCount)
             )
         }
 
         if let transcriptURL = updatedRecord.transcriptURL {
             do {
-                transcriber = try await StreamingSpeechTranscriberFactory.startTranscriber(
-                    configuration: effectiveConfiguration,
-                    transcriptURL: transcriptURL,
-                    sampleRate: session.outputSampleRate,
-                    channelCount: session.outputChannelCount
+                transcriber = try await transcriberFactory(
+                    effectiveConfiguration,
+                    transcriptURL,
+                    session.outputSampleRate,
+                    session.outputChannelCount
                 )
             } catch {
                 try markTranscriptionFailed("Speech recognition unavailable: \(error)")

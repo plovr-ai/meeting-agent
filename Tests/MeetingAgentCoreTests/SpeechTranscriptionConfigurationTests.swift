@@ -235,4 +235,66 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperModelPath: "/Users/allan/models/ggml-small.bin"
         ))
     }
+
+    func testValidationReportsWhisperFileSystemProblemsAndHostedModelGaps() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("speech-config-validation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let binaryURL = directory.appendingPathComponent("whisper-cli")
+        let modelURL = directory.appendingPathComponent("model.bin")
+        FileManager.default.createFile(atPath: binaryURL.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: binaryURL.path)
+
+        var config = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: directory.appendingPathComponent("missing").path,
+            whisperModelPath: modelURL.path,
+            translationExecutionMode: .local
+        )
+        XCTAssertEqual(config.validationStatus(), .unavailable("Whisper binary does not exist at \(directory.appendingPathComponent("missing").path)"))
+
+        config.whisperBinaryPath = binaryURL.path
+        XCTAssertEqual(config.validationStatus(), .unavailable("Whisper binary is not executable at \(binaryURL.path)"))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+        config.whisperModelPath = directory.appendingPathComponent("missing-model.bin").path
+        XCTAssertEqual(config.validationStatus(), .unavailable("Whisper model does not exist at \(directory.appendingPathComponent("missing-model.bin").path)"))
+
+        config = SpeechTranscriptionConfiguration(
+            provider: .local,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .local
+        )
+        config.hostedTranscriptionModelID = " "
+        XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted transcription model is not configured"))
+
+        config = SpeechTranscriptionConfiguration(
+            provider: .local,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .local,
+            translationExecutionMode: .hosted
+        )
+        config.hostedTranslationModelID = " "
+        XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted translation model is not configured"))
+    }
+
+    func testNormalizationAndStoreDefaults() throws {
+        XCTAssertEqual(SpeechTranscriptionConfiguration.normalized(" value "), "value")
+        XCTAssertEqual(SpeechTranscriptionConfiguration.normalized(" ", fallback: "fallback"), "fallback")
+        XCTAssertNil(SpeechTranscriptionConfiguration.normalized(nil))
+
+        let suiteName = "speech-config-default-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+
+        XCTAssertEqual(try store.load(), .default)
+    }
 }

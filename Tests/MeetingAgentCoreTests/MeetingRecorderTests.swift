@@ -60,6 +60,89 @@ final class MeetingRecorderTests: XCTestCase {
 
         XCTAssertEqual(consumer.receivedFrames, [frame])
     }
+
+    func testStartDrainAndStopRecordingWithInjectedCapturePipeline() async throws {
+        let fixture = try RecorderFixture()
+        let frame = AudioFrame(pcm: Data([1, 0, 2, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 9)
+        fixture.session.frameBuffer.push(frame)
+        let consumer = CapturingRealtimeFrameConsumer()
+        fixture.recorder.realtimeFrameConsumer = consumer
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+
+        try await fixture.recorder.startRecording(
+            target: fixture.target,
+            record: record,
+            speechProvider: .local,
+            localeIdentifier: "zh-CN"
+        )
+        try fixture.recorder.drainFrames()
+        let stopped = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(fixture.session.startedTargets, [fixture.target])
+        XCTAssertEqual(fixture.writerFactory.requests.first?.sampleRate, 16_000)
+        XCTAssertEqual(fixture.writerFactory.requests.first?.channelCount, 1)
+        XCTAssertEqual(fixture.transcriberFactory.requests.first?.localeIdentifier, "zh-CN")
+        XCTAssertEqual(fixture.transcriberFactory.requests.first?.sampleRate, 16_000)
+        XCTAssertEqual(fixture.writer.writtenFrames, [frame])
+        XCTAssertEqual(fixture.transcriber.appendedFrames, [frame])
+        XCTAssertEqual(consumer.receivedFrames, [frame])
+        XCTAssertEqual(fixture.writer.closeCallCount, 1)
+        XCTAssertEqual(fixture.transcriber.finishCallCount, 1)
+        XCTAssertEqual(fixture.session.stopCallCount, 1)
+        XCTAssertEqual(stopped?.endedAt, Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(stopped?.transcriptionStatus, .transcribed)
+        XCTAssertEqual(fixture.recorder.state, .idle)
+    }
+
+    func testStartRecordingMarksTranscriptionFailedWhenStreamingTranscriberCannotStart() async throws {
+        let fixture = try RecorderFixture()
+        fixture.transcriberFactory.error = ProbeError.speechRecognition("not available")
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        let stopped = try XCTUnwrap(try fixture.recorder.markStopped())
+
+        XCTAssertEqual(stopped.transcriptionStatus, .failed)
+        XCTAssertTrue(stopped.transcriptionFailureReason?.contains("Speech recognition unavailable") == true)
+        XCTAssertEqual(fixture.writerFactory.requests.count, 1)
+    }
+
+    func testDrainFramesPersistsTranscriptionFailureAndContinuesWritingAudio() async throws {
+        let fixture = try RecorderFixture()
+        let frame = AudioFrame(pcm: Data([1, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        fixture.session.frameBuffer.push(frame)
+        fixture.transcriber.appendError = ProbeError.speechRecognition("append failed")
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        try fixture.recorder.drainFrames()
+        let stopped = try XCTUnwrap(try fixture.recorder.markStopped())
+
+        XCTAssertEqual(fixture.writer.writtenFrames, [frame])
+        XCTAssertEqual(fixture.transcriber.finishCallCount, 1)
+        XCTAssertEqual(stopped.transcriptionStatus, .failed)
+        XCTAssertTrue(stopped.transcriptionFailureReason?.contains("Speech recognition failed") == true)
+    }
+
+    func testStartRecordingWritesDiagnosticsWhenCaptureStartFails() async throws {
+        let fixture = try RecorderFixture()
+        fixture.session.startError = ProbeError.coreAudio("start failed")
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+
+        await XCTAssertThrowsErrorAsync(
+            try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        ) { error in
+            XCTAssertEqual(String(describing: error), "Core Audio error: start failed")
+        }
+
+        XCTAssertEqual(fixture.recorder.state, .prepared(record.id))
+        let diagnostics = try JSONDecoder.meetingAgent.decode(
+            CaptureDiagnostics.self,
+            from: Data(contentsOf: XCTUnwrap(record.diagnosticsURL))
+        )
+        XCTAssertEqual(diagnostics.endedReason, .captureFailed)
+        XCTAssertEqual(diagnostics.status, .captureFailed)
+    }
 }
 
 private final class CapturingRealtimeFrameConsumer: RealtimeFrameConsumer {
@@ -67,5 +150,160 @@ private final class CapturingRealtimeFrameConsumer: RealtimeFrameConsumer {
 
     func consumeRealtimeFrames(_ frames: [AudioFrame]) {
         receivedFrames.append(contentsOf: frames)
+    }
+}
+
+private struct RecorderFixture {
+    let storeRoot: URL
+    let session: FakeRecorderCaptureSession
+    let writer: FakeAudioFrameWriter
+    let writerFactory: FakeAudioFrameWriterFactory
+    let transcriber: FakeAudioFrameTranscriber
+    let transcriberFactory: FakeRecorderTranscriberFactory
+    let recorder: MeetingRecorder
+    let target = AudioCaptureTarget(processID: 1, displayName: "Google Chrome", bundleIdentifier: "com.google.Chrome")
+
+    init() throws {
+        let storeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-recorder-\(UUID().uuidString)", isDirectory: true)
+        let session = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1)
+        let writer = FakeAudioFrameWriter()
+        let writerFactory = FakeAudioFrameWriterFactory(writer: writer)
+        let transcriber = FakeAudioFrameTranscriber()
+        let transcriberFactory = FakeRecorderTranscriberFactory(transcriber: transcriber)
+        self.storeRoot = storeRoot
+        self.session = session
+        self.writer = writer
+        self.writerFactory = writerFactory
+        self.transcriber = transcriber
+        self.transcriberFactory = transcriberFactory
+        recorder = MeetingRecorder(
+            store: MeetingStore(baseDirectory: storeRoot),
+            captureSessionFactory: { session },
+            wavWriterFactory: writerFactory.makeWriter,
+            transcriberFactory: transcriberFactory.startTranscriber
+        )
+    }
+}
+
+private final class FakeRecorderCaptureSession: AudioCaptureSessionManaging {
+    let frameBuffer = AudioFrameRingBuffer(capacity: 8)
+    let outputSampleRate: Double
+    let outputChannelCount: Int
+    var startError: Error?
+    var startedTargets: [AudioCaptureTarget] = []
+    var stopCallCount = 0
+
+    init(sampleRate: Double, channelCount: Int) {
+        outputSampleRate = sampleRate
+        outputChannelCount = channelCount
+    }
+
+    func start(target: AudioCaptureTarget) throws {
+        if let startError {
+            throw startError
+        }
+        startedTargets.append(target)
+    }
+
+    func stop() {
+        stopCallCount += 1
+    }
+}
+
+private final class FakeAudioFrameWriter: AudioFrameWriting {
+    var writtenFrames: [AudioFrame] = []
+    var closeCallCount = 0
+
+    func append(_ frame: AudioFrame) throws {
+        writtenFrames.append(frame)
+    }
+
+    func close() throws {
+        closeCallCount += 1
+    }
+}
+
+private final class FakeAudioFrameWriterFactory {
+    struct Request {
+        let url: URL
+        let sampleRate: UInt32
+        let channelCount: UInt16
+    }
+
+    var requests: [Request] = []
+    private let writer: FakeAudioFrameWriter
+
+    init(writer: FakeAudioFrameWriter) {
+        self.writer = writer
+    }
+
+    func makeWriter(url: URL, sampleRate: UInt32, channelCount: UInt16) throws -> AudioFrameWriting {
+        requests.append(Request(url: url, sampleRate: sampleRate, channelCount: channelCount))
+        return writer
+    }
+}
+
+private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
+    var failureReason: String?
+    var appendError: Error?
+    var appendedFrames: [AudioFrame] = []
+    var finishCallCount = 0
+
+    func append(_ frame: AudioFrame) throws {
+        if let appendError {
+            throw appendError
+        }
+        appendedFrames.append(frame)
+    }
+
+    func finish() {
+        finishCallCount += 1
+    }
+}
+
+private final class FakeRecorderTranscriberFactory {
+    struct Request {
+        let localeIdentifier: String
+        let sampleRate: Double
+        let channelCount: Int
+    }
+
+    var requests: [Request] = []
+    var error: Error?
+    private let transcriber: FakeAudioFrameTranscriber
+
+    init(transcriber: FakeAudioFrameTranscriber) {
+        self.transcriber = transcriber
+    }
+
+    func startTranscriber(
+        configuration: SpeechTranscriptionConfiguration,
+        transcriptURL: URL,
+        sampleRate: Double,
+        channelCount: Int
+    ) async throws -> AudioFrameTranscriber {
+        requests.append(Request(
+            localeIdentifier: configuration.localeIdentifier,
+            sampleRate: sampleRate,
+            channelCount: channelCount
+        ))
+        if let error {
+            throw error
+        }
+        return transcriber
+    }
+}
+
+private func XCTAssertThrowsErrorAsync(
+    _ expression: @autoclosure () async throws -> some Any,
+    _ verify: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected error to be thrown", file: file, line: line)
+    } catch {
+        verify(error)
     }
 }
