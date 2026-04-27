@@ -39,7 +39,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
         exportService: MeetingExportService = MeetingExportService(),
-        realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(),
+        realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(
+            playbackSink: LocalAudioPlaybackSink()
+        ),
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
