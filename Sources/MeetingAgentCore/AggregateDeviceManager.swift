@@ -3,7 +3,7 @@ import Foundation
 
 public final class AggregateDeviceManager {
     public private(set) var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
-    private let deviceUID = "com.meetingagent.CoreAudioTapProbe.aggregate.\(UUID().uuidString)"
+    private let deviceUID = "com.meetingagent.MeetingAgentApp.aggregate.\(UUID().uuidString)"
 
     public var isCreated: Bool {
         aggregateDeviceID != AudioObjectID(kAudioObjectUnknown)
