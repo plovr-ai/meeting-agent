@@ -685,7 +685,7 @@ private struct TranscriptPaneView: View {
                     Label("Send to call", systemImage: "paperplane")
                 }
                 .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
-                .disabled(!isRecording)
+                .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
             }
 
             HStack {
