@@ -71,4 +71,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertLessThan(spacerRange.lowerBound, settingsRange.lowerBound)
         XCTAssertTrue(source.contains("showSettings = true"))
     }
+
+    func testMainWindowContainsLiveTranslationControls() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("Live Translation"))
+        XCTAssertTrue(source.contains("Start Live Translation"))
+        XCTAssertTrue(source.contains("Stop Live Translation"))
+    }
 }

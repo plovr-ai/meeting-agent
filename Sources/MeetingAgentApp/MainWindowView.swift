@@ -60,6 +60,8 @@ struct MainWindowView: View {
                     meeting: viewModel.selectedMeeting,
                     statusText: viewModel.statusText,
                     isRecording: viewModel.isRecording,
+                    realtimeTranslationStatus: viewModel.realtimeTranslationStatus,
+                    liveTranslationTurns: viewModel.liveTranslationTurns,
                     stopRecording: {
                         Task {
                             do {
@@ -90,6 +92,16 @@ struct MainWindowView: View {
                     retryTranscription: { meeting in
                         Task {
                             await viewModel.retryTranscription(for: meeting.id)
+                        }
+                    },
+                    startRealtimeTranslation: { locale in
+                        Task {
+                            await viewModel.startRealtimeTranslation(targetLocale: locale)
+                        }
+                    },
+                    stopRealtimeTranslation: {
+                        Task {
+                            await viewModel.stopRealtimeTranslation()
                         }
                     }
                 )
@@ -161,12 +173,17 @@ private struct MeetingDetailView: View {
     let meeting: MeetingRecord?
     let statusText: String
     let isRecording: Bool
+    let realtimeTranslationStatus: RealtimeTranslationStatus
+    let liveTranslationTurns: [LiveTranslationTurn]
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
     let exportMeetingData: (MeetingRecord) -> Void
     let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
+    let startRealtimeTranslation: (String) -> Void
+    let stopRealtimeTranslation: () -> Void
+    @State private var targetLocale = "zh-CN"
 
     var body: some View {
         ScrollView {
@@ -199,6 +216,37 @@ private struct MeetingDetailView: View {
                             retryTranscription(meeting)
                         }
                         .disabled(isRecording || meeting.audioURL == nil)
+                    }
+                    Divider()
+                    Text("Live Translation")
+                        .font(.headline)
+                    HStack {
+                        Picker("Target", selection: $targetLocale) {
+                            ForEach(MeetingAgentViewModel.supportedLocaleIdentifiers, id: \.self) { locale in
+                                Text(locale).tag(locale)
+                            }
+                        }
+                        .frame(maxWidth: 180)
+
+                        Button("Start Live Translation") {
+                            startRealtimeTranslation(targetLocale)
+                        }
+                        .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
+
+                        Button("Stop Live Translation") {
+                            stopRealtimeTranslation()
+                        }
+                        .disabled(!liveTranslationCanStop(realtimeTranslationStatus))
+                    }
+                    Text(liveTranslationStatusText(realtimeTranslationStatus))
+                        .font(.caption)
+                        .foregroundStyle(liveTranslationStatusColor(realtimeTranslationStatus))
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(liveTranslationTurns.suffix(5)) { turn in
+                            Text(turn.text)
+                                .textSelection(.enabled)
+                                .foregroundStyle(turn.isFinal ? .primary : .secondary)
+                        }
                     }
                     Divider()
                     Text("Exports")
@@ -276,6 +324,41 @@ private struct MeetingDetailView: View {
             return "Failed"
         case .retryRequested:
             return "Retry requested"
+        }
+    }
+
+    private func liveTranslationCanStop(_ status: RealtimeTranslationStatus) -> Bool {
+        switch status {
+        case .connecting, .connected, .degraded:
+            return true
+        case .idle, .failed:
+            return false
+        }
+    }
+
+    private func liveTranslationStatusText(_ status: RealtimeTranslationStatus) -> String {
+        switch status {
+        case .idle:
+            return "Live translation idle"
+        case .connecting:
+            return "Connecting live translation"
+        case .connected:
+            return "Live translation connected"
+        case .degraded(let message):
+            return "Live translation degraded: \(message)"
+        case .failed(let message):
+            return "Live translation failed: \(message)"
+        }
+    }
+
+    private func liveTranslationStatusColor(_ status: RealtimeTranslationStatus) -> Color {
+        switch status {
+        case .failed:
+            return .red
+        case .degraded:
+            return .orange
+        default:
+            return .secondary
         }
     }
 
