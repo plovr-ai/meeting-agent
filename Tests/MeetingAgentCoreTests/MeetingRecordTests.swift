@@ -14,6 +14,7 @@ final class MeetingRecordTests: XCTestCase {
             audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
             transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
             transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json"),
+            meetingProgressJSONURL: URL(fileURLWithPath: "/tmp/meeting-progress.json"),
             summaryURL: URL(fileURLWithPath: "/tmp/summary.md"),
             summaryJSONURL: URL(fileURLWithPath: "/tmp/summary.json"),
             summaryMarkdownURL: URL(fileURLWithPath: "/tmp/summary.md"),
@@ -102,5 +103,23 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertNil(decoded.summaryURL)
         XCTAssertNil(decoded.summaryJSONURL)
         XCTAssertNil(decoded.summaryMarkdownURL)
+    }
+
+    func testDecodesMetadataWithoutMeetingProgressURL() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.meetingProgressJSONURL)
     }
 }

@@ -22,6 +22,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(created.record.summaryJSONURL?.lastPathComponent, "summary.json")
         XCTAssertEqual(created.record.summaryMarkdownURL?.lastPathComponent, "summary.md")
         XCTAssertEqual(created.record.diagnosticsURL?.lastPathComponent, "diagnostics.json")
+        XCTAssertEqual(created.record.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.directory.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.metadataURL.path))
     }
@@ -115,5 +116,32 @@ final class MeetingStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.first?.transcriptionProviderID, "deepgram-transcribe")
         XCTAssertEqual(saved.transcriptionProviderID, "deepgram-transcribe")
+    }
+
+    func testLoadsLegacyMeetingMetadataWithDefaultMeetingProgressURL() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let id = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let directory = store.meetingsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadata = """
+        {
+          "audioURL" : "\(directory.appendingPathComponent("audio.wav").absoluteString)",
+          "endedAt" : null,
+          "id" : "\(id.uuidString)",
+          "name" : "Legacy Meeting",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "\(directory.appendingPathComponent("transcript.json").absoluteString)",
+          "transcriptURL" : "\(directory.appendingPathComponent("transcript.txt").absoluteString)"
+        }
+        """
+        try metadata.write(to: directory.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8)
+
+        let loaded = try store.loadMeetings()
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(contentsOf: directory.appendingPathComponent("metadata.json")))
+
+        XCTAssertEqual(loaded.first?.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
+        XCTAssertEqual(saved.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
     }
 }

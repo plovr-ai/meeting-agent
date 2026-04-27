@@ -16,6 +16,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var audioURL: URL?
     public var transcriptURL: URL?
     public var transcriptJSONURL: URL?
+    public var meetingProgressJSONURL: URL?
     public var summaryURL: URL?
     public var summaryJSONURL: URL?
     public var summaryMarkdownURL: URL?
@@ -34,6 +35,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         audioURL: URL?,
         transcriptURL: URL?,
         transcriptJSONURL: URL? = nil,
+        meetingProgressJSONURL: URL? = nil,
         summaryURL: URL? = nil,
         summaryJSONURL: URL? = nil,
         summaryMarkdownURL: URL? = nil,
@@ -51,6 +53,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.audioURL = audioURL
         self.transcriptURL = transcriptURL
         self.transcriptJSONURL = transcriptJSONURL
+        self.meetingProgressJSONURL = meetingProgressJSONURL
         self.summaryURL = summaryURL
         self.summaryJSONURL = summaryJSONURL
         self.summaryMarkdownURL = summaryMarkdownURL ?? summaryURL
@@ -73,6 +76,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case audioURL
         case transcriptURL
         case transcriptJSONURL
+        case meetingProgressJSONURL
         case summaryURL
         case summaryJSONURL
         case summaryMarkdownURL
@@ -93,6 +97,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         audioURL = try container.decodeIfPresent(URL.self, forKey: .audioURL)
         transcriptURL = try container.decodeIfPresent(URL.self, forKey: .transcriptURL)
         transcriptJSONURL = try container.decodeIfPresent(URL.self, forKey: .transcriptJSONURL)
+        meetingProgressJSONURL = try container.decodeIfPresent(URL.self, forKey: .meetingProgressJSONURL)
         summaryURL = try container.decodeIfPresent(URL.self, forKey: .summaryURL)
         summaryJSONURL = try container.decodeIfPresent(URL.self, forKey: .summaryJSONURL)
         summaryMarkdownURL = try container.decodeIfPresent(URL.self, forKey: .summaryMarkdownURL) ?? summaryURL

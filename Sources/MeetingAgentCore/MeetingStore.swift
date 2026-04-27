@@ -42,6 +42,7 @@ public final class MeetingStore {
             audioURL: directory.appendingPathComponent("audio.wav"),
             transcriptURL: directory.appendingPathComponent("transcript.txt"),
             transcriptJSONURL: directory.appendingPathComponent("transcript.json"),
+            meetingProgressJSONURL: directory.appendingPathComponent("meeting-progress.json"),
             summaryURL: directory.appendingPathComponent("summary.md"),
             summaryJSONURL: directory.appendingPathComponent("summary.json"),
             summaryMarkdownURL: directory.appendingPathComponent("summary.md"),
@@ -84,7 +85,15 @@ public final class MeetingStore {
             if record.summaryMarkdownURL == nil {
                 record.summaryMarkdownURL = record.summaryURL ?? directory.appendingPathComponent("summary.md")
             }
+            var didBackfill = false
+            if record.meetingProgressJSONURL == nil {
+                record.meetingProgressJSONURL = directory.appendingPathComponent("meeting-progress.json")
+                didBackfill = true
+            }
             if backfillTranscriptionProviderIDIfNeeded(&record) {
+                didBackfill = true
+            }
+            if didBackfill {
                 try save(record)
             }
             return record

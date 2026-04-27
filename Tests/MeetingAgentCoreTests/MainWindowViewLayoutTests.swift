@@ -40,7 +40,6 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var showSettings = false"))
         XCTAssertTrue(source.contains("SettingsView("))
-        XCTAssertFalse(source.contains("TextField("))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))
@@ -95,5 +94,31 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Translation Model"))
         XCTAssertTrue(source.contains("Actual STT Source"))
         XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
+    }
+
+    func testMainWindowExposesLiveMeetingDashboardStructure() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("LiveMeetingDashboardView"))
+        XCTAssertTrue(source.contains("CaptionTurnView"))
+        XCTAssertTrue(source.contains("GoalStatusPanel"))
+        XCTAssertTrue(source.contains("SuggestedQuestionRow"))
+        XCTAssertTrue(source.contains("LiveHealthChip"))
+    }
+
+    func testMainWindowExposesLightweightMeetingGoalComposer() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("GoalComposerPanel"))
+        XCTAssertTrue(source.contains("TextField(\"Goal title\""))
+        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Objectives\""))
+        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Required Questions\""))
+        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Key Terms\""))
+        XCTAssertTrue(source.contains("Label(\"Apply Goal\", systemImage: \"target\")"))
+        XCTAssertTrue(source.contains("setMeetingGoal(buildGoal())"))
     }
 }

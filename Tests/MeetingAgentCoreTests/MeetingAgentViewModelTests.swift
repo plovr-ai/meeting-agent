@@ -199,6 +199,149 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
     }
 
+    func testDrainRecordingFramesRefreshesLiveCaptionTurnsFromStructuredTranscript() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Confirm launch owner.", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "partial", text: "partial", language: "en-US", isFinal: false)
+        ])
+
+        viewModel.drainRecordingFrames()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["segment-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Confirm launch owner.")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.targetLocale, "zh-CN")
+    }
+
+    func testRefreshMeetingProgressAnalyzesLiveCaptionsAndWritesProgressArtifact() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        viewModel.setMeetingGoal(MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner", keywords: ["launch owner"])],
+            requiredQuestions: ["Have we confirmed the deadline?"],
+            expectedDecisions: [],
+            keyTerms: []
+        ))
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
+        ])
+        viewModel.drainRecordingFrames()
+
+        await viewModel.refreshMeetingProgress()
+
+        XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
+        XCTAssertEqual(viewModel.meetingProgressState?.suggestedQuestions.first?.english, "Have we confirmed the deadline?")
+        let progressURL = try XCTUnwrap(record.meetingProgressJSONURL)
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingProgressState.self, from: Data(contentsOf: progressURL))
+        XCTAssertEqual(saved.lastAnalyzedSegmentID, "segment-1")
+    }
+
+    func testPreMeetingGoalAnalyzesAfterRecordingStarts() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        viewModel.setMeetingGoal(MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner", keywords: ["launch owner"])],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        ))
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
+        ])
+
+        viewModel.drainRecordingFrames()
+        await viewModel.refreshMeetingProgress()
+
+        XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(record.meetingProgressJSONURL).path))
+    }
+
+    func testClearingMeetingGoalClearsProgressState() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        viewModel.setMeetingGoal(MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner", keywords: ["launch owner"])],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        ))
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
+        ])
+        viewModel.drainRecordingFrames()
+        await viewModel.refreshMeetingProgress()
+        XCTAssertNotNil(viewModel.meetingProgressState)
+
+        viewModel.setMeetingGoal(nil)
+
+        XCTAssertNil(viewModel.meetingProgressState)
+        XCTAssertEqual(viewModel.meetingProgressHealth.analysis, .idle)
+    }
+
     func testStopRecordingAndGenerateSummaryReturnsIdleWhenRecorderHasNoStoppedRecord() async throws {
         let viewModel = MeetingAgentViewModel(processTargetsProvider: { [] })
 
@@ -797,6 +940,21 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.meetings.first?.id, stored.id)
         XCTAssertEqual(viewModel.meetings.first?.transcriptionStatus, .notStarted)
+    }
+
+    func testInvalidateDownstreamArtifactsAfterTranscriptChangeRemovesProgressSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        let progressURL = try XCTUnwrap(stored.meetingProgressJSONURL)
+        try Data("{}".utf8).write(to: progressURL)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        await viewModel.invalidateDownstreamArtifactsAfterTranscriptChange(for: stored.id)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: progressURL.path))
     }
 
     func testSelectMeetingUpdatesSelectedMeeting() throws {

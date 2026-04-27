@@ -21,6 +21,13 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var speechConfiguration: SpeechTranscriptionConfiguration
     @Published public private(set) var realtimeTranslationStatus: RealtimeTranslationStatus = .idle
     @Published public private(set) var liveTranslationTurns: [LiveTranslationTurn] = []
+    @Published public private(set) var liveCaptionTurns: [LiveCaptionTurn] = []
+    @Published public private(set) var meetingProgressState: MeetingProgressState?
+    @Published public private(set) var meetingProgressHealth = MeetingProgressHealth(
+        caption: .idle,
+        translation: .idle,
+        analysis: .idle
+    )
     @Published public private(set) var primaryChainPreflightResult = PrimaryChainPreflightResult(
         status: .unavailable,
         messages: ["Primary chain is not checked"]
@@ -32,6 +39,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
     private let realtimeTranslationController: RealtimeTranslationController
+    private var liveCaptionStore = LiveCaptionStore()
+    private var meetingGoal: MeetingGoal?
+    private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -101,6 +111,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         let record = try recorder.prepareRecord(for: candidate, startedAt: startedAt)
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        resetLiveCaptionStore()
         pendingCandidate = nil
         activeTarget = candidate
         statusText = "Recording \(record.name)"
@@ -166,6 +177,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         let record = try recorder.prepareRecord(for: candidate)
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        resetLiveCaptionStore()
         activeTarget = candidate
         pendingCandidate = nil
         let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
@@ -218,6 +230,24 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveTranslationTurns = realtimeTranslationController.liveTranslationTurns
     }
 
+    public func setMeetingGoal(_ goal: MeetingGoal?) {
+        meetingGoal = goal
+        meetingProgressState = nil
+        meetingProgressHealth.analysis = .idle
+        configureMeetingProgressCoordinator()
+    }
+
+    public func refreshMeetingProgress() async {
+        guard let meetingProgressCoordinator else {
+            meetingProgressState = nil
+            meetingProgressHealth.analysis = .idle
+            return
+        }
+        await meetingProgressCoordinator.process(turns: liveCaptionTurns)
+        meetingProgressState = meetingProgressCoordinator.state
+        meetingProgressHealth.analysis = meetingProgressCoordinator.analysisHealth
+    }
+
     public func drainRecordingFrames(endedAt: Date = Date()) {
         try? recorder.drainFrames()
         if stopRecordingIfTargetProcessEnded(at: endedAt) {
@@ -225,6 +255,12 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         updateRecordingStatus()
+        refreshLiveCaptionTurnsFromSelectedMeeting()
+        if meetingProgressCoordinator != nil {
+            Task { [weak self] in
+                await self?.refreshMeetingProgress()
+            }
+        }
         syncRealtimeTranslationState()
         objectWillChange.send()
     }
@@ -295,6 +331,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func selectMeeting(_ id: UUID?) {
         selectedMeetingID = id
+        refreshLiveCaptionTurnsFromSelectedMeeting()
     }
 
     public func exportTranscript(for meetingID: UUID, to destinationURL: URL) throws {
@@ -401,10 +438,15 @@ public final class MeetingAgentViewModel: ObservableObject {
         let urls = Set([
             meeting.summaryURL,
             meeting.summaryJSONURL,
-            meeting.summaryMarkdownURL
+            meeting.summaryMarkdownURL,
+            meeting.meetingProgressJSONURL
         ].compactMap { $0 })
         for url in urls {
             try? FileManager.default.removeItem(at: url)
+        }
+        if selectedMeetingID == meetingID {
+            meetingProgressState = nil
+            meetingProgressHealth.analysis = .idle
         }
         statusText = "Transcript updated; summary needs regeneration"
         objectWillChange.send()
@@ -541,6 +583,46 @@ public final class MeetingAgentViewModel: ObservableObject {
                 .openAI: loadCredential(.openAI),
                 .deepgram: loadCredential(.deepgram)
             ].compactMapValues { $0 }
+        )
+    }
+
+    private func resetLiveCaptionStore() {
+        liveCaptionStore.reset(
+            sourceLocale: speechConfiguration.localeIdentifier,
+            targetLocale: speechConfiguration.targetLocaleIdentifier
+        )
+        liveCaptionTurns = []
+        meetingProgressState = nil
+        meetingProgressHealth = MeetingProgressHealth(caption: .idle, translation: .idle, analysis: .idle)
+        configureMeetingProgressCoordinator()
+    }
+
+    private func refreshLiveCaptionTurnsFromSelectedMeeting() {
+        guard let meeting = selectedMeeting,
+              let transcriptJSONURL = meeting.transcriptJSONURL,
+              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        else {
+            liveCaptionTurns = []
+            return
+        }
+        for segment in document.segments where segment.isFinal {
+            _ = liveCaptionStore.append(segment)
+        }
+        liveCaptionTurns = liveCaptionStore.turns
+        meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
+    }
+
+    private func configureMeetingProgressCoordinator() {
+        guard let goal = meetingGoal,
+              let progressURL = selectedMeeting?.meetingProgressJSONURL
+        else {
+            meetingProgressCoordinator = nil
+            return
+        }
+        meetingProgressCoordinator = MeetingProgressCoordinator(
+            goal: goal,
+            analyzer: DeterministicMeetingProgressAnalyzer(meetingID: selectedMeeting?.id ?? UUID()),
+            progressURL: progressURL
         )
     }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TranscriptSpeaker: Equatable, Hashable {
+public struct TranscriptSpeaker: Codable, Equatable, Hashable {
     public static let `default` = TranscriptSpeaker(identifier: nil)
 
     public let identifier: String?
