@@ -97,6 +97,16 @@ struct MainWindowView: View {
                             try viewModel.exportMeetingData(for: meeting.id, to: destination)
                         }
                     },
+                    exportSRT: { meeting in
+                        export("captions.srt", for: meeting) { destination in
+                            try viewModel.exportSubtitles(for: meeting.id, format: .srt, to: destination)
+                        }
+                    },
+                    exportVTT: { meeting in
+                        export("captions.vtt", for: meeting) { destination in
+                            try viewModel.exportSubtitles(for: meeting.id, format: .vtt, to: destination)
+                        }
+                    },
                     exportReadinessReport: { meeting in
                         export("readiness-report.md", for: meeting) { destination in
                             try viewModel.exportReadinessReport(for: meeting.id, to: destination)
@@ -205,6 +215,8 @@ private struct MeetingDetailView: View {
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
     let exportMeetingData: (MeetingRecord) -> Void
+    let exportSRT: (MeetingRecord) -> Void
+    let exportVTT: (MeetingRecord) -> Void
     let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
     let startRealtimeTranslation: (String) -> Void
@@ -243,6 +255,8 @@ private struct MeetingDetailView: View {
                     copySummary: { copySummary(meeting) },
                     exportTranscript: { exportTranscript(meeting) },
                     exportMeetingData: { exportMeetingData(meeting) },
+                    exportSRT: { exportSRT(meeting) },
+                    exportVTT: { exportVTT(meeting) },
                     exportReadinessReport: { exportReadinessReport(meeting) },
                     retryTranscription: { retryTranscription(meeting) },
                     startRealtimeTranslation: { startRealtimeTranslation(targetLocale) },
@@ -453,6 +467,8 @@ private struct MeetingCommandCenterView: View {
     let copySummary: () -> Void
     let exportTranscript: () -> Void
     let exportMeetingData: () -> Void
+    let exportSRT: () -> Void
+    let exportVTT: () -> Void
     let exportReadinessReport: () -> Void
     let retryTranscription: () -> Void
     let startRealtimeTranslation: () -> Void
@@ -503,6 +519,8 @@ private struct MeetingCommandCenterView: View {
                 copySummary: copySummary,
                 exportTranscript: exportTranscript,
                 exportMeetingData: exportMeetingData,
+                exportSRT: exportSRT,
+                exportVTT: exportVTT,
                 exportReadinessReport: exportReadinessReport,
                 setMeetingGoal: setMeetingGoal
             )
@@ -840,6 +858,8 @@ private struct InsightPaneView: View {
     let copySummary: () -> Void
     let exportTranscript: () -> Void
     let exportMeetingData: () -> Void
+    let exportSRT: () -> Void
+    let exportVTT: () -> Void
     let exportReadinessReport: () -> Void
     let setMeetingGoal: (MeetingGoal?) -> Void
 
@@ -943,6 +963,21 @@ private struct InsightPaneView: View {
                     }
                     .buttonStyle(CommandCenterActionButtonStyle())
 
+                    Button {
+                        exportSRT()
+                    } label: {
+                        Label("SRT", systemImage: "captions.bubble")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+
+                    Button {
+                        exportVTT()
+                    } label: {
+                        Label("VTT", systemImage: "captions.bubble")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+                }
+                HStack {
                     Button {
                         exportReadinessReport()
                     } label: {

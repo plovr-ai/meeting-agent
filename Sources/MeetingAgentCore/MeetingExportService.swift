@@ -11,6 +11,11 @@ public enum MeetingExportError: Error, Equatable, LocalizedError {
     }
 }
 
+public enum SubtitleExportFormat: Equatable {
+    case srt
+    case vtt
+}
+
 public struct MeetingExportService {
     private let fileManager: FileManager
 
@@ -36,6 +41,24 @@ public struct MeetingExportService {
         try createDestinationDirectory(for: destinationURL)
         let data = try JSONEncoder.meetingAgent.encode(record)
         try data.write(to: destinationURL, options: .atomic)
+    }
+
+    public func exportSubtitles(
+        for record: MeetingRecord,
+        format: SubtitleExportFormat,
+        to destinationURL: URL
+    ) throws {
+        let document = try transcriptDocument(for: record)
+        let cues = subtitleCues(from: document.segments)
+        guard !cues.isEmpty else {
+            throw MeetingExportError.missingArtifact("timed transcript")
+        }
+        switch format {
+        case .srt:
+            try write(renderSRT(cues), to: destinationURL)
+        case .vtt:
+            try write(renderVTT(cues), to: destinationURL)
+        }
     }
 
     public func exportReadinessReport(for record: MeetingRecord, to destinationURL: URL) throws {
@@ -128,6 +151,63 @@ public struct MeetingExportService {
         return try? JSONDecoder.meetingAgent.decode(CaptureDiagnostics.self, from: data)
     }
 
+    private func transcriptDocument(for record: MeetingRecord) throws -> TranscriptDocument {
+        guard let transcriptJSONURL = record.transcriptJSONURL,
+              fileManager.fileExists(atPath: transcriptJSONURL.path)
+        else {
+            throw MeetingExportError.missingArtifact("structured transcript")
+        }
+        return try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+    }
+
+    private func subtitleCues(from segments: [TranscriptSegment]) -> [SubtitleCue] {
+        var mapper = SpeakerLabelMapper()
+        var fallbackStart = 0.0
+        return segments.compactMap { segment in
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let start = max(segment.startTimeSeconds ?? fallbackStart, 0)
+            let end = max(segment.endTimeSeconds ?? start + 3, start + 0.5)
+            fallbackStart = end + 0.25
+            let speakerLabel = mapper.label(for: segment.speaker)
+            return SubtitleCue(
+                start: start,
+                end: end,
+                text: "\(speakerLabel): \(text)"
+            )
+        }
+    }
+
+    private func renderSRT(_ cues: [SubtitleCue]) -> String {
+        cues.enumerated().map { index, cue in
+            [
+                "\(index + 1)",
+                "\(subtitleTimestamp(cue.start, separator: ",")) --> \(subtitleTimestamp(cue.end, separator: ","))",
+                cue.text
+            ].joined(separator: "\n")
+        }
+        .joined(separator: "\n\n") + "\n"
+    }
+
+    private func renderVTT(_ cues: [SubtitleCue]) -> String {
+        "WEBVTT\n\n" + cues.map { cue in
+            [
+                "\(subtitleTimestamp(cue.start, separator: ".")) --> \(subtitleTimestamp(cue.end, separator: "."))",
+                cue.text
+            ].joined(separator: "\n")
+        }
+        .joined(separator: "\n\n") + "\n"
+    }
+
+    private func subtitleTimestamp(_ seconds: Double, separator: String) -> String {
+        let totalMilliseconds = max(Int((seconds * 1_000).rounded()), 0)
+        let hours = totalMilliseconds / 3_600_000
+        let minutes = (totalMilliseconds % 3_600_000) / 60_000
+        let wholeSeconds = (totalMilliseconds % 60_000) / 1_000
+        let milliseconds = totalMilliseconds % 1_000
+        return String(format: "%02d:%02d:%02d%@%03d", hours, minutes, wholeSeconds, separator, milliseconds)
+    }
+
     private func write(_ text: String, to destinationURL: URL) throws {
         try createDestinationDirectory(for: destinationURL)
         try text.write(to: destinationURL, atomically: true, encoding: .utf8)
@@ -177,4 +257,10 @@ public struct MeetingExportService {
     private func format(_ value: Double) -> String {
         String(format: "%.3f", value)
     }
+}
+
+private struct SubtitleCue: Equatable {
+    let start: Double
+    let end: Double
+    let text: String
 }

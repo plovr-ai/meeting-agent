@@ -126,6 +126,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("CaptionTurnView(turn: turn)"))
     }
 
+    func testExportsPanelExposesSubtitleExportActions() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("exportSRT"))
+        XCTAssertTrue(source.contains("exportVTT"))
+        XCTAssertTrue(source.contains("Label(\"SRT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
+        XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
+    }
+
     func testMainWindowExposesLightweightMeetingGoalComposer() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

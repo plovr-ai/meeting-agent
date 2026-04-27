@@ -376,6 +376,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    public func exportSubtitles(
+        for meetingID: UUID,
+        format: SubtitleExportFormat,
+        to destinationURL: URL
+    ) throws {
+        try export(format == .srt ? "SRT subtitles" : "VTT subtitles", for: meetingID) { record in
+            try exportService.exportSubtitles(for: record, format: format, to: destinationURL)
+        }
+    }
+
     public func exportReadinessReport(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Readiness report", for: meetingID) { record in
             try exportService.exportReadinessReport(for: record, to: destinationURL)

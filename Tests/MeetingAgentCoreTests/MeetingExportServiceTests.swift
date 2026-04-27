@@ -52,6 +52,83 @@ final class MeetingExportServiceTests: XCTestCase {
         XCTAssertEqual(decoded.summaryURL?.lastPathComponent, "summary.md")
     }
 
+    func testExportsStructuredTranscriptAsSRT() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+        try fixture.writeStructuredTranscript([
+            TranscriptSegment(
+                speaker: TranscriptSpeaker(identifier: "a", label: "Allan"),
+                startTimeSeconds: 1.25,
+                endTimeSeconds: 4.5,
+                text: "Confirm the launch owner.",
+                timingSource: .precise
+            ),
+            TranscriptSegment(
+                speaker: TranscriptSpeaker(identifier: "b", label: "Bianca"),
+                startTimeSeconds: 5,
+                endTimeSeconds: 7,
+                text: "Alex owns it.",
+                timingSource: .precise
+            )
+        ])
+        let destination = fixture.root.appendingPathComponent("captions.srt")
+
+        try MeetingExportService().exportSubtitles(for: fixture.record, format: .srt, to: destination)
+
+        XCTAssertEqual(
+            try String(contentsOf: destination, encoding: .utf8),
+            """
+            1
+            00:00:01,250 --> 00:00:04,500
+            Allan: Confirm the launch owner.
+
+            2
+            00:00:05,000 --> 00:00:07,000
+            Bianca: Alex owns it.
+
+            """
+        )
+    }
+
+    func testExportsStructuredTranscriptAsVTTWithApproximateFallbackTiming() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+        try fixture.writeStructuredTranscript([
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "First line."),
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "Second line.")
+        ])
+        let destination = fixture.root.appendingPathComponent("captions.vtt")
+
+        try MeetingExportService().exportSubtitles(for: fixture.record, format: .vtt, to: destination)
+
+        XCTAssertEqual(
+            try String(contentsOf: destination, encoding: .utf8),
+            """
+            WEBVTT
+
+            00:00:00.000 --> 00:00:03.000
+            Allan: First line.
+
+            00:00:03.250 --> 00:00:06.250
+            Allan: Second line.
+
+            """
+        )
+    }
+
+    func testSubtitleExportFailsWhenStructuredTranscriptMissing() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+
+        XCTAssertThrowsError(try MeetingExportService().exportSubtitles(
+            for: fixture.record,
+            format: .srt,
+            to: fixture.root.appendingPathComponent("captions.srt")
+        )) { error in
+            XCTAssertEqual(error as? MeetingExportError, .missingArtifact("structured transcript"))
+        }
+    }
+
     func testExportsReadinessMarkdownReport() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }

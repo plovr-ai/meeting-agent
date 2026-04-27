@@ -678,15 +678,27 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         let summaryDestination = root.appendingPathComponent("summary.md")
         let dataDestination = root.appendingPathComponent("meeting.json")
+        let srtDestination = root.appendingPathComponent("captions.srt")
+        let vttDestination = root.appendingPathComponent("captions.vtt")
         let readinessDestination = root.appendingPathComponent("readiness.json")
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(startTimeSeconds: 0, endTimeSeconds: 2, text: "Hello", language: "en-US")
+        ])
         try viewModel.exportSummary(for: stored.record.id, to: summaryDestination)
         XCTAssertEqual(viewModel.statusText, "Summary exported")
         try viewModel.exportMeetingData(for: stored.record.id, to: dataDestination)
         XCTAssertEqual(viewModel.statusText, "Meeting data exported")
+        try viewModel.exportSubtitles(for: stored.record.id, format: .srt, to: srtDestination)
+        XCTAssertEqual(viewModel.statusText, "SRT subtitles exported")
+        try viewModel.exportSubtitles(for: stored.record.id, format: .vtt, to: vttDestination)
+        XCTAssertEqual(viewModel.statusText, "VTT subtitles exported")
         try viewModel.exportReadinessReport(for: stored.record.id, to: readinessDestination)
         XCTAssertEqual(viewModel.statusText, "Readiness report exported")
         XCTAssertTrue(FileManager.default.fileExists(atPath: summaryDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: dataDestination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: srtDestination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: vttDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: readinessDestination.path))
     }
 
