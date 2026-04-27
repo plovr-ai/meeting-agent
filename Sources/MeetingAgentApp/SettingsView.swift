@@ -29,126 +29,134 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section("Speech") {
-                Picker("Source Locale", selection: $draft.localeIdentifier) {
-                    ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
-                        Text(localeIdentifier).tag(localeIdentifier)
-                    }
-                }
-
-                Picker("Target Locale", selection: $draft.targetLocaleIdentifier) {
-                    ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
-                        Text(localeIdentifier).tag(localeIdentifier)
-                    }
-                }
-            }
-
-            Section("Transcription Chain") {
-                Picker("Transcription Mode", selection: $draft.transcriptionExecutionMode) {
-                    Text("Local").tag(ProviderExecutionMode.local)
-                    Text("Hosted").tag(ProviderExecutionMode.hosted)
-                }
-
-                if draft.transcriptionExecutionMode == .local {
-                    Picker("Local Transcription Provider", selection: $draft.localTranscriptionProviderID) {
-                        Text("Whisper Local").tag("whisper-local")
-                        Text("macOS Speech").tag("macos-speech-local")
-                    }
-
-                    if draft.localTranscriptionProviderID == "whisper-local" {
-                        Picker("Whisper Binary Path", selection: whisperBinaryPathBinding) {
-                            ForEach(whisperBinaryPathOptions, id: \.self) { path in
-                                Text(path).tag(path)
-                            }
-                        }
-
-                        Picker("Whisper Model Path", selection: whisperModelPathBinding) {
-                            ForEach(whisperModelPathOptions, id: \.self) { path in
-                                Text(path).tag(path)
-                            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsCommandCenterPanel("Speech") {
+                    Picker("Source Locale", selection: $draft.localeIdentifier) {
+                        ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
+                            Text(localeIdentifier).tag(localeIdentifier)
                         }
                     }
-                } else {
-                    Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
-                        Text("OpenRouter").tag("openrouter-transcribe")
-                        Text("Deepgram").tag("deepgram-transcribe")
+
+                    Picker("Target Locale", selection: $draft.targetLocaleIdentifier) {
+                        ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
+                            Text(localeIdentifier).tag(localeIdentifier)
+                        }
+                    }
+                }
+
+                SettingsCommandCenterPanel("Transcription Chain") {
+                    Picker("Transcription Mode", selection: $draft.transcriptionExecutionMode) {
+                        Text("Local").tag(ProviderExecutionMode.local)
+                        Text("Hosted").tag(ProviderExecutionMode.hosted)
                     }
 
-                    if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
-                        Picker("Hosted Transcription Model", selection: $draft.deepgramModelID) {
-                            Text("Deepgram Nova 3").tag("nova-3")
-                            Text("Deepgram Nova 2").tag("nova-2")
+                    if draft.transcriptionExecutionMode == .local {
+                        Picker("Local Transcription Provider", selection: $draft.localTranscriptionProviderID) {
+                            Text("Whisper Local").tag("whisper-local")
+                            Text("macOS Speech").tag("macos-speech-local")
+                        }
+
+                        if draft.localTranscriptionProviderID == "whisper-local" {
+                            Picker("Whisper Binary Path", selection: whisperBinaryPathBinding) {
+                                ForEach(whisperBinaryPathOptions, id: \.self) { path in
+                                    Text(path).tag(path)
+                                }
+                            }
+
+                            Picker("Whisper Model Path", selection: whisperModelPathBinding) {
+                                ForEach(whisperModelPathOptions, id: \.self) { path in
+                                    Text(path).tag(path)
+                                }
+                            }
                         }
                     } else {
-                        Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
-                            ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
+                        Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
+                            Text("OpenRouter").tag("openrouter-transcribe")
+                            Text("Deepgram").tag("deepgram-transcribe")
+                        }
+
+                        if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
+                            Picker("Hosted Transcription Model", selection: $draft.deepgramModelID) {
+                                Text("Deepgram Nova 3").tag("nova-3")
+                                Text("Deepgram Nova 2").tag("nova-2")
+                            }
+                        } else {
+                            Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
+                                ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
+                                    Text(model.displayName).tag(model.id)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingsCommandCenterPanel("Translation Chain") {
+                    Picker("Translation Mode", selection: $draft.translationExecutionMode) {
+                        Text("Local").tag(ProviderExecutionMode.local)
+                        Text("Hosted").tag(ProviderExecutionMode.hosted)
+                    }
+
+                    if draft.translationExecutionMode == .local {
+                        Picker("Local Translation Provider", selection: $draft.localTranslationProviderID) {
+                            Text("Qwen Local Translation").tag("qwen-local-translation")
+                            Text("NLLB Local").tag("nllb-local")
+                        }
+                    } else {
+                        Picker("Hosted Translation Provider", selection: $draft.hostedTranslationProviderID) {
+                            Text("OpenRouter").tag("openrouter-translation")
+                        }
+
+                        Picker("Hosted Translation Model", selection: $draft.hostedTranslationModelID) {
+                            ForEach(BilingualPipelineFactory.hostedTranslationModelOptions) { model in
                                 Text(model.displayName).tag(model.id)
                             }
                         }
                     }
                 }
-            }
 
-            Section("Translation Chain") {
-                Picker("Translation Mode", selection: $draft.translationExecutionMode) {
-                    Text("Local").tag(ProviderExecutionMode.local)
-                    Text("Hosted").tag(ProviderExecutionMode.hosted)
+                if usesOpenRouter {
+                    SettingsCommandCenterPanel("OpenRouter") {
+                        SecureField("OpenRouter API Key", text: openRouterAPIKeyBinding)
+                    }
                 }
 
-                if draft.translationExecutionMode == .local {
-                    Picker("Local Translation Provider", selection: $draft.localTranslationProviderID) {
-                        Text("Qwen Local Translation").tag("qwen-local-translation")
-                        Text("NLLB Local").tag("nllb-local")
+                if usesDeepgram {
+                    SettingsCommandCenterPanel("Deepgram") {
+                        SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
                     }
-                } else {
-                    Picker("Hosted Translation Provider", selection: $draft.hostedTranslationProviderID) {
-                        Text("OpenRouter").tag("openrouter-translation")
-                    }
+                }
 
-                    Picker("Hosted Translation Model", selection: $draft.hostedTranslationModelID) {
-                        ForEach(BilingualPipelineFactory.hostedTranslationModelOptions) { model in
-                            Text(model.displayName).tag(model.id)
+                SettingsCommandCenterPanel("Live Translation") {
+                    Text("Realtime speech translation")
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                    SecureField("OpenAI Realtime API Key", text: openAIRealtimeAPIKeyBinding)
+                }
+
+                SettingsCommandCenterPanel("Validation") {
+                    Text(configurationStatusText)
+                        .font(.caption)
+                        .foregroundStyle(configurationStatusColor)
+
+                    HStack {
+                        Button("Save") {
+                            save(draft)
                         }
+                        .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                        .disabled(isRecording)
+
+                        Button("Reset") {
+                            draft = configuration
+                        }
+                        .buttonStyle(CommandCenterActionButtonStyle())
                     }
                 }
             }
-
-            if usesOpenRouter {
-                Section("OpenRouter") {
-                    SecureField("OpenRouter API Key", text: openRouterAPIKeyBinding)
-                }
-            }
-
-            if usesDeepgram {
-                Section("Deepgram") {
-                    SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
-                }
-            }
-
-            Section("Live Translation") {
-                SecureField("OpenAI Realtime API Key", text: openAIRealtimeAPIKeyBinding)
-            }
-
-            Section {
-                Text(configurationStatusText)
-                    .font(.caption)
-                    .foregroundStyle(configurationStatusColor)
-
-                HStack {
-                    Button("Save") {
-                        save(draft)
-                    }
-                    .disabled(isRecording)
-
-                    Button("Reset") {
-                        draft = configuration
-                    }
-                }
-            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(24)
         }
+        .background(CommandCenterPalette.window)
         .disabled(isRecording)
-        .padding(20)
         .navigationTitle("Settings")
         .onChange(of: draft.localTranscriptionProviderID) { _, providerID in
             draft.provider = providerID == "macos-speech-local" ? .local : .whisper

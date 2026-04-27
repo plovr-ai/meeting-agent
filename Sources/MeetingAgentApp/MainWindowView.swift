@@ -21,18 +21,22 @@ struct MainWindowView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(meeting.name)
                                     .font(.headline)
+                                    .foregroundStyle(CommandCenterPalette.text)
                                 Text(meeting.startedAt, style: .date)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(CommandCenterPalette.secondaryText)
                             }
+                            .padding(.vertical, 4)
                             .tag(Optional(meeting.id))
                         }
                     }
                 }
+                .scrollContentBackground(.hidden)
 
                 Spacer()
 
                 Divider()
+                    .overlay(CommandCenterPalette.border)
 
                 Button {
                     showSettings = true
@@ -41,9 +45,11 @@ struct MainWindowView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(showSettings ? CommandCenterPalette.primary : CommandCenterPalette.text)
                 .padding(12)
-                .background(showSettings ? Color.accentColor.opacity(0.12) : Color.clear)
+                .background(showSettings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             }
+            .background(CommandCenterPalette.surface)
             .navigationTitle("Meeting Agent")
         } detail: {
             if showSettings {
@@ -108,6 +114,7 @@ struct MainWindowView: View {
                 )
             }
         }
+        .background(CommandCenterPalette.window)
         .alert(
             "Meeting detected",
             isPresented: Binding(
@@ -188,129 +195,48 @@ private struct MeetingDetailView: View {
     @State private var targetLocale = "zh-CN"
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let meeting {
-                    Text(meeting.name)
-                        .font(.largeTitle)
-                    Text(statusText)
-                        .foregroundStyle(.secondary)
-                    LabeledContent("Started", value: meeting.startedAt.formatted(date: .abbreviated, time: .standard))
-                    if let endedAt = meeting.endedAt {
-                        LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
-                    }
-                    LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
-                    Divider()
-                    Text("Current Pipeline")
-                        .font(.headline)
-                    LabeledContent("Pipeline", value: pipelineDisplayName(for: speechConfiguration))
-                    LabeledContent("Transcription Link", value: transcriptionLinkText(for: speechConfiguration))
-                    LabeledContent("Transcription Model", value: transcriptionModelText(for: speechConfiguration))
-                    LabeledContent("Translation Link", value: translationLinkText(for: speechConfiguration))
-                    LabeledContent("Translation Model", value: translationModelText(for: speechConfiguration))
-                    Divider()
-                    LabeledContent("STT Provider", value: meeting.transcriptionProviderID)
-                    LabeledContent("Actual STT Source", value: actualTranscriptionSourceText(for: meeting))
-                    LabeledContent("Language", value: meeting.speechLocaleIdentifier)
-                    LabeledContent("Transcription", value: transcriptionStatusText(for: meeting))
-                    if let failureReason = meeting.transcriptionFailureReason {
-                        Text(failureReason)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
-                    }
-                    HStack(spacing: 12) {
-                        Button("Stop Recording") {
-                            stopRecording()
-                        }
-                        .disabled(!isRecording)
-                        Button("Retry Transcription") {
-                            retryTranscription(meeting)
-                        }
-                        .disabled(isRecording || meeting.audioURL == nil)
-                    }
-                    Divider()
-                    Text("Live Translation")
-                        .font(.headline)
-                    HStack {
-                        Picker("Target", selection: $targetLocale) {
-                            ForEach(MeetingAgentViewModel.supportedLocaleIdentifiers, id: \.self) { locale in
-                                Text(locale).tag(locale)
-                            }
-                        }
-                        .frame(maxWidth: 180)
-
-                        Button("Start Live Translation") {
-                            startRealtimeTranslation(targetLocale)
-                        }
-                        .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
-
-                        Button("Stop Live Translation") {
-                            stopRealtimeTranslation()
-                        }
-                        .disabled(!liveTranslationCanStop(realtimeTranslationStatus))
-                    }
-                    Text(liveTranslationStatusText(realtimeTranslationStatus))
-                        .font(.caption)
-                        .foregroundStyle(liveTranslationStatusColor(realtimeTranslationStatus))
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(liveTranslationTurns.suffix(5)) { turn in
-                            Text(turn.text)
-                                .textSelection(.enabled)
-                                .foregroundStyle(turn.isFinal ? .primary : .secondary)
-                        }
-                    }
-                    Divider()
-                    Text("Exports")
-                        .font(.headline)
-                    HStack {
-                        Button {
-                            copySummary(meeting)
-                        } label: {
-                            Label("Copy Summary", systemImage: "doc.on.clipboard")
-                        }
-                        .disabled(isRecording || meeting.summaryURL == nil)
-
-                        Button {
-                            exportTranscript(meeting)
-                        } label: {
-                            Label("Transcript", systemImage: "doc.text")
-                        }
-                        .disabled(isRecording || meeting.transcriptURL == nil)
-                    }
-                    HStack {
-                        Button {
-                            exportMeetingData(meeting)
-                        } label: {
-                            Label("Meeting JSON", systemImage: "curlybraces")
-                        }
-
-                        Button {
-                            exportReadinessReport(meeting)
-                        } label: {
-                            Label("Readiness Report", systemImage: "checklist")
-                        }
-                    }
-                    Divider()
-                    Text("Summary")
-                        .font(.headline)
-                    summaryView(for: meeting)
-                    Divider()
-                    Text("Transcript")
-                        .font(.headline)
-                    Text(transcriptText(for: meeting))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                } else {
+        ZStack {
+            CommandCenterPalette.window.ignoresSafeArea()
+            if let meeting {
+                MeetingCommandCenterView(
+                    meeting: meeting,
+                    pipelineDisplayName: pipelineDisplayName(for: speechConfiguration),
+                    transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
+                    transcriptionModelText: transcriptionModelText(for: speechConfiguration),
+                    translationLinkText: translationLinkText(for: speechConfiguration),
+                    translationModelText: translationModelText(for: speechConfiguration),
+                    actualTranscriptionSourceText: actualTranscriptionSourceText(for: meeting),
+                    statusText: statusText,
+                    isRecording: isRecording,
+                    realtimeTranslationStatus: realtimeTranslationStatus,
+                    liveTranslationTurns: liveTranslationTurns,
+                    targetLocale: $targetLocale,
+                    transcriptText: transcriptText(for: meeting),
+                    transcriptionStatusText: transcriptionStatusText(for: meeting),
+                    liveTranslationStatusText: liveTranslationStatusText(realtimeTranslationStatus),
+                    liveTranslationStatusColor: liveTranslationStatusColor(realtimeTranslationStatus),
+                    summary: summary(for: meeting),
+                    stopRecording: stopRecording,
+                    copySummary: { copySummary(meeting) },
+                    exportTranscript: { exportTranscript(meeting) },
+                    exportMeetingData: { exportMeetingData(meeting) },
+                    exportReadinessReport: { exportReadinessReport(meeting) },
+                    retryTranscription: { retryTranscription(meeting) },
+                    startRealtimeTranslation: { startRealtimeTranslation(targetLocale) },
+                    stopRealtimeTranslation: stopRealtimeTranslation,
+                    liveTranslationCanStop: liveTranslationCanStop(realtimeTranslationStatus)
+                )
+            } else {
+                CommandCenterPanel {
                     ContentUnavailableView(
                         "No Meeting Selected",
                         systemImage: "waveform",
                         description: Text("Detected and recorded meetings will appear here.")
                     )
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
                 }
+                .padding(24)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
         }
     }
 
@@ -439,61 +365,511 @@ private struct MeetingDetailView: View {
     private func liveTranslationStatusColor(_ status: RealtimeTranslationStatus) -> Color {
         switch status {
         case .failed:
-            return .red
+            return CommandCenterPalette.danger
         case .degraded:
-            return .orange
+            return CommandCenterPalette.warning
         default:
-            return .secondary
-        }
-    }
-
-    @ViewBuilder
-    private func summaryView(for meeting: MeetingRecord) -> some View {
-        if let summary = summary(for: meeting) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if summary.status == .failed {
-                        Text(summary.failureReason ?? "Summary generation failed.")
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
-                    } else {
-                        if !summary.overview.isEmpty {
-                            Text(summary.overview)
-                                .textSelection(.enabled)
-                        }
-                        summaryList(title: "Decisions", items: summary.decisions.map(\.description))
-                        summaryList(title: "Action Items", items: summary.actionItems.map(\.description))
-                        summaryList(title: "Open Questions", items: summary.openQuestions)
-                        summaryList(title: "Risks", items: summary.risks)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: 120, maxHeight: 220)
-        } else {
-            Text("No summary generated yet.")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func summaryList(title: String, items: [String]) -> some View {
-        let visibleItems = items.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        if !visibleItems.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.subheadline)
-                    .bold()
-                ForEach(Array(visibleItems.enumerated()), id: \.offset) { _, item in
-                    Text("- \(item)")
-                        .textSelection(.enabled)
-                }
-            }
+            return CommandCenterPalette.secondaryText
         }
     }
 
     private func summary(for meeting: MeetingRecord) -> MeetingSummary? {
         guard let summaryJSONURL = meeting.summaryJSONURL else { return nil }
         return try? MeetingSummaryWriter.read(from: summaryJSONURL)
+    }
+}
+
+private struct MeetingCommandCenterView: View {
+    let meeting: MeetingRecord
+    let pipelineDisplayName: String
+    let transcriptionLinkText: String
+    let transcriptionModelText: String
+    let translationLinkText: String
+    let translationModelText: String
+    let actualTranscriptionSourceText: String
+    let statusText: String
+    let isRecording: Bool
+    let realtimeTranslationStatus: RealtimeTranslationStatus
+    let liveTranslationTurns: [LiveTranslationTurn]
+    @Binding var targetLocale: String
+    let transcriptText: String
+    let transcriptionStatusText: String
+    let liveTranslationStatusText: String
+    let liveTranslationStatusColor: Color
+    let summary: MeetingSummary?
+    let stopRecording: () -> Void
+    let copySummary: () -> Void
+    let exportTranscript: () -> Void
+    let exportMeetingData: () -> Void
+    let exportReadinessReport: () -> Void
+    let retryTranscription: () -> Void
+    let startRealtimeTranslation: () -> Void
+    let stopRealtimeTranslation: () -> Void
+    let liveTranslationCanStop: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            TranscriptPaneView(
+                meeting: meeting,
+                pipelineDisplayName: pipelineDisplayName,
+                transcriptionLinkText: transcriptionLinkText,
+                transcriptionModelText: transcriptionModelText,
+                translationLinkText: translationLinkText,
+                translationModelText: translationModelText,
+                actualTranscriptionSourceText: actualTranscriptionSourceText,
+                statusText: statusText,
+                isRecording: isRecording,
+                realtimeTranslationStatus: realtimeTranslationStatus,
+                liveTranslationTurns: liveTranslationTurns,
+                targetLocale: $targetLocale,
+                transcriptText: transcriptText,
+                transcriptionStatusText: transcriptionStatusText,
+                liveTranslationStatusText: liveTranslationStatusText,
+                liveTranslationStatusColor: liveTranslationStatusColor,
+                stopRecording: stopRecording,
+                retryTranscription: retryTranscription,
+                startRealtimeTranslation: startRealtimeTranslation,
+                stopRealtimeTranslation: stopRealtimeTranslation,
+                liveTranslationCanStop: liveTranslationCanStop
+            )
+            .frame(minWidth: 520)
+
+            Divider()
+                .overlay(CommandCenterPalette.border)
+
+            InsightPaneView(
+                meeting: meeting,
+                isRecording: isRecording,
+                summary: summary,
+                copySummary: copySummary,
+                exportTranscript: exportTranscript,
+                exportMeetingData: exportMeetingData,
+                exportReadinessReport: exportReadinessReport
+            )
+            .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+        }
+        .background(CommandCenterPalette.window)
+    }
+}
+
+private struct TranscriptPaneView: View {
+    let meeting: MeetingRecord
+    let pipelineDisplayName: String
+    let transcriptionLinkText: String
+    let transcriptionModelText: String
+    let translationLinkText: String
+    let translationModelText: String
+    let actualTranscriptionSourceText: String
+    let statusText: String
+    let isRecording: Bool
+    let realtimeTranslationStatus: RealtimeTranslationStatus
+    let liveTranslationTurns: [LiveTranslationTurn]
+    @Binding var targetLocale: String
+    let transcriptText: String
+    let transcriptionStatusText: String
+    let liveTranslationStatusText: String
+    let liveTranslationStatusColor: Color
+    let stopRecording: () -> Void
+    let retryTranscription: () -> Void
+    let startRealtimeTranslation: () -> Void
+    let stopRealtimeTranslation: () -> Void
+    let liveTranslationCanStop: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            progress
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    metadata
+                    recordingActions
+                    failureReason
+                    transcript
+                    liveTranslation
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(28)
+            }
+            composer
+        }
+        .background(CommandCenterPalette.window)
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isRecording ? CommandCenterPalette.danger : CommandCenterPalette.mutedText)
+                    .frame(width: 9, height: 9)
+                Text(isRecording ? "LIVE" : "READY")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .tracking(2)
+            }
+            .foregroundStyle(CommandCenterPalette.text)
+
+            Text(elapsedText)
+                .commandCenterMono()
+
+            Divider()
+                .frame(height: 18)
+                .overlay(CommandCenterPalette.border)
+
+            Text(meeting.name)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(CommandCenterPalette.text)
+                .lineLimit(1)
+
+            Spacer()
+
+            CommandCenterChip(title: "\(meeting.speechLocaleIdentifier) -> \(targetLocale)", tint: CommandCenterPalette.secondaryText)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+        .background(CommandCenterPalette.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(CommandCenterPalette.border)
+                .frame(height: 1)
+        }
+    }
+
+    private var progress: some View {
+        HStack(spacing: 14) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(CommandCenterPalette.panel)
+                    Capsule()
+                        .fill(CommandCenterPalette.primary.opacity(0.65))
+                        .frame(width: proxy.size.width * progressFraction)
+                }
+            }
+            .frame(height: 6)
+
+            Text("Phase 2 - Regional P&L - 2 of 5")
+                .commandCenterMono()
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+    }
+
+    private var metadata: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                CommandCenterChip(title: transcriptionStatusText, tint: transcriptionTint, filled: true)
+                CommandCenterChip(title: meeting.transcriptionProviderID, tint: CommandCenterPalette.cyan)
+                CommandCenterChip(title: actualTranscriptionSourceText, tint: CommandCenterPalette.secondaryText)
+                CommandCenterChip(title: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
+                if let endedAt = meeting.endedAt {
+                    CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
+                }
+            }
+
+            HStack(spacing: 8) {
+                CommandCenterChip(title: pipelineDisplayName, tint: CommandCenterPalette.primary)
+                CommandCenterChip(title: transcriptionLinkText, tint: CommandCenterPalette.cyan)
+                CommandCenterChip(title: transcriptionModelText)
+                CommandCenterChip(title: translationLinkText, tint: CommandCenterPalette.purple)
+                CommandCenterChip(title: translationModelText)
+            }
+        }
+    }
+
+    private var recordingActions: some View {
+        HStack(spacing: 10) {
+            Button("Stop Recording") {
+                stopRecording()
+            }
+            .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
+            .disabled(!isRecording)
+
+            Button("Retry Transcription") {
+                retryTranscription()
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+            .disabled(isRecording || meeting.audioURL == nil)
+        }
+    }
+
+    @ViewBuilder
+    private var failureReason: some View {
+        if let failureReason = meeting.transcriptionFailureReason {
+            Text(failureReason)
+                .font(.caption)
+                .foregroundStyle(CommandCenterPalette.danger)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var transcript: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Transcript").commandCenterEyebrow()
+            Text(transcriptText)
+                .font(.system(size: 17))
+                .lineSpacing(6)
+                .foregroundStyle(CommandCenterPalette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var liveTranslation: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Live Translation").commandCenterEyebrow()
+                    Spacer()
+                    Text(liveTranslationStatusText)
+                        .font(.caption)
+                        .foregroundStyle(liveTranslationStatusColor)
+                }
+
+                if liveTranslationTurns.isEmpty {
+                    Text("Translated turns will appear here while the meeting is live.")
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                } else {
+                    ForEach(liveTranslationTurns.suffix(5)) { turn in
+                        Text(turn.text)
+                            .foregroundStyle(turn.isFinal ? CommandCenterPalette.text : CommandCenterPalette.secondaryText)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                HStack {
+                    Picker("Target", selection: $targetLocale) {
+                        ForEach(MeetingAgentViewModel.supportedLocaleIdentifiers, id: \.self) { locale in
+                            Text(locale).tag(locale)
+                        }
+                    }
+                    .frame(maxWidth: 160)
+
+                    Button("Start Live Translation") {
+                        startRealtimeTranslation()
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle(variant: .secondary))
+                    .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
+
+                    Button("Stop Live Translation") {
+                        stopRealtimeTranslation()
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
+                    .disabled(!liveTranslationCanStop)
+                }
+            }
+        }
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: "mic")
+                    .foregroundStyle(CommandCenterPalette.danger)
+                    .frame(width: 42, height: 42)
+                    .background(CommandCenterPalette.danger.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(CommandCenterPalette.danger.opacity(0.45), lineWidth: 1)
+                    )
+
+                Text("Type what you want to say in Chinese or English")
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(CommandCenterPalette.panelRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                Button {
+                    startRealtimeTranslation()
+                } label: {
+                    Label("Send to call", systemImage: "paperplane")
+                }
+                .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                .disabled(!isRecording)
+            }
+
+            HStack {
+                Text("Mic into app is isolated - your speech will not leak into the meeting")
+                Spacer()
+                Text(statusText)
+            }
+            .font(.caption)
+            .foregroundStyle(CommandCenterPalette.mutedText)
+        }
+        .padding(18)
+        .background(CommandCenterPalette.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(CommandCenterPalette.border)
+                .frame(height: 1)
+        }
+    }
+
+    private var elapsedText: String {
+        let interval = (meeting.endedAt ?? Date()).timeIntervalSince(meeting.startedAt)
+        let minutes = max(Int(interval) / 60, 0)
+        let seconds = max(Int(interval) % 60, 0)
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    private var progressFraction: CGFloat {
+        guard isRecording else { return 1 }
+        let interval = Date().timeIntervalSince(meeting.startedAt)
+        return min(max(interval / 3600, 0.05), 1)
+    }
+
+    private var transcriptionTint: Color {
+        switch meeting.transcriptionStatus {
+        case .failed:
+            return CommandCenterPalette.danger
+        case .transcribed:
+            return CommandCenterPalette.primary
+        case .transcribing, .retryRequested:
+            return CommandCenterPalette.warning
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+}
+
+private struct InsightPaneView: View {
+    let meeting: MeetingRecord
+    let isRecording: Bool
+    let summary: MeetingSummary?
+    let copySummary: () -> Void
+    let exportTranscript: () -> Void
+    let exportMeetingData: () -> Void
+    let exportReadinessReport: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    phaseSummary
+                    suggestedReplies
+                    exports
+                    summaryPanel
+                }
+                .padding(22)
+            }
+        }
+        .background(CommandCenterPalette.surface)
+    }
+
+    private var phaseSummary: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Phase Summary - Regional P&L").commandCenterEyebrow()
+                Text(summary?.overview.isEmpty == false ? summary?.overview ?? "" : "Meeting progress, risks, and decisions will appear here as the transcript develops.")
+                    .commandCenterBody()
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                HStack {
+                    CommandCenterChip(title: isRecording ? "ACTIVE" : "RECORDED", tint: CommandCenterPalette.primary, filled: true)
+                    CommandCenterChip(title: summary == nil ? "Summary pending" : "Summary ready", tint: summary == nil ? CommandCenterPalette.warning : CommandCenterPalette.primary)
+                }
+            }
+        }
+    }
+
+    private var suggestedReplies: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Suggested Replies").commandCenterEyebrow()
+                    Spacer()
+                    Text("from live translation")
+                        .commandCenterMono()
+                }
+                Text("Use the live translation controls to prepare localized wording during the meeting.")
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                CommandCenterChip(title: "REFRAME", tint: CommandCenterPalette.cyan)
+            }
+        }
+    }
+
+    private var exports: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Exports").commandCenterEyebrow()
+                HStack {
+                    Button {
+                        copySummary()
+                    } label: {
+                        Label("Copy Summary", systemImage: "doc.on.clipboard")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+                    .disabled(isRecording || meeting.summaryURL == nil)
+
+                    Button {
+                        exportTranscript()
+                    } label: {
+                        Label("Transcript", systemImage: "doc.text")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+                    .disabled(isRecording || meeting.transcriptURL == nil)
+                }
+                HStack {
+                    Button {
+                        exportMeetingData()
+                    } label: {
+                        Label("Meeting JSON", systemImage: "curlybraces")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+
+                    Button {
+                        exportReadinessReport()
+                    } label: {
+                        Label("Readiness Report", systemImage: "checklist")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var summaryPanel: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Goal Progress").commandCenterEyebrow()
+                if let summary {
+                    if summary.status == .failed {
+                        Text(summary.failureReason ?? "Summary generation failed.")
+                            .foregroundStyle(CommandCenterPalette.danger)
+                            .textSelection(.enabled)
+                    } else {
+                        SummaryListView(title: "Decisions", items: summary.decisions.map(\.description))
+                        SummaryListView(title: "Action Items", items: summary.actionItems.map(\.description))
+                        SummaryListView(title: "Open Questions", items: summary.openQuestions)
+                        SummaryListView(title: "Risks", items: summary.risks)
+                    }
+                } else {
+                    Text("No summary generated yet.")
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                }
+            }
+        }
+    }
+}
+
+private struct SummaryListView: View {
+    let title: String
+    let items: [String]
+
+    var body: some View {
+        let visibleItems = items.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !visibleItems.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(CommandCenterPalette.text)
+                ForEach(Array(visibleItems.enumerated()), id: \.offset) { _, item in
+                    Text(item)
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                        .textSelection(.enabled)
+                }
+            }
+        }
     }
 }
