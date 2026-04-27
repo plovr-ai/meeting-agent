@@ -23,7 +23,9 @@ The approved direction is to keep the current product behavior and restyle the m
 
 ## Approach
 
-Use a focused SwiftUI restyle rather than a larger app architecture rewrite. `MainWindowView.swift` will keep the existing view-model contract and actions, but reorganize the detail area into reusable private subviews for:
+Use a focused SwiftUI restyle rather than a larger app architecture rewrite. Add a small app-level design system abstraction so the reference style is consistent and not scattered across views. The design system will provide named palette colors, typography helpers, chip styles, panel containers, and button styles.
+
+`MainWindowView.swift` will keep the existing view-model contract and actions, but reorganize the detail area into reusable private subviews for:
 
 - dark app background and sidebar styling
 - meeting header with live status, elapsed time, language direction, and progress
@@ -31,7 +33,7 @@ Use a focused SwiftUI restyle rather than a larger app architecture rewrite. `Ma
 - action composer/export controls
 - right-side summary/status panels
 
-`SettingsView.swift` will keep the existing bindings and validation logic while adopting dark grouped panels and compact controls.
+`SettingsView.swift` will keep the existing bindings and validation logic while adopting dark grouped panels and compact controls from the same design system.
 
 This approach limits risk because the view model and core package behavior stay untouched. It also matches the issue's visual goal while avoiding invented product features.
 
@@ -45,6 +47,17 @@ The main window uses a two-column command center:
 - Bottom composer/action row: a dark input-like surface with live translation and export controls mapped to existing actions.
 
 When no meeting is selected, the empty state should still use the dark panel treatment.
+
+## Design System
+
+Create a dedicated app-target design system file, `CommandCenterDesignSystem.swift`, rather than defining colors and styles independently in each view. The file owns:
+
+- `CommandCenterPalette` for named reference colors.
+- reusable panel and chip modifiers.
+- `CommandCenterButtonStyle` for primary, secondary, and danger actions.
+- compact typography helpers for eyebrow labels, mono metadata, and body text.
+
+View files may still compose layout locally, but repeated visual decisions must go through this design system.
 
 ## Testing
 
