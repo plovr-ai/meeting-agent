@@ -109,3 +109,19 @@ Before deleting a feature-specific source file, inspect every type it defines an
 Search references by type, not only by filename, before deleting files with mixed responsibilities.
 
 ---
+
+## [22] Verify preserved controls after UI restyles
+
+**Date**: 2026-04-27
+**Category**: logic-error
+
+### What went wrong
+The first command-center restyle passed callbacks through the new view hierarchy but failed to render the existing Stop Recording and Retry Transcription controls.
+
+### Correct approach
+When replacing a UI shell, map every old visible control to a new visible control before treating callback preservation as complete.
+
+### How to avoid
+For UI restyles, review both callback wiring and rendered control labels against the previous screen.
+
+---
