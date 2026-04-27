@@ -72,6 +72,16 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("showSettings = true"))
     }
 
+    func testSidebarTitleUsesCommandCenterStylingInsteadOfSystemNavigationTitle() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("Text(\"Meeting Agent\")"))
+        XCTAssertTrue(source.contains(".commandCenterEyebrow()"))
+        XCTAssertFalse(source.contains(".navigationTitle(\"Meeting Agent\")"))
+    }
+
     func testMainWindowContainsLiveTranslationControls() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
