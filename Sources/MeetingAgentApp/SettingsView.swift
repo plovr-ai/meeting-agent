@@ -291,9 +291,9 @@ struct SettingsView: View {
     private var configurationStatusColor: Color {
         switch status {
         case .available:
-            return .secondary
+            return CommandCenterPalette.secondaryText
         case .unavailable:
-            return .red
+            return CommandCenterPalette.danger
         }
     }
 }
