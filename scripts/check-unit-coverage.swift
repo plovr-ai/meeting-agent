@@ -11,6 +11,7 @@ private let excludedFiles: Set<String> = [
     "AudioTapManager.swift",
     "DeepgramTranscriptionProvider.swift",
     "LocalAudioPlaybackSink.swift",
+    "OpenAIRealtimeTranscriptionProvider.swift",
     "OpenAIRealtimeTranslationProvider.swift",
     "OpenRouterBilingualProviders.swift",
     "OpenRouterMeetingSummaryProvider.swift",
