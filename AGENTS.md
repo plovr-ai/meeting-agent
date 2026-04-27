@@ -60,7 +60,6 @@ Use the app settings to match the meeting language. The default is `en-US`; Chin
 
 - `AudioIOReader` reads process tap audio and converts float32 linear PCM to signed 16-bit PCM.
 - `WavFileWriter` writes RIFF/WAVE output.
-- `RecordingOutput` owns the `.record/` file naming convention.
 - `SpeechTranscriptionProvider` is the provider boundary for transcription backends.
 - `LocalSpeechTranscriptionProvider` uses `SystemSpeechTranscriber`.
 - `WhisperSpeechTranscriptionProvider` uses a local `whisper.cpp` CLI and model.

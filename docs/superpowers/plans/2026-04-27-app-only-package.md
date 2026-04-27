@@ -83,19 +83,21 @@ Expected: PASS.
 
 **Files:**
 - Delete: `Sources/MeetingAgentCore/ProbeOptions.swift`
-- Modify: `Tests/MeetingAgentCoreTests/RecordingOutputTests.swift`
+- Delete: `Sources/MeetingAgentCore/RecordingOutput.swift`
+- Create: `Sources/MeetingAgentCore/TranscriptFileWriter.swift`
+- Rename: `Tests/MeetingAgentCoreTests/RecordingOutputTests.swift` to `Tests/MeetingAgentCoreTests/TranscriptFileWriterTests.swift`
 
 - [ ] **Step 1: Remove parser tests**
 
-Delete tests in `RecordingOutputTests` that instantiate `ProbeOptions`. Keep tests that directly exercise `RecordingOutput`.
+Delete tests in `RecordingOutputTests` that instantiate `ProbeOptions` or directly exercise CLI `.record` output naming. Keep tests that directly exercise `TranscriptFileWriter`.
 
 - [ ] **Step 2: Delete `ProbeOptions.swift`**
 
-Remove `Sources/MeetingAgentCore/ProbeOptions.swift`.
+Move `TranscriptFileWriter` from `Sources/MeetingAgentCore/RecordingOutput.swift` to `Sources/MeetingAgentCore/TranscriptFileWriter.swift`, then remove `Sources/MeetingAgentCore/ProbeOptions.swift` and `Sources/MeetingAgentCore/RecordingOutput.swift`.
 
 - [ ] **Step 3: Run focused tests**
 
-Run: `swift test --filter RecordingOutputTests`
+Run: `swift test --filter TranscriptFileWriterTests`
 
 Expected: PASS.
 
@@ -134,6 +136,6 @@ Expected: PASS.
 Run:
 
 ```bash
-git add Package.swift AGENTS.md Sources/CoreAudioTapProbe Sources/MeetingAgentCore/ProbeOptions.swift Tests/MeetingAgentCoreTests/ScaffoldTests.swift Tests/MeetingAgentCoreTests/RecordingOutputTests.swift docs/superpowers/specs/2026-04-27-app-only-package-design.md docs/superpowers/plans/2026-04-27-app-only-package.md
+git add Package.swift AGENTS.md Sources/CoreAudioTapProbe Sources/MeetingAgentCore/ProbeOptions.swift Sources/MeetingAgentCore/RecordingOutput.swift Sources/MeetingAgentCore/TranscriptFileWriter.swift Tests/MeetingAgentCoreTests/ScaffoldTests.swift Tests/MeetingAgentCoreTests/TranscriptFileWriterTests.swift docs/superpowers/specs/2026-04-27-app-only-package-design.md docs/superpowers/plans/2026-04-27-app-only-package.md
 git commit -m "feat: remove CoreAudioTapProbe CLI mode (#20)"
 ```
