@@ -15,6 +15,8 @@ final class BilingualPipelineFactoryTests: XCTestCase {
 
         XCTAssertEqual(registry.descriptor(id: "whisper-local")?.capability, .audioTranscription)
         XCTAssertEqual(registry.descriptor(id: "openrouter-transcribe")?.capability, .audioTranscription)
+        XCTAssertEqual(registry.descriptor(id: "deepgram-transcribe")?.capability, .audioTranscription)
+        XCTAssertEqual(registry.descriptor(id: "deepgram-transcribe")?.displayName, "Deepgram Transcribe")
         XCTAssertEqual(registry.descriptor(id: "openrouter-translation")?.capability, .textTranslation)
         XCTAssertEqual(registry.descriptor(id: "qwen-local-translation")?.capability, .textTranslation)
     }
@@ -23,6 +25,7 @@ final class BilingualPipelineFactoryTests: XCTestCase {
         let ids = BilingualPipelineFactory.builtInProviderDescriptors.map(\.id)
 
         XCTAssertTrue(ids.contains("openrouter-transcribe"))
+        XCTAssertTrue(ids.contains("deepgram-transcribe"))
         XCTAssertTrue(ids.contains("openrouter-translation"))
         XCTAssertFalse(ids.contains("openai-transcribe"))
         XCTAssertFalse(ids.contains("openai-translation"))
@@ -30,6 +33,7 @@ final class BilingualPipelineFactoryTests: XCTestCase {
 
     func testBuiltInModelOptionsContainSeparateHostedTranscriptionAndTranslationModels() {
         XCTAssertTrue(BilingualPipelineFactory.hostedTranscriptionModelOptions.contains { $0.id == "google/gemini-2.5-flash" })
+        XCTAssertTrue(BilingualPipelineFactory.hostedTranscriptionModelOptions.contains { $0.id == "nova-3" })
         XCTAssertTrue(BilingualPipelineFactory.hostedTranslationModelOptions.contains { $0.id == "openai/gpt-4.1-mini" })
     }
 }

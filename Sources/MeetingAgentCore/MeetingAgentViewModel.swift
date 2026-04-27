@@ -136,7 +136,10 @@ public final class MeetingAgentViewModel: ObservableObject {
             hostedTranslationProviderID: configuration.hostedTranslationProviderID,
             hostedTranscriptionModelID: configuration.hostedTranscriptionModelID,
             hostedTranslationModelID: configuration.hostedTranslationModelID,
-            openRouterAPIKey: configuration.openRouterAPIKey
+            openRouterAPIKey: configuration.openRouterAPIKey,
+            openAIRealtimeAPIKey: configuration.openAIRealtimeAPIKey,
+            deepgramAPIKey: configuration.deepgramAPIKey,
+            deepgramModelID: configuration.deepgramModelID
         )
         persistSpeechConfiguration()
         statusText = "Settings saved"
@@ -182,7 +185,13 @@ public final class MeetingAgentViewModel: ObservableObject {
             realtimeTranslationStatus = .failed("Start recording before live translation")
             return
         }
-        let configuration = RealtimeTranslationConfiguration(targetLocale: targetLocale)
+        let configuredAPIKey = SpeechTranscriptionConfiguration.normalized(speechConfiguration.openAIRealtimeAPIKey)
+        let configuration: RealtimeTranslationConfiguration
+        if let configuredAPIKey {
+            configuration = RealtimeTranslationConfiguration(apiKey: configuredAPIKey, targetLocale: targetLocale)
+        } else {
+            configuration = RealtimeTranslationConfiguration(targetLocale: targetLocale)
+        }
         await realtimeTranslationController.start(configuration: configuration)
         syncRealtimeTranslationState()
     }
@@ -340,17 +349,26 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         do {
             let previousTranscript = try? String(contentsOf: transcriptURL, encoding: .utf8)
-            let provider = SpeechTranscriptionProviderFactory.provider(
-                for: speechConfiguration.provider,
-                configuration: speechConfiguration
-            )
-            try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
-                inputAudioURL: audioURL,
-                transcriptURL: transcriptURL,
-                localeIdentifier: speechConfiguration.localeIdentifier,
-                meetingID: record.id,
-                previousTranscript: previousTranscript
-            ))
+            if speechConfiguration.usesDeepgram {
+                let provider = DeepgramAudioTranscriptionProvider(appConfiguration: speechConfiguration)
+                let document = try await provider.transcribe(
+                    audio: AudioInput(wavURL: audioURL, localeIdentifier: speechConfiguration.localeIdentifier),
+                    options: TranscriptionOptions(sourceLocale: speechConfiguration.localeIdentifier)
+                )
+                try TranscriptFileWriter(url: transcriptURL).replace(with: document.segments)
+            } else {
+                let provider = SpeechTranscriptionProviderFactory.provider(
+                    for: speechConfiguration.provider,
+                    configuration: speechConfiguration
+                )
+                try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
+                    inputAudioURL: audioURL,
+                    transcriptURL: transcriptURL,
+                    localeIdentifier: speechConfiguration.localeIdentifier,
+                    meetingID: record.id,
+                    previousTranscript: previousTranscript
+                ))
+            }
             record.transcriptionStatus = .transcribed
             record.transcriptionFailureReason = nil
             statusText = "Transcript regenerated"

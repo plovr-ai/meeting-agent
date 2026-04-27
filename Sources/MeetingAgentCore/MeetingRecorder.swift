@@ -86,14 +86,12 @@ public final class MeetingRecorder {
         }
 
         if let transcriptURL = updatedRecord.transcriptURL {
-            let provider = SpeechTranscriptionProviderFactory.provider(
-                for: effectiveConfiguration.provider,
-                configuration: effectiveConfiguration
-            )
             do {
-                transcriber = try await provider.start(
+                transcriber = try await StreamingSpeechTranscriberFactory.startTranscriber(
+                    configuration: effectiveConfiguration,
                     transcriptURL: transcriptURL,
-                    localeIdentifier: effectiveConfiguration.localeIdentifier
+                    sampleRate: session.outputSampleRate,
+                    channelCount: session.outputChannelCount
                 )
             } catch {
                 try markTranscriptionFailed("Speech recognition unavailable: \(error)")

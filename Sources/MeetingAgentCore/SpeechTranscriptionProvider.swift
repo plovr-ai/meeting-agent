@@ -41,13 +41,40 @@ public struct SpeechTranscriptionContext: Equatable {
     }
 }
 
+public struct SpeechTranscriptionStreamContext: Equatable {
+    public let transcriptURL: URL
+    public let localeIdentifier: String
+    public let sampleRate: Double
+    public let channelCount: Int
+
+    public init(
+        transcriptURL: URL,
+        localeIdentifier: String,
+        sampleRate: Double,
+        channelCount: Int
+    ) {
+        self.transcriptURL = transcriptURL
+        self.localeIdentifier = localeIdentifier
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+    }
+}
+
 public protocol SpeechTranscriptionProvider {
     var provider: SpeechProvider { get }
     func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber
+    func start(context: SpeechTranscriptionStreamContext) async throws -> AudioFrameTranscriber
     func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws
 }
 
 public extension SpeechTranscriptionProvider {
+    func start(context: SpeechTranscriptionStreamContext) async throws -> AudioFrameTranscriber {
+        try await start(
+            transcriptURL: context.transcriptURL,
+            localeIdentifier: context.localeIdentifier
+        )
+    }
+
     func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
         throw ProbeError.speechRecognition("\(provider.rawValue) does not support retrying from an existing audio file")
     }
@@ -63,6 +90,34 @@ public struct LocalSpeechTranscriptionProvider: SpeechTranscriptionProvider {
             transcriptURL: transcriptURL,
             localeIdentifier: localeIdentifier
         )
+    }
+}
+
+public enum StreamingSpeechTranscriberFactory {
+    public static func startTranscriber(
+        configuration: SpeechTranscriptionConfiguration,
+        transcriptURL: URL,
+        sampleRate: Double,
+        channelCount: Int
+    ) async throws -> AudioFrameTranscriber {
+        let context = SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: configuration.localeIdentifier,
+            sampleRate: sampleRate,
+            channelCount: channelCount
+        )
+        if configuration.usesDeepgram {
+            return try await DeepgramStreamingSpeechTranscriptionProvider(
+                appConfiguration: configuration
+            ).start(context: context)
+        }
+        guard configuration.transcriptionExecutionMode == .local else {
+            throw ProbeError.speechRecognition("Hosted transcription provider \(configuration.hostedTranscriptionProviderID) does not support streaming audio")
+        }
+        return try await SpeechTranscriptionProviderFactory.provider(
+            for: configuration.provider,
+            configuration: configuration
+        ).start(context: context)
     }
 }
 

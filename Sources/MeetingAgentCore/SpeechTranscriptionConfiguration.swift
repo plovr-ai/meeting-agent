@@ -13,6 +13,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let defaultHostedTranslationProviderID = "openrouter-translation"
     public static let defaultHostedTranscriptionModelID = "google/gemini-2.5-flash"
     public static let defaultHostedTranslationModelID = "openai/gpt-4.1-mini"
+    public static let defaultDeepgramTranscriptionProviderID = "deepgram-transcribe"
+    public static let defaultDeepgramModelID = "nova-3"
 
     public var provider: SpeechProvider
     public var localeIdentifier: String
@@ -29,6 +31,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var hostedTranscriptionModelID: String
     public var hostedTranslationModelID: String
     public var openRouterAPIKey: String?
+    public var openAIRealtimeAPIKey: String?
+    public var deepgramAPIKey: String?
+    public var deepgramModelID: String
 
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
@@ -45,7 +50,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         hostedTranslationProviderID: defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: defaultHostedTranscriptionModelID,
         hostedTranslationModelID: defaultHostedTranslationModelID,
-        openRouterAPIKey: nil
+        openRouterAPIKey: nil,
+        openAIRealtimeAPIKey: nil,
+        deepgramAPIKey: nil,
+        deepgramModelID: defaultDeepgramModelID
     )
 
     public init(
@@ -63,7 +71,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         hostedTranslationProviderID: String = defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: String = defaultHostedTranscriptionModelID,
         hostedTranslationModelID: String = defaultHostedTranslationModelID,
-        openRouterAPIKey: String? = nil
+        openRouterAPIKey: String? = nil,
+        openAIRealtimeAPIKey: String? = nil,
+        deepgramAPIKey: String? = nil,
+        deepgramModelID: String = defaultDeepgramModelID
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
@@ -101,6 +112,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             fallback: Self.defaultHostedTranslationModelID
         ) ?? Self.defaultHostedTranslationModelID
         self.openRouterAPIKey = Self.normalized(openRouterAPIKey)
+        self.openAIRealtimeAPIKey = Self.normalized(openAIRealtimeAPIKey)
+        self.deepgramAPIKey = Self.normalized(deepgramAPIKey)
+        self.deepgramModelID = Self.normalized(deepgramModelID, fallback: Self.defaultDeepgramModelID)
+            ?? Self.defaultDeepgramModelID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -119,6 +134,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         case hostedTranscriptionModelID
         case hostedTranslationModelID
         case openRouterAPIKey
+        case openAIRealtimeAPIKey
+        case deepgramAPIKey
+        case deepgramModelID
     }
 
     public init(from decoder: Decoder) throws {
@@ -138,7 +156,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             hostedTranslationProviderID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationProviderID) ?? Self.defaultHostedTranslationProviderID,
             hostedTranscriptionModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranscriptionModelID) ?? Self.defaultHostedTranscriptionModelID,
             hostedTranslationModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationModelID) ?? Self.defaultHostedTranslationModelID,
-            openRouterAPIKey: try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey)
+            openRouterAPIKey: try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey),
+            openAIRealtimeAPIKey: try container.decodeIfPresent(String.self, forKey: .openAIRealtimeAPIKey),
+            deepgramAPIKey: try container.decodeIfPresent(String.self, forKey: .deepgramAPIKey),
+            deepgramModelID: try container.decodeIfPresent(String.self, forKey: .deepgramModelID) ?? Self.defaultDeepgramModelID
         )
     }
 
@@ -151,6 +172,16 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
                 || Self.normalized(environment["MEETING_AGENT_OPENROUTER_API_KEY"]) != nil
             else {
                 return .unavailable("OpenRouter API key is not configured")
+            }
+        }
+        if usesDeepgram {
+            guard Self.normalized(deepgramAPIKey) != nil
+                || Self.normalized(environment["MEETING_AGENT_DEEPGRAM_API_KEY"]) != nil
+            else {
+                return .unavailable("Deepgram API key is not configured")
+            }
+            guard Self.normalized(deepgramModelID) != nil else {
+                return .unavailable("Deepgram model is not configured")
             }
         }
         if transcriptionExecutionMode == .hosted,
@@ -202,6 +233,11 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var usesOpenRouter: Bool {
         (transcriptionExecutionMode == .hosted && hostedTranscriptionProviderID == Self.defaultHostedTranscriptionProviderID)
             || (translationExecutionMode == .hosted && hostedTranslationProviderID == Self.defaultHostedTranslationProviderID)
+    }
+
+    public var usesDeepgram: Bool {
+        transcriptionExecutionMode == .hosted
+            && hostedTranscriptionProviderID == Self.defaultDeepgramTranscriptionProviderID
     }
 
     public static func normalized(_ value: String?, fallback: String? = nil) -> String? {

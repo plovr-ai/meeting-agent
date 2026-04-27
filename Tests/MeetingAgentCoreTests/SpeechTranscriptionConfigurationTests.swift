@@ -12,6 +12,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
         XCTAssertEqual(configuration.hostedTranscriptionProviderID, "openrouter-transcribe")
         XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
+        XCTAssertEqual(configuration.deepgramModelID, "nova-3")
     }
 
     func testWhisperValidationReportsMissingPaths() {
@@ -124,12 +125,60 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
             hostedTranslationModelID: "openai/gpt-4.1-mini",
-            openRouterAPIKey: "settings-key"
+            openRouterAPIKey: "settings-key",
+            openAIRealtimeAPIKey: " realtime-key ",
+            deepgramAPIKey: " deepgram-key ",
+            deepgramModelID: " nova-2 "
         )
 
         try store.save(configuration)
 
-        XCTAssertEqual(try store.load(), configuration)
+        var expected = configuration
+        expected.openAIRealtimeAPIKey = "realtime-key"
+        expected.deepgramAPIKey = "deepgram-key"
+        expected.deepgramModelID = "nova-2"
+        XCTAssertEqual(try store.load(), expected)
+    }
+
+    func testConfigurationDecodesWhenRealtimeAPIKeyIsAbsent() throws {
+        let json = """
+        {
+          "provider": "whisper",
+          "localeIdentifier": "en-US",
+          "whisperBinaryPath": null,
+          "whisperModelPath": null
+        }
+        """
+
+        let configuration = try JSONDecoder.meetingAgent.decode(
+            SpeechTranscriptionConfiguration.self,
+            from: Data(json.utf8)
+        )
+
+        XCTAssertNil(configuration.openAIRealtimeAPIKey)
+        XCTAssertNil(configuration.deepgramAPIKey)
+        XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+    }
+
+    func testDeepgramHostedValidationRequiresAPIKey() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            translationExecutionMode: .local,
+            hostedTranscriptionProviderID: "deepgram-transcribe"
+        )
+
+        XCTAssertEqual(
+            configuration.validationStatus(environment: [:]),
+            .unavailable("Deepgram API key is not configured")
+        )
+        XCTAssertEqual(
+            configuration.validationStatus(environment: ["MEETING_AGENT_DEEPGRAM_API_KEY": "env-key"]),
+            .available
+        )
     }
 
     func testHostedValidationUsesSettingsOpenRouterAPIKey() {

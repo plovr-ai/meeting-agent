@@ -258,7 +258,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
             hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
             hostedTranslationModelID: "openai/gpt-4.1-mini",
-            openRouterAPIKey: "settings-key"
+            openRouterAPIKey: "settings-key",
+            openAIRealtimeAPIKey: "realtime-settings-key"
         )
 
         viewModel.saveSpeechConfiguration(configuration)
@@ -317,6 +318,33 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.realtimeTranslationStatus, .failed("Start recording before live translation"))
     }
 
+    func testStartRealtimeTranslationUsesConfiguredRealtimeAPIKey() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let provider = ViewModelFakeRealtimeProvider()
+        let controller = RealtimeTranslationController(provider: provider)
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                openAIRealtimeAPIKey: " settings-realtime-key "
+            ),
+            realtimeTranslationController: controller
+        )
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        viewModel.setPendingCandidate(target)
+        try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
+
+        await viewModel.startRealtimeTranslation(targetLocale: "ja-JP")
+
+        XCTAssertEqual(provider.startedConfigurations.first?.apiKey, "settings-realtime-key")
+        XCTAssertEqual(provider.startedConfigurations.first?.targetLocale, "ja-JP")
+    }
+
     func testStopRealtimeTranslationResetsState() async {
         let controller = RealtimeTranslationController(provider: ViewModelFakeRealtimeProvider())
         let viewModel = MeetingAgentViewModel(realtimeTranslationController: controller)
@@ -328,6 +356,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
 }
 
 private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProvider {
+    private(set) var startedConfigurations: [RealtimeTranslationConfiguration] = []
+
     let descriptor = ProviderDescriptor(
         id: "fake-view-model-realtime",
         displayName: "Fake View Model Realtime",
@@ -340,7 +370,8 @@ private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProv
     )
 
     func start(configuration: RealtimeTranslationConfiguration) async throws -> RealtimeTranslationSession {
-        ViewModelFakeRealtimeSession()
+        startedConfigurations.append(configuration)
+        return ViewModelFakeRealtimeSession()
     }
 }
 

@@ -72,11 +72,19 @@ struct SettingsView: View {
                 } else {
                     Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
                         Text("OpenRouter").tag("openrouter-transcribe")
+                        Text("Deepgram").tag("deepgram-transcribe")
                     }
 
-                    Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
-                        ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions) { model in
-                            Text(model.displayName).tag(model.id)
+                    if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
+                        Picker("Hosted Transcription Model", selection: $draft.deepgramModelID) {
+                            Text("Deepgram Nova 3").tag("nova-3")
+                            Text("Deepgram Nova 2").tag("nova-2")
+                        }
+                    } else {
+                        Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
+                            ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
                         }
                     }
                 }
@@ -112,6 +120,16 @@ struct SettingsView: View {
                 }
             }
 
+            if usesDeepgram {
+                Section("Deepgram") {
+                    SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
+                }
+            }
+
+            Section("Live Translation") {
+                SecureField("OpenAI Realtime API Key", text: openAIRealtimeAPIKeyBinding)
+            }
+
             Section {
                 Text(configurationStatusText)
                     .font(.caption)
@@ -137,11 +155,16 @@ struct SettingsView: View {
         }
         .onChange(of: draft.transcriptionExecutionMode) { _, mode in
             if mode == .hosted {
-                draft.hostedTranscriptionProviderID = "openrouter-transcribe"
+                if draft.hostedTranscriptionProviderID != "deepgram-transcribe" {
+                    draft.hostedTranscriptionProviderID = "openrouter-transcribe"
+                }
                 ensureHostedTranscriptionModel()
             } else {
                 draft.provider = draft.localTranscriptionProviderID == "macos-speech-local" ? .local : .whisper
             }
+        }
+        .onChange(of: draft.hostedTranscriptionProviderID) { _, _ in
+            ensureHostedTranscriptionModel()
         }
         .onChange(of: draft.translationExecutionMode) { _, mode in
             if mode == .hosted {
@@ -172,8 +195,26 @@ struct SettingsView: View {
         )
     }
 
+    private var openAIRealtimeAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { draft.openAIRealtimeAPIKey ?? "" },
+            set: { draft.openAIRealtimeAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
+        )
+    }
+
+    private var deepgramAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { draft.deepgramAPIKey ?? "" },
+            set: { draft.deepgramAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
+        )
+    }
+
     private var usesOpenRouter: Bool {
         draft.usesOpenRouter
+    }
+
+    private var usesDeepgram: Bool {
+        draft.usesDeepgram
     }
 
     private var whisperBinaryPathOptions: [String] {
@@ -208,6 +249,13 @@ struct SettingsView: View {
     }
 
     private func ensureHostedTranscriptionModel() {
+        if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
+            if ["nova-3", "nova-2"].contains(draft.deepgramModelID) {
+                return
+            }
+            draft.deepgramModelID = SpeechTranscriptionConfiguration.defaultDeepgramModelID
+            return
+        }
         if BilingualPipelineFactory.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
             return
         }
