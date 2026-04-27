@@ -1,51 +1,5 @@
 import Foundation
 
-public struct RecordingOutput {
-    public let directory: URL
-    public let wavURL: URL
-    public let transcriptURL: URL
-    public let transcriptJSONURL: URL
-    public let diagnosticsURL: URL
-
-    public static func defaultOutput(
-        forRequestedWavPath wavPath: String,
-        timestamp: Date = Date(),
-        timeZone: TimeZone = .current,
-        fileManager: FileManager = .default
-    ) throws -> RecordingOutput {
-        let directory = URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(".record", isDirectory: true)
-        let wavName: String
-        if wavPath.isEmpty {
-            wavName = timestampedWavName(timestamp: timestamp, timeZone: timeZone)
-        } else {
-            let requestedURL = URL(fileURLWithPath: wavPath)
-            wavName = requestedURL.lastPathComponent.isEmpty ? timestampedWavName(timestamp: timestamp, timeZone: timeZone) : requestedURL.lastPathComponent
-        }
-        let wavURL = directory.appendingPathComponent(wavName)
-        let transcriptURL = wavURL.deletingPathExtension().appendingPathExtension("txt")
-        let transcriptJSONURL = wavURL.deletingPathExtension().appendingPathExtension("json")
-        let diagnosticsURL = directory.appendingPathComponent("diagnostics.json")
-
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        return RecordingOutput(
-            directory: directory,
-            wavURL: wavURL,
-            transcriptURL: transcriptURL,
-            transcriptJSONURL: transcriptJSONURL,
-            diagnosticsURL: diagnosticsURL
-        )
-    }
-
-    private static func timestampedWavName(timestamp: Date, timeZone: TimeZone) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return "\(formatter.string(from: timestamp)).wav"
-    }
-}
-
 public final class TranscriptFileWriter {
     private let url: URL
     private let structuredURL: URL
