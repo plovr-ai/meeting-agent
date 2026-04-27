@@ -554,10 +554,10 @@ private struct TranscriptPaneView: View {
 
     private var metadata: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text("Current Pipeline").commandCenterEyebrow()
             HStack(spacing: 8) {
                 CommandCenterChip(title: transcriptionStatusText, tint: transcriptionTint, filled: true)
-                CommandCenterChip(title: meeting.transcriptionProviderID, tint: CommandCenterPalette.cyan)
-                CommandCenterChip(title: actualTranscriptionSourceText, tint: CommandCenterPalette.secondaryText)
+                CommandCenterChip(title: "Actual STT Source: \(actualTranscriptionSourceText)", tint: CommandCenterPalette.secondaryText)
                 CommandCenterChip(title: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
                 if let endedAt = meeting.endedAt {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
@@ -566,10 +566,10 @@ private struct TranscriptPaneView: View {
 
             HStack(spacing: 8) {
                 CommandCenterChip(title: pipelineDisplayName, tint: CommandCenterPalette.primary)
-                CommandCenterChip(title: transcriptionLinkText, tint: CommandCenterPalette.cyan)
-                CommandCenterChip(title: transcriptionModelText)
-                CommandCenterChip(title: translationLinkText, tint: CommandCenterPalette.purple)
-                CommandCenterChip(title: translationModelText)
+                CommandCenterChip(title: "Transcription Link: \(transcriptionLinkText)", tint: CommandCenterPalette.cyan)
+                CommandCenterChip(title: "Transcription Model: \(transcriptionModelText)")
+                CommandCenterChip(title: "Translation Link: \(translationLinkText)", tint: CommandCenterPalette.purple)
+                CommandCenterChip(title: "Translation Model: \(translationModelText)")
             }
         }
     }
