@@ -66,6 +66,24 @@ final class SpeechTranscriptionProviderTests: XCTestCase {
         }
     }
 
+    func testStreamingFactoryRoutesOpenAIRealtimeTranscriptionProvider() async {
+        var configuration = SpeechTranscriptionConfiguration.default
+        configuration.transcriptionExecutionMode = .hosted
+        configuration.hostedTranscriptionProviderID = SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID
+        configuration.openAIRealtimeAPIKey = nil
+
+        await XCTAssertThrowsErrorAsync(
+            try await StreamingSpeechTranscriberFactory.startTranscriber(
+                configuration: configuration,
+                transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
+                sampleRate: 24_000,
+                channelCount: 1
+            )
+        ) { error in
+            XCTAssertEqual(String(describing: error), OpenAIRealtimeTranscriptionProviderError.missingAPIKey.description)
+        }
+    }
+
     func testFactoryReturnsLocalAndWhisperProviders() {
         XCTAssertTrue(SpeechTranscriptionProviderFactory.provider(for: .local) is LocalSpeechTranscriptionProvider)
         XCTAssertTrue(SpeechTranscriptionProviderFactory.provider(for: .whisper) is WhisperSpeechTranscriptionProvider)

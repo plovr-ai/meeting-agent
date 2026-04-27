@@ -111,6 +111,12 @@ public enum StreamingSpeechTranscriberFactory {
                 appConfiguration: configuration
             ).start(context: context)
         }
+        if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID {
+            return try await OpenAIRealtimeTranscriptionProvider(
+                apiKey: configuration.openAIRealtimeAPIKey ?? ProcessInfo.processInfo.environment["MEETING_AGENT_OPENAI_API_KEY"],
+                model: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID
+            ).start(context: context)
+        }
         guard configuration.transcriptionExecutionMode == .local else {
             throw ProbeError.speechRecognition("Hosted transcription provider \(configuration.hostedTranscriptionProviderID) does not support streaming audio")
         }

@@ -15,6 +15,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let defaultHostedTranslationModelID = "openai/gpt-4.1-mini"
     public static let defaultDeepgramTranscriptionProviderID = "deepgram-transcribe"
     public static let defaultDeepgramModelID = "nova-3"
+    public static let defaultOpenAIRealtimeTranscriptionProviderID = "openai-realtime-transcribe"
+    public static let defaultOpenAIRealtimeTranscriptionModelID = "gpt-4o-transcribe"
 
     public var provider: SpeechProvider
     public var localeIdentifier: String

@@ -34,4 +34,12 @@ final class BilingualProviderRegistryTests: XCTestCase {
 
         XCTAssertTrue(descriptor.supports(sourceLocale: "ko-KR", targetLocale: "zh-CN"))
     }
+
+    func testBuiltInRegistryIncludesOpenAIRealtimeTranscriptionDescriptor() {
+        let descriptor = BilingualPipelineFactory.builtInRegistry.descriptor(id: "openai-realtime-transcribe")
+
+        XCTAssertEqual(descriptor?.capability, .audioTranscription)
+        XCTAssertEqual(descriptor?.executionMode, .hosted)
+        XCTAssertEqual(descriptor?.requiresAPIKey, true)
+    }
 }
