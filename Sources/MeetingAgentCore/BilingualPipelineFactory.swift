@@ -35,6 +35,10 @@ public enum BilingualPipelineFactory {
     ]
 
     public static let builtInProfiles: [BilingualPipelineProfile] = [
+        BilingualPipelineProfile(id: "deepgram-stt-hosted-translation", displayName: "Deepgram Nova-3 + Hosted Translation", steps: [
+            PipelineStep(capability: .audioTranscription, primary: .provider("deepgram-transcribe"), fallbacks: [.provider("whisper-local")]),
+            PipelineStep(capability: .textTranslation, primary: .provider("openrouter-translation"))
+        ]),
         BilingualPipelineProfile(id: "local-whisper-hosted-translation", displayName: "Local Whisper + Hosted Translation", steps: [
             PipelineStep(capability: .audioTranscription, primary: .provider("whisper-local"), fallbacks: [.provider("openrouter-transcribe")]),
             PipelineStep(capability: .textTranslation, primary: .provider("openrouter-translation"), fallbacks: [.provider("qwen-local-translation"), .provider("nllb-local")])

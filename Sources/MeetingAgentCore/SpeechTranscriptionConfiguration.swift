@@ -6,7 +6,7 @@ public enum SpeechConfigurationValidationStatus: Equatable {
 }
 
 public struct SpeechTranscriptionConfiguration: Codable, Equatable {
-    public static let defaultBilingualPipelineProfileID = "local-whisper-hosted-translation"
+    public static let defaultBilingualPipelineProfileID = "deepgram-stt-hosted-translation"
     public static let defaultLocalTranscriptionProviderID = "whisper-local"
     public static let defaultLocalTranslationProviderID = "qwen-local-translation"
     public static let defaultHostedTranscriptionProviderID = "openrouter-transcribe"
@@ -42,11 +42,11 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         bilingualPipelineProfileID: defaultBilingualPipelineProfileID,
         whisperBinaryPath: nil,
         whisperModelPath: nil,
-        transcriptionExecutionMode: .local,
+        transcriptionExecutionMode: .hosted,
         translationExecutionMode: .hosted,
         localTranscriptionProviderID: defaultLocalTranscriptionProviderID,
         localTranslationProviderID: defaultLocalTranslationProviderID,
-        hostedTranscriptionProviderID: defaultHostedTranscriptionProviderID,
+        hostedTranscriptionProviderID: defaultDeepgramTranscriptionProviderID,
         hostedTranslationProviderID: defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: defaultHostedTranscriptionModelID,
         hostedTranslationModelID: defaultHostedTranslationModelID,

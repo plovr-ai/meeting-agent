@@ -6,13 +6,25 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration.default
 
         XCTAssertEqual(configuration.targetLocaleIdentifier, "zh-CN")
-        XCTAssertEqual(configuration.bilingualPipelineProfileID, "local-whisper-hosted-translation")
-        XCTAssertEqual(configuration.transcriptionExecutionMode, .local)
+        XCTAssertEqual(configuration.bilingualPipelineProfileID, "deepgram-stt-hosted-translation")
+        XCTAssertEqual(configuration.transcriptionExecutionMode, .hosted)
         XCTAssertEqual(configuration.translationExecutionMode, .hosted)
         XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
-        XCTAssertEqual(configuration.hostedTranscriptionProviderID, "openrouter-transcribe")
+        XCTAssertEqual(configuration.hostedTranscriptionProviderID, "deepgram-transcribe")
         XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+    }
+
+    func testReliableMVPDefaultsUseDeepgramHostedTranscription() {
+        let configuration = SpeechTranscriptionConfiguration.default
+
+        XCTAssertEqual(configuration.transcriptionExecutionMode, .hosted)
+        XCTAssertEqual(
+            configuration.hostedTranscriptionProviderID,
+            SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID
+        )
+        XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+        XCTAssertEqual(configuration.translationExecutionMode, .hosted)
     }
 
     func testWhisperValidationReportsMissingPaths() {

@@ -5,9 +5,18 @@ final class BilingualPipelineFactoryTests: XCTestCase {
     func testBuiltInProfilesIncludeInitialExperimentChains() {
         let profiles = BilingualPipelineFactory.builtInProfiles
 
+        XCTAssertTrue(profiles.contains { $0.id == "deepgram-stt-hosted-translation" })
         XCTAssertTrue(profiles.contains { $0.id == "local-whisper-hosted-translation" })
         XCTAssertTrue(profiles.contains { $0.id == "local-whisper-local-translation" })
         XCTAssertTrue(profiles.contains { $0.id == "hosted-transcribe-hosted-translation" })
+    }
+
+    func testReliableMVPRecommendedProfileStartsWithDeepgram() throws {
+        let profile = try XCTUnwrap(BilingualPipelineFactory.builtInProfiles.first {
+            $0.id == SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        })
+
+        XCTAssertEqual(profile.steps.first?.primary, .provider("deepgram-transcribe"))
     }
 
     func testBuiltInProviderDescriptorsIncludeWhisperAndTranslationPlaceholders() {
