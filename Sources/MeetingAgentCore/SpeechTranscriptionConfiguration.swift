@@ -272,7 +272,11 @@ public final class SpeechTranscriptionConfigurationStore {
     }
 
     public func save(_ configuration: SpeechTranscriptionConfiguration) throws {
-        let data = try JSONEncoder.meetingAgent.encode(configuration)
+        var persisted = configuration
+        persisted.openRouterAPIKey = nil
+        persisted.openAIRealtimeAPIKey = nil
+        persisted.deepgramAPIKey = nil
+        let data = try JSONEncoder.meetingAgent.encode(persisted)
         userDefaults.set(data, forKey: key)
     }
 }

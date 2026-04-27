@@ -134,10 +134,34 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         try store.save(configuration)
 
         var expected = configuration
-        expected.openAIRealtimeAPIKey = "realtime-key"
-        expected.deepgramAPIKey = "deepgram-key"
+        expected.openRouterAPIKey = nil
+        expected.openAIRealtimeAPIKey = nil
+        expected.deepgramAPIKey = nil
         expected.deepgramModelID = "nova-2"
         XCTAssertEqual(try store.load(), expected)
+    }
+
+    func testConfigurationStoreDoesNotPersistAPIKeys() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            openRouterAPIKey: "openrouter-secret",
+            openAIRealtimeAPIKey: "openai-secret",
+            deepgramAPIKey: "deepgram-secret"
+        )
+
+        try store.save(configuration)
+        let loaded = try store.load()
+
+        XCTAssertNil(loaded.openRouterAPIKey)
+        XCTAssertNil(loaded.openAIRealtimeAPIKey)
+        XCTAssertNil(loaded.deepgramAPIKey)
     }
 
     func testConfigurationDecodesWhenRealtimeAPIKeyIsAbsent() throws {
