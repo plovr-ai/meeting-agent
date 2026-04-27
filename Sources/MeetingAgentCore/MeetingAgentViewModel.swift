@@ -339,6 +339,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.transcriptionStatus = .retryRequested
         record.transcriptionFailureReason = nil
         record.speechProvider = speechConfiguration.provider
+        record.transcriptionProviderID = speechConfiguration.effectiveTranscriptionProviderID
         record.speechLocaleIdentifier = speechConfiguration.localeIdentifier
         meetings[index] = record
         try? store.save(record)

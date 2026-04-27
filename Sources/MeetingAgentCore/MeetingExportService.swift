@@ -73,7 +73,7 @@ public struct MeetingExportService {
             "- ID: \(record.id.uuidString)",
             "- Started: \(format(record.startedAt))",
             "- Ended: \(record.endedAt.map(format) ?? "Not ended")",
-            "- STT provider: \(record.speechProvider.rawValue)",
+            "- STT provider: \(record.transcriptionProviderID)",
             "- Language: \(record.speechLocaleIdentifier)",
             "- Transcription: \(transcriptionLabel(for: record.transcriptionStatus))",
             "- Failure reason: \(record.transcriptionFailureReason ?? "None")",

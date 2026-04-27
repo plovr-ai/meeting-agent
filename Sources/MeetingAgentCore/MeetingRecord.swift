@@ -23,6 +23,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var transcriptionStatus: TranscriptionStatus
     public var transcriptionFailureReason: String?
     public var speechProvider: SpeechProvider
+    public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
 
     public init(
@@ -40,6 +41,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionStatus: TranscriptionStatus = .notStarted,
         transcriptionFailureReason: String? = nil,
         speechProvider: SpeechProvider = .whisper,
+        transcriptionProviderID: String? = nil,
         speechLocaleIdentifier: String = "en-US"
     ) {
         self.id = id
@@ -56,6 +58,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.transcriptionStatus = transcriptionStatus
         self.transcriptionFailureReason = transcriptionFailureReason
         self.speechProvider = speechProvider
+        self.transcriptionProviderID = SpeechTranscriptionConfiguration.normalized(
+            transcriptionProviderID,
+            fallback: speechProvider.rawValue
+        ) ?? speechProvider.rawValue
         self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
     }
 
@@ -74,6 +80,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case transcriptionStatus
         case transcriptionFailureReason
         case speechProvider
+        case transcriptionProviderID
         case speechLocaleIdentifier
     }
 
@@ -93,6 +100,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
         transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)
         speechProvider = try container.decodeIfPresent(SpeechProvider.self, forKey: .speechProvider) ?? .whisper
+        transcriptionProviderID = try container.decodeIfPresent(String.self, forKey: .transcriptionProviderID)
+            ?? speechProvider.rawValue
         speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
     }
 }

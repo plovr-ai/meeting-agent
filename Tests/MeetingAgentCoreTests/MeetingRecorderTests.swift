@@ -94,6 +94,36 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(fixture.recorder.state, .idle)
     }
 
+    func testStartRecordingPersistsHostedTranscriptionProviderID() async throws {
+        let fixture = try RecorderFixture()
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            hostedTranscriptionProviderID: "deepgram-transcribe",
+            deepgramAPIKey: "key",
+            deepgramModelID: "nova-3"
+        )
+
+        try await fixture.recorder.startRecording(
+            target: fixture.target,
+            record: record,
+            speechConfiguration: configuration
+        )
+
+        let metadataURL = fixture.storeRoot
+            .appendingPathComponent("Meetings", isDirectory: true)
+            .appendingPathComponent(record.id.uuidString, isDirectory: true)
+            .appendingPathComponent("metadata.json")
+        let metadata = try Data(contentsOf: metadataURL)
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: metadata)
+        XCTAssertEqual(saved.speechProvider, .whisper)
+        XCTAssertEqual(saved.transcriptionProviderID, "deepgram-transcribe")
+    }
+
     func testStartRecordingMarksTranscriptionFailedWhenStreamingTranscriberCannotStart() async throws {
         let fixture = try RecorderFixture()
         fixture.transcriberFactory.error = ProbeError.speechRecognition("not available")

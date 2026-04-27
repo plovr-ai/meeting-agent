@@ -86,6 +86,7 @@ public final class MeetingRecorder {
             whisperModelPath: nil
         )
         updatedRecord.speechProvider = effectiveConfiguration.provider
+        updatedRecord.transcriptionProviderID = effectiveConfiguration.effectiveTranscriptionProviderID
         updatedRecord.speechLocaleIdentifier = effectiveConfiguration.localeIdentifier
         updatedRecord.transcriptionStatus = .transcribing
         updatedRecord.transcriptionFailureReason = nil

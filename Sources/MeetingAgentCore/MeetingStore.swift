@@ -84,10 +84,35 @@ public final class MeetingStore {
             if record.summaryMarkdownURL == nil {
                 record.summaryMarkdownURL = record.summaryURL ?? directory.appendingPathComponent("summary.md")
             }
+            if backfillTranscriptionProviderIDIfNeeded(&record) {
+                try save(record)
+            }
             return record
         }
 
         return records.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    private func backfillTranscriptionProviderIDIfNeeded(_ record: inout MeetingRecord) -> Bool {
+        guard record.transcriptionProviderID == record.speechProvider.rawValue,
+              let actualProviderID = actualTranscriptionProviderID(for: record),
+              actualProviderID != record.transcriptionProviderID
+        else {
+            return false
+        }
+        record.transcriptionProviderID = actualProviderID
+        return true
+    }
+
+    private func actualTranscriptionProviderID(for record: MeetingRecord) -> String? {
+        guard let transcriptJSONURL = record.transcriptJSONURL,
+              fileManager.fileExists(atPath: transcriptJSONURL.path),
+              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        else {
+            return nil
+        }
+        let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
+        return providers.count == 1 ? providers[0] : providers.first
     }
 
     public func metadataURL(for id: UUID) -> URL {

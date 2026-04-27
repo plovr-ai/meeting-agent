@@ -58,6 +58,7 @@ struct MainWindowView: View {
             } else {
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
+                    speechConfiguration: viewModel.speechConfiguration,
                     statusText: viewModel.statusText,
                     isRecording: viewModel.isRecording,
                     realtimeTranslationStatus: viewModel.realtimeTranslationStatus,
@@ -171,6 +172,7 @@ struct MainWindowView: View {
 
 private struct MeetingDetailView: View {
     let meeting: MeetingRecord?
+    let speechConfiguration: SpeechTranscriptionConfiguration
     let statusText: String
     let isRecording: Bool
     let realtimeTranslationStatus: RealtimeTranslationStatus
@@ -198,7 +200,17 @@ private struct MeetingDetailView: View {
                         LabeledContent("Ended", value: endedAt.formatted(date: .abbreviated, time: .standard))
                     }
                     LabeledContent("Audio", value: meeting.audioURL?.path ?? "Not recorded")
-                    LabeledContent("STT Provider", value: meeting.speechProvider.rawValue)
+                    Divider()
+                    Text("Current Pipeline")
+                        .font(.headline)
+                    LabeledContent("Pipeline", value: pipelineDisplayName(for: speechConfiguration))
+                    LabeledContent("Transcription Link", value: transcriptionLinkText(for: speechConfiguration))
+                    LabeledContent("Transcription Model", value: transcriptionModelText(for: speechConfiguration))
+                    LabeledContent("Translation Link", value: translationLinkText(for: speechConfiguration))
+                    LabeledContent("Translation Model", value: translationModelText(for: speechConfiguration))
+                    Divider()
+                    LabeledContent("STT Provider", value: meeting.transcriptionProviderID)
+                    LabeledContent("Actual STT Source", value: actualTranscriptionSourceText(for: meeting))
                     LabeledContent("Language", value: meeting.speechLocaleIdentifier)
                     LabeledContent("Transcription", value: transcriptionStatusText(for: meeting))
                     if let failureReason = meeting.transcriptionFailureReason {
@@ -300,6 +312,79 @@ private struct MeetingDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
+    }
+
+    private func pipelineDisplayName(for configuration: SpeechTranscriptionConfiguration) -> String {
+        BilingualPipelineFactory.builtInProfiles
+            .first { $0.id == configuration.bilingualPipelineProfileID }?
+            .displayName ?? configuration.bilingualPipelineProfileID
+    }
+
+    private func transcriptionLinkText(for configuration: SpeechTranscriptionConfiguration) -> String {
+        let providerID = configuration.transcriptionExecutionMode == .hosted
+            ? configuration.hostedTranscriptionProviderID
+            : configuration.localTranscriptionProviderID
+        return "\(modeDisplayName(configuration.transcriptionExecutionMode)) / \(providerDisplayName(providerID))"
+    }
+
+    private func transcriptionModelText(for configuration: SpeechTranscriptionConfiguration) -> String {
+        if configuration.usesDeepgram {
+            return modelDisplayName(configuration.deepgramModelID, in: BilingualPipelineFactory.hostedTranscriptionModelOptions)
+        }
+        if configuration.transcriptionExecutionMode == .hosted {
+            return modelDisplayName(
+                configuration.hostedTranscriptionModelID,
+                in: BilingualPipelineFactory.hostedTranscriptionModelOptions
+            )
+        }
+        if configuration.localTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultLocalTranscriptionProviderID {
+            return configuration.whisperModelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Not configured"
+        }
+        return "System model"
+    }
+
+    private func translationLinkText(for configuration: SpeechTranscriptionConfiguration) -> String {
+        let providerID = configuration.translationExecutionMode == .hosted
+            ? configuration.hostedTranslationProviderID
+            : configuration.localTranslationProviderID
+        return "\(modeDisplayName(configuration.translationExecutionMode)) / \(providerDisplayName(providerID))"
+    }
+
+    private func translationModelText(for configuration: SpeechTranscriptionConfiguration) -> String {
+        guard configuration.translationExecutionMode == .hosted else {
+            return "Local model"
+        }
+        return modelDisplayName(
+            configuration.hostedTranslationModelID,
+            in: BilingualPipelineFactory.hostedTranslationModelOptions
+        )
+    }
+
+    private func actualTranscriptionSourceText(for meeting: MeetingRecord) -> String {
+        guard let transcriptJSONURL = meeting.transcriptJSONURL,
+              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        else {
+            return meeting.transcriptionProviderID
+        }
+        let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
+        return providers.isEmpty ? meeting.transcriptionProviderID : providers.joined(separator: ", ")
+    }
+
+    private func modeDisplayName(_ mode: ProviderExecutionMode) -> String {
+        switch mode {
+        case .local:
+            return "Local"
+        case .hosted:
+            return "Hosted"
+        }
+    }
+
+    private func providerDisplayName(_ providerID: String) -> String {
+        BilingualPipelineFactory.builtInRegistry.descriptor(id: providerID)?.displayName ?? providerID
+    }
+
+    private func modelDisplayName(_ modelID: String, in options: [BilingualPipelineFactory.ModelOption]) -> String {
+        options.first { $0.id == modelID }?.displayName ?? modelID
     }
 
     private func transcriptText(for meeting: MeetingRecord) -> String {

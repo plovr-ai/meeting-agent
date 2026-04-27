@@ -91,4 +91,29 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(loaded.first?.summaryJSONURL?.deletingLastPathComponent().lastPathComponent, id.uuidString)
         XCTAssertEqual(loaded.first?.summaryMarkdownURL?.deletingLastPathComponent().lastPathComponent, id.uuidString)
     }
+
+    func testLoadMeetingsBackfillsTranscriptionProviderIDFromStructuredTranscript() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let created = try store.createMeeting(
+            id: UUID(uuidString: "99999999-9999-9999-9999-999999999999")!,
+            name: "Deepgram Meeting",
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        let legacyMetadata = try String(contentsOf: created.metadataURL, encoding: .utf8)
+            .replacingOccurrences(of: #"  "transcriptionProviderID" : "whisper","#, with: "")
+        try legacyMetadata.write(to: created.metadataURL, atomically: true, encoding: .utf8)
+        let transcript = TranscriptDocument(segments: [
+            TranscriptSegment(text: "hello", sourceProvider: "deepgram-transcribe")
+        ])
+        let transcriptData = try JSONEncoder.meetingAgent.encode(transcript)
+        try transcriptData.write(to: XCTUnwrap(created.record.transcriptJSONURL), options: .atomic)
+
+        let loaded = try store.loadMeetings()
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(contentsOf: created.metadataURL))
+
+        XCTAssertEqual(loaded.first?.transcriptionProviderID, "deepgram-transcribe")
+        XCTAssertEqual(saved.transcriptionProviderID, "deepgram-transcribe")
+    }
 }

@@ -81,4 +81,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Start Live Translation"))
         XCTAssertTrue(source.contains("Stop Live Translation"))
     }
+
+    func testMeetingDetailShowsCurrentPipelineAndActualSTTSource() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("speechConfiguration: viewModel.speechConfiguration"))
+        XCTAssertTrue(source.contains("Current Pipeline"))
+        XCTAssertTrue(source.contains("Transcription Link"))
+        XCTAssertTrue(source.contains("Transcription Model"))
+        XCTAssertTrue(source.contains("Translation Link"))
+        XCTAssertTrue(source.contains("Translation Model"))
+        XCTAssertTrue(source.contains("Actual STT Source"))
+        XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
+    }
 }

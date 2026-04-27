@@ -240,6 +240,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             && hostedTranscriptionProviderID == Self.defaultDeepgramTranscriptionProviderID
     }
 
+    public var effectiveTranscriptionProviderID: String {
+        transcriptionExecutionMode == .hosted ? hostedTranscriptionProviderID : localTranscriptionProviderID
+    }
+
     public static func normalized(_ value: String?, fallback: String? = nil) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return fallback

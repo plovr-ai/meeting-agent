@@ -20,6 +20,7 @@ final class MeetingRecordTests: XCTestCase {
             transcriptionStatus: .transcribed,
             transcriptionFailureReason: nil,
             speechProvider: .whisper,
+            transcriptionProviderID: "deepgram-transcribe",
             speechLocaleIdentifier: "zh-CN"
         )
 
@@ -42,6 +43,7 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertEqual(record.transcriptionStatus, .notStarted)
         XCTAssertNil(record.transcriptionFailureReason)
         XCTAssertEqual(record.speechProvider, .whisper)
+        XCTAssertEqual(record.transcriptionProviderID, "whisper")
         XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
     }
 
@@ -77,6 +79,7 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertEqual(decoded.transcriptionStatus, .notStarted)
         XCTAssertNil(decoded.transcriptionFailureReason)
         XCTAssertEqual(decoded.speechProvider, .whisper)
+        XCTAssertEqual(decoded.transcriptionProviderID, "whisper")
         XCTAssertEqual(decoded.speechLocaleIdentifier, "en-US")
     }
 
