@@ -120,5 +120,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Key Terms\""))
         XCTAssertTrue(source.contains("Label(\"Apply Goal\", systemImage: \"target\")"))
         XCTAssertTrue(source.contains("setMeetingGoal(buildGoal())"))
+        XCTAssertTrue(source.contains("meetingGoal: viewModel.meetingGoal"))
+        XCTAssertTrue(source.contains("draftGoal: meetingGoal"))
     }
 }

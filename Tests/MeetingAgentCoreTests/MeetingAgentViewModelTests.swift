@@ -302,6 +302,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(record.meetingProgressJSONURL).path))
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(contentsOf: fixture.store.metadataURL(for: record.id)))
+        XCTAssertEqual(saved.meetingGoal?.title, "Confirm launch plan")
     }
 
     func testClearingMeetingGoalClearsProgressState() async throws {
@@ -340,6 +342,52 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         XCTAssertNil(viewModel.meetingProgressState)
         XCTAssertEqual(viewModel.meetingProgressHealth.analysis, .idle)
+        let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(contentsOf: fixture.store.metadataURL(for: record.id)))
+        XCTAssertNil(saved.meetingGoal)
+    }
+
+    func testLoadMeetingsRestoresPersistedMeetingGoalForSelectedMeeting() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        stored.meetingGoal = MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        try store.save(stored)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+
+        try viewModel.loadMeetings()
+
+        XCTAssertEqual(viewModel.meetingGoal?.title, "Confirm launch plan")
+    }
+
+    func testSelectMeetingSwitchesPersistedMeetingGoal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var first = try store.createMeeting(name: "First", startedAt: Date(timeIntervalSince1970: 1)).record
+        first.meetingGoal = MeetingGoal(
+            title: "First goal",
+            objectives: [MeetingObjective(id: "first", title: "Confirm first item")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        try store.save(first)
+        let second = try store.createMeeting(name: "Second", startedAt: Date(timeIntervalSince1970: 2)).record
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        viewModel.selectMeeting(first.id)
+        XCTAssertEqual(viewModel.meetingGoal?.title, "First goal")
+
+        viewModel.selectMeeting(second.id)
+        XCTAssertNil(viewModel.meetingGoal)
     }
 
     func testStopRecordingAndGenerateSummaryReturnsIdleWhenRecorderHasNoStoppedRecord() async throws {

@@ -22,7 +22,15 @@ final class MeetingRecordTests: XCTestCase {
             transcriptionFailureReason: nil,
             speechProvider: .whisper,
             transcriptionProviderID: "deepgram-transcribe",
-            speechLocaleIdentifier: "zh-CN"
+            speechLocaleIdentifier: "zh-CN",
+            meetingGoal: MeetingGoal(
+                id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+                title: "Confirm launch plan",
+                objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+                requiredQuestions: ["Have we confirmed the deadline?"],
+                expectedDecisions: [],
+                keyTerms: [MeetingKeyTerm(value: "launch")]
+            )
         )
 
         let data = try JSONEncoder.meetingAgent.encode(record)
@@ -121,5 +129,23 @@ final class MeetingRecordTests: XCTestCase {
         let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
 
         XCTAssertNil(decoded.meetingProgressJSONURL)
+    }
+
+    func testDecodesMetadataWithoutMeetingGoal() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.meetingGoal)
     }
 }

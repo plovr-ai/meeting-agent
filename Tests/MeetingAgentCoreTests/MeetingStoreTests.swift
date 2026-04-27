@@ -65,6 +65,31 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(loaded.first?.endedAt, Date(timeIntervalSince1970: 300))
     }
 
+    func testPersistsMeetingGoalInMetadata() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var created = try store.createMeeting(
+            id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+            name: "Teams",
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        created.record.meetingGoal = MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+            requiredQuestions: ["Have we confirmed the deadline?"],
+            expectedDecisions: [],
+            keyTerms: [MeetingKeyTerm(value: "launch")]
+        )
+
+        try store.save(created.record)
+        let loaded = try store.loadMeetings()
+
+        XCTAssertEqual(loaded.first?.meetingGoal?.title, "Confirm launch plan")
+        XCTAssertEqual(loaded.first?.meetingGoal?.objectives.first?.title, "Confirm launch owner")
+        XCTAssertEqual(loaded.first?.meetingGoal?.keyTerms.first?.value, "launch")
+    }
+
     func testLoadsLegacyMeetingMetadataWithDefaultSummaryURLs() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

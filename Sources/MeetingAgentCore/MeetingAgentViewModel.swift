@@ -40,7 +40,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let exportService: MeetingExportService
     private let realtimeTranslationController: RealtimeTranslationController
     private var liveCaptionStore = LiveCaptionStore()
-    private var meetingGoal: MeetingGoal?
+    @Published public private(set) var meetingGoal: MeetingGoal?
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
@@ -87,6 +87,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func loadMeetings() throws {
         meetings = try store.loadMeetings()
         selectedMeetingID = meetings.first?.id
+        meetingGoal = selectedMeeting?.meetingGoal
+        resetMeetingProgressState()
+        configureMeetingProgressCoordinator()
     }
 
     public func setPendingCandidate(_ target: AudioCaptureTarget) {
@@ -108,9 +111,11 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func acceptPendingCandidate(startedAt: Date = Date()) throws {
         guard let candidate = pendingCandidate else { return }
-        let record = try recorder.prepareRecord(for: candidate, startedAt: startedAt)
+        var record = try recorder.prepareRecord(for: candidate, startedAt: startedAt)
+        record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
         pendingCandidate = nil
         activeTarget = candidate
@@ -174,9 +179,11 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func startRecording(for candidate: AudioCaptureTarget, localeIdentifier: String? = nil) async throws {
-        let record = try recorder.prepareRecord(for: candidate)
+        var record = try recorder.prepareRecord(for: candidate)
+        record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
         activeTarget = candidate
         pendingCandidate = nil
@@ -232,8 +239,8 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func setMeetingGoal(_ goal: MeetingGoal?) {
         meetingGoal = goal
-        meetingProgressState = nil
-        meetingProgressHealth.analysis = .idle
+        resetMeetingProgressState()
+        persistMeetingGoalForSelectedMeeting()
         configureMeetingProgressCoordinator()
     }
 
@@ -331,6 +338,9 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func selectMeeting(_ id: UUID?) {
         selectedMeetingID = id
+        meetingGoal = selectedMeeting?.meetingGoal
+        resetMeetingProgressState()
+        configureMeetingProgressCoordinator()
         refreshLiveCaptionTurnsFromSelectedMeeting()
     }
 
@@ -592,9 +602,25 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
         liveCaptionTurns = []
-        meetingProgressState = nil
-        meetingProgressHealth = MeetingProgressHealth(caption: .idle, translation: .idle, analysis: .idle)
+        meetingProgressHealth.caption = .idle
+        meetingProgressHealth.translation = .idle
+        resetMeetingProgressState()
         configureMeetingProgressCoordinator()
+    }
+
+    private func resetMeetingProgressState() {
+        meetingProgressState = nil
+        meetingProgressHealth.analysis = .idle
+    }
+
+    private func persistMeetingGoalForSelectedMeeting() {
+        guard let selectedMeetingID,
+              let index = meetings.firstIndex(where: { $0.id == selectedMeetingID })
+        else {
+            return
+        }
+        meetings[index].meetingGoal = meetingGoal
+        try? store.save(meetings[index])
     }
 
     private func refreshLiveCaptionTurnsFromSelectedMeeting() {

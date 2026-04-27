@@ -26,6 +26,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var speechProvider: SpeechProvider
     public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
+    public var meetingGoal: MeetingGoal?
 
     public init(
         id: UUID,
@@ -44,7 +45,8 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionFailureReason: String? = nil,
         speechProvider: SpeechProvider = .whisper,
         transcriptionProviderID: String? = nil,
-        speechLocaleIdentifier: String = "en-US"
+        speechLocaleIdentifier: String = "en-US",
+        meetingGoal: MeetingGoal? = nil
     ) {
         self.id = id
         self.name = name
@@ -66,6 +68,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
             fallback: speechProvider.rawValue
         ) ?? speechProvider.rawValue
         self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
+        self.meetingGoal = meetingGoal
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -86,6 +89,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case speechProvider
         case transcriptionProviderID
         case speechLocaleIdentifier
+        case meetingGoal
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +112,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionProviderID = try container.decodeIfPresent(String.self, forKey: .transcriptionProviderID)
             ?? speechProvider.rawValue
         speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
+        meetingGoal = try container.decodeIfPresent(MeetingGoal.self, forKey: .meetingGoal)
     }
 }
 

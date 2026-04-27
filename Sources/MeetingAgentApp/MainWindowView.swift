@@ -71,6 +71,7 @@ struct MainWindowView: View {
                     isRecording: viewModel.isRecording,
                     realtimeTranslationStatus: viewModel.realtimeTranslationStatus,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
+                    meetingGoal: viewModel.meetingGoal,
                     meetingProgressState: viewModel.meetingProgressState,
                     meetingProgressHealth: viewModel.meetingProgressHealth,
                     liveTranslationTurns: viewModel.liveTranslationTurns,
@@ -196,6 +197,7 @@ private struct MeetingDetailView: View {
     let isRecording: Bool
     let realtimeTranslationStatus: RealtimeTranslationStatus
     let liveCaptionTurns: [LiveCaptionTurn]
+    let meetingGoal: MeetingGoal?
     let meetingProgressState: MeetingProgressState?
     let meetingProgressHealth: MeetingProgressHealth
     let liveTranslationTurns: [LiveTranslationTurn]
@@ -227,6 +229,7 @@ private struct MeetingDetailView: View {
                     isRecording: isRecording,
                     realtimeTranslationStatus: realtimeTranslationStatus,
                     liveCaptionTurns: liveCaptionTurns,
+                    meetingGoal: meetingGoal,
                     meetingProgressState: meetingProgressState,
                     meetingProgressHealth: meetingProgressHealth,
                     liveTranslationTurns: liveTranslationTurns,
@@ -436,6 +439,7 @@ private struct MeetingCommandCenterView: View {
     let isRecording: Bool
     let realtimeTranslationStatus: RealtimeTranslationStatus
     let liveCaptionTurns: [LiveCaptionTurn]
+    let meetingGoal: MeetingGoal?
     let meetingProgressState: MeetingProgressState?
     let meetingProgressHealth: MeetingProgressHealth
     let liveTranslationTurns: [LiveTranslationTurn]
@@ -492,6 +496,7 @@ private struct MeetingCommandCenterView: View {
                 meeting: meeting,
                 isRecording: isRecording,
                 liveCaptionTurns: liveCaptionTurns,
+                meetingGoal: meetingGoal,
                 meetingProgressState: meetingProgressState,
                 meetingProgressHealth: meetingProgressHealth,
                 summary: summary,
@@ -798,6 +803,7 @@ private struct InsightPaneView: View {
     let meeting: MeetingRecord
     let isRecording: Bool
     let liveCaptionTurns: [LiveCaptionTurn]
+    let meetingGoal: MeetingGoal?
     let meetingProgressState: MeetingProgressState?
     let meetingProgressHealth: MeetingProgressHealth
     let summary: MeetingSummary?
@@ -868,6 +874,7 @@ private struct InsightPaneView: View {
     private var goalComposer: some View {
         GoalComposerPanel(
             currentGoal: meetingProgressState?.goal,
+            draftGoal: meetingGoal,
             setMeetingGoal: setMeetingGoal
         )
     }
@@ -1051,6 +1058,7 @@ private struct GoalStatusPanel: View {
 
 private struct GoalComposerPanel: View {
     let currentGoal: MeetingGoal?
+    let draftGoal: MeetingGoal?
     let setMeetingGoal: (MeetingGoal?) -> Void
     @State private var title = ""
     @State private var objectivesText = ""
@@ -1063,7 +1071,7 @@ private struct GoalComposerPanel: View {
                 HStack {
                     Text("Meeting Goal").commandCenterEyebrow()
                     Spacer()
-                    if currentGoal != nil {
+                    if currentGoal != nil || draftGoal != nil {
                         CommandCenterChip(title: "SET", tint: CommandCenterPalette.primary, filled: true)
                     }
                 }
@@ -1105,6 +1113,9 @@ private struct GoalComposerPanel: View {
         .onChange(of: currentGoal?.id) {
             seedDraftIfNeeded()
         }
+        .onChange(of: draftGoal?.id) {
+            seedDraftIfNeeded()
+        }
     }
 
     private var canApply: Bool {
@@ -1112,7 +1123,7 @@ private struct GoalComposerPanel: View {
     }
 
     private var canClear: Bool {
-        currentGoal != nil || !normalized(title).isEmpty || !normalized(objectivesText).isEmpty
+        currentGoal != nil || draftGoal != nil || !normalized(title).isEmpty || !normalized(objectivesText).isEmpty
             || !normalized(requiredQuestionsText).isEmpty || !normalized(keyTermsText).isEmpty
     }
 
@@ -1136,11 +1147,11 @@ private struct GoalComposerPanel: View {
     }
 
     private func seedDraftIfNeeded() {
-        guard let currentGoal else { return }
-        title = currentGoal.title
-        objectivesText = currentGoal.objectives.map(\.title).joined(separator: "\n")
-        requiredQuestionsText = currentGoal.requiredQuestions.joined(separator: "\n")
-        keyTermsText = currentGoal.keyTerms.map(\.value).joined(separator: "\n")
+        guard let goal = currentGoal ?? draftGoal else { return }
+        title = goal.title
+        objectivesText = goal.objectives.map(\.title).joined(separator: "\n")
+        requiredQuestionsText = goal.requiredQuestions.joined(separator: "\n")
+        keyTermsText = goal.keyTerms.map(\.value).joined(separator: "\n")
     }
 
     private func clearDraft() {
