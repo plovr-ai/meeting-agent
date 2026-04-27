@@ -93,3 +93,19 @@ When adding derived artifact paths to persisted metadata, assign defaults during
 For every optional field added for Codable compatibility, decide whether consumers need a load-time default before using it in new workflows.
 
 ---
+
+## [20] Split mixed-responsibility files before deleting feature-specific code
+
+**Date**: 2026-04-27
+**Category**: logic-error
+
+### What went wrong
+Removing CLI-only `RecordingOutput.swift` initially also removed `TranscriptFileWriter`, which was still used by app transcription paths because both types lived in the same source file.
+
+### Correct approach
+Before deleting a feature-specific source file, inspect every type it defines and move still-shared types into accurately named files.
+
+### How to avoid
+Search references by type, not only by filename, before deleting files with mixed responsibilities.
+
+---
