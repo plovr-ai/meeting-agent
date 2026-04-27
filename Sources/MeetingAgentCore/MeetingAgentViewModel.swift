@@ -427,6 +427,26 @@ public final class MeetingAgentViewModel: ObservableObject {
         objectWillChange.send()
     }
 
+    public func updateTranscriptSegmentText(
+        for meetingID: UUID,
+        segmentID: String,
+        text: String
+    ) async throws {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else {
+            throw MeetingExportError.missingArtifact("meeting")
+        }
+        try TranscriptFileWriter.updateSegmentText(
+            segmentID: segmentID,
+            text: text,
+            textURL: record.transcriptURL,
+            structuredURL: record.transcriptJSONURL
+        )
+        await invalidateDownstreamArtifactsAfterTranscriptChange(for: meetingID)
+        refreshLiveCaptionTurnsFromSelectedMeeting()
+        statusText = "Transcript corrected; summary needs regeneration"
+        objectWillChange.send()
+    }
+
     public func retryTranscription(for meetingID: UUID) async {
         guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else { return }
         var record = meetings[index]

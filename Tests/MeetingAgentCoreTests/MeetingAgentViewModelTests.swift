@@ -684,6 +684,87 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Speaker label updated")
     }
 
+    func testUpdateTranscriptSegmentTextRefreshesLiveCaptionsAndInvalidatesDownstreamArtifacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        let goal = MeetingGoal(
+            id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        stored.meetingGoal = goal
+        try store.save(stored)
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
+                text: "Old text",
+                language: "en-US"
+            )
+        ])
+        let summary = MeetingSummary(
+            overview: "Old summary",
+            keyTopics: [],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: ["segment-1"],
+            generatedAt: Date(timeIntervalSince1970: 200),
+            provider: "test",
+            status: .succeeded,
+            failureReason: nil
+        )
+        try MeetingSummaryWriter.write(
+            summary,
+            jsonURL: XCTUnwrap(stored.summaryJSONURL),
+            markdownURL: XCTUnwrap(stored.summaryMarkdownURL)
+        )
+        let progress = MeetingProgressState(
+            meetingID: stored.id,
+            goal: goal,
+            status: .onTrack,
+            objectives: [],
+            confirmedItems: ["Old text"],
+            unresolvedItems: [],
+            suggestedQuestions: [],
+            health: MeetingProgressHealth(caption: .live, translation: .pending, analysis: .live),
+            lastAnalyzedSegmentID: "segment-1",
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let progressURL = try XCTUnwrap(stored.meetingProgressJSONURL)
+        try JSONEncoder.meetingAgent.encode(progress).write(to: progressURL, options: .atomic)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(stored.id)
+        viewModel.drainRecordingFrames()
+
+        try await viewModel.updateTranscriptSegmentText(
+            for: stored.id,
+            segmentID: "segment-1",
+            text: "Corrected text"
+        )
+
+        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(stored.transcriptJSONURL))
+        XCTAssertEqual(document.segments.first?.text, "Corrected text")
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(stored.transcriptURL), encoding: .utf8), "User A:\nCorrected text\n")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Corrected text")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(stored.summaryJSONURL).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(stored.summaryMarkdownURL).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: progressURL.path))
+        XCTAssertNil(viewModel.meetingProgressState)
+        XCTAssertEqual(viewModel.meetingProgressHealth.analysis, .idle)
+        XCTAssertEqual(viewModel.statusText, "Transcript corrected; summary needs regeneration")
+    }
+
     func testExportHelpersWriteSummaryDataAndReadinessReports() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
