@@ -131,3 +131,152 @@ enum OpenAIRealtimeMessageFactory {
         var audio: String
     }
 }
+
+protocol RealtimeWebSocketTransport: AnyObject {
+    var incomingMessages: AsyncStream<Data> { get }
+    func connect() async throws
+    func send(_ data: Data) async throws
+    func close() async
+}
+
+final class URLSessionRealtimeWebSocketTransport: NSObject, RealtimeWebSocketTransport, URLSessionWebSocketDelegate {
+    private let url: URL
+    private let apiKey: String
+    private var task: URLSessionWebSocketTask?
+    private var continuation: AsyncStream<Data>.Continuation?
+
+    init(url: URL, apiKey: String) {
+        self.url = url
+        self.apiKey = apiKey
+    }
+
+    var incomingMessages: AsyncStream<Data> {
+        AsyncStream { continuation in
+            self.continuation = continuation
+            self.receiveNext()
+        }
+    }
+
+    func connect() async throws {
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        let task = session.webSocketTask(with: request)
+        self.task = task
+        task.resume()
+    }
+
+    func send(_ data: Data) async throws {
+        guard let task else { throw OpenAIRealtimeProviderError.transportClosed }
+        let text = String(decoding: data, as: UTF8.self)
+        try await task.send(.string(text))
+    }
+
+    func close() async {
+        task?.cancel(with: .goingAway, reason: nil)
+        continuation?.finish()
+        task = nil
+    }
+
+    private func receiveNext() {
+        task?.receive { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(.data(let data)):
+                self.continuation?.yield(data)
+                self.receiveNext()
+            case .success(.string(let text)):
+                self.continuation?.yield(Data(text.utf8))
+                self.receiveNext()
+            case .failure:
+                self.continuation?.finish()
+            @unknown default:
+                self.continuation?.finish()
+            }
+        }
+    }
+}
+
+public final class OpenAIRealtimeSpeechTranslationProvider: RealtimeSpeechTranslationProvider {
+    public let descriptor = ProviderDescriptor(
+        id: "openai-gpt-realtime",
+        displayName: "OpenAI GPT Realtime",
+        capability: .speechTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: true,
+        requiresAPIKey: true
+    )
+
+    private let transportFactory: (URL, String) -> RealtimeWebSocketTransport
+
+    init(transportFactory: @escaping (URL, String) -> RealtimeWebSocketTransport) {
+        self.transportFactory = transportFactory
+    }
+
+    public convenience init() {
+        self.init { url, apiKey in
+            URLSessionRealtimeWebSocketTransport(url: url, apiKey: apiKey)
+        }
+    }
+
+    public func start(configuration: RealtimeTranslationConfiguration) async throws -> RealtimeTranslationSession {
+        if let error = configuration.validationError {
+            throw ProbeError.invalidArguments(error)
+        }
+        guard let apiKey = configuration.apiKey else {
+            throw OpenAIRealtimeProviderError.missingAPIKey
+        }
+        guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=\(configuration.model)") else {
+            throw ProbeError.invalidArguments("Invalid OpenAI Realtime URL")
+        }
+        let transport = transportFactory(url, apiKey)
+        try await transport.connect()
+        try await transport.send(try OpenAIRealtimeMessageFactory.sessionUpdate(configuration: configuration))
+        return OpenAIRealtimeTranslationSession(transport: transport)
+    }
+}
+
+final class OpenAIRealtimeTranslationSession: RealtimeTranslationSession {
+    private let transport: RealtimeWebSocketTransport
+    private let continuation: AsyncStream<RealtimeTranslationEvent>.Continuation
+    let events: AsyncStream<RealtimeTranslationEvent>
+    private var receiveTask: Task<Void, Never>?
+
+    init(transport: RealtimeWebSocketTransport) {
+        self.transport = transport
+        var streamContinuation: AsyncStream<RealtimeTranslationEvent>.Continuation!
+        self.events = AsyncStream { continuation in
+            streamContinuation = continuation
+        }
+        self.continuation = streamContinuation
+        self.receiveTask = Task { [transport, continuation] in
+            for await data in transport.incomingMessages {
+                do {
+                    if let event = try OpenAIRealtimeEventDecoder.decode(data) {
+                        continuation.yield(event)
+                    }
+                } catch {
+                    continuation.yield(.failed(String(describing: error)))
+                }
+            }
+            continuation.yield(.stopped)
+            continuation.finish()
+        }
+    }
+
+    func append(_ frames: [AudioFrame]) async throws {
+        guard !frames.isEmpty else { return }
+        for frame in frames {
+            try await transport.send(try OpenAIRealtimeMessageFactory.appendAudio(frame.pcm))
+        }
+    }
+
+    func stop() async {
+        receiveTask?.cancel()
+        await transport.close()
+        continuation.yield(.stopped)
+        continuation.finish()
+    }
+}
