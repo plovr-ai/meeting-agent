@@ -351,19 +351,108 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
-        stored.meetingGoal = MeetingGoal(
+        let goal = MeetingGoal(
             title: "Confirm launch plan",
             objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
             requiredQuestions: [],
             expectedDecisions: [],
             keyTerms: []
         )
+        stored.meetingGoal = goal
         try store.save(stored)
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
 
         try viewModel.loadMeetings()
 
         XCTAssertEqual(viewModel.meetingGoal?.title, "Confirm launch plan")
+    }
+
+    func testLoadMeetingsRestoresMatchingPersistedProgressSnapshot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        let goal = MeetingGoal(
+            id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        stored.meetingGoal = goal
+        try store.save(stored)
+        let snapshot = MeetingProgressState(
+            meetingID: stored.id,
+            goal: goal,
+            status: .onTrack,
+            objectives: [
+                MeetingObjectiveProgress(
+                    objectiveID: "owner",
+                    title: "Confirm launch owner",
+                    status: .confirmed,
+                    evidenceSegmentIDs: ["segment-1"]
+                )
+            ],
+            confirmedItems: ["Confirm launch owner"],
+            unresolvedItems: [],
+            suggestedQuestions: [],
+            health: MeetingProgressHealth(caption: .live, translation: .pending, analysis: .live),
+            lastAnalyzedSegmentID: "segment-1",
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        try JSONEncoder.meetingAgent.encode(snapshot).write(to: XCTUnwrap(stored.meetingProgressJSONURL), options: .atomic)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+
+        try viewModel.loadMeetings()
+
+        XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
+        XCTAssertEqual(viewModel.meetingProgressState?.lastAnalyzedSegmentID, "segment-1")
+        XCTAssertEqual(viewModel.meetingProgressHealth.analysis, .live)
+    }
+
+    func testLoadMeetingsIgnoresProgressSnapshotForDifferentGoal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        let currentGoal = MeetingGoal(
+            id: UUID(uuidString: "aaaaaaaa-2222-3333-4444-555555555555")!,
+            title: "Current goal",
+            objectives: [MeetingObjective(id: "current", title: "Confirm current item")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        let staleGoal = MeetingGoal(
+            id: UUID(uuidString: "bbbbbbbb-2222-3333-4444-555555555555")!,
+            title: "Stale goal",
+            objectives: [MeetingObjective(id: "stale", title: "Confirm stale item")],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        stored.meetingGoal = currentGoal
+        try store.save(stored)
+        let snapshot = MeetingProgressState(
+            meetingID: stored.id,
+            goal: staleGoal,
+            status: .onTrack,
+            objectives: [],
+            confirmedItems: [],
+            unresolvedItems: [],
+            suggestedQuestions: [],
+            health: MeetingProgressHealth(caption: .live, translation: .pending, analysis: .live),
+            lastAnalyzedSegmentID: "segment-1",
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        try JSONEncoder.meetingAgent.encode(snapshot).write(to: XCTUnwrap(stored.meetingProgressJSONURL), options: .atomic)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+
+        try viewModel.loadMeetings()
+
+        XCTAssertNil(viewModel.meetingProgressState)
+        XCTAssertEqual(viewModel.meetingProgressHealth.analysis, .idle)
     }
 
     func testSelectMeetingSwitchesPersistedMeetingGoal() throws {

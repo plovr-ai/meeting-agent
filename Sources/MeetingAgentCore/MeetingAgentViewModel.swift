@@ -89,6 +89,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingID = meetings.first?.id
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
+        restoreMeetingProgressStateForSelectedMeeting()
         configureMeetingProgressCoordinator()
     }
 
@@ -340,6 +341,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingID = id
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
+        restoreMeetingProgressStateForSelectedMeeting()
         configureMeetingProgressCoordinator()
         refreshLiveCaptionTurnsFromSelectedMeeting()
     }
@@ -621,6 +623,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         meetings[index].meetingGoal = meetingGoal
         try? store.save(meetings[index])
+    }
+
+    private func restoreMeetingProgressStateForSelectedMeeting() {
+        guard let meetingGoal,
+              let progressURL = selectedMeeting?.meetingProgressJSONURL,
+              let data = try? Data(contentsOf: progressURL),
+              let restored = try? JSONDecoder.meetingAgent.decode(MeetingProgressState.self, from: data),
+              restored.goal.id == meetingGoal.id
+        else {
+            return
+        }
+        meetingProgressState = restored
+        meetingProgressHealth = restored.health
     }
 
     private func refreshLiveCaptionTurnsFromSelectedMeeting() {
