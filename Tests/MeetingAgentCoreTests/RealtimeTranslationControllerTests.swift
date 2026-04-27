@@ -52,6 +52,29 @@ final class RealtimeTranslationControllerTests: XCTestCase {
         XCTAssertTrue(playback.didStop)
         XCTAssertEqual(controller.status, .idle)
     }
+
+    func testAppendRollsRealtimeSessionWithoutClearingExistingTurns() async throws {
+        let provider = RollingRealtimeSpeechTranslationProvider()
+        let controller = RealtimeTranslationController(provider: provider, rolloverFrameLimit: 2)
+        let firstFrame = AudioFrame(pcm: Data([1]), sampleRate: 24_000, channelCount: 1, timestampNanos: 0)
+        let secondFrame = AudioFrame(pcm: Data([2]), sampleRate: 24_000, channelCount: 1, timestampNanos: 1)
+        let thirdFrame = AudioFrame(pcm: Data([3]), sampleRate: 24_000, channelCount: 1, timestampNanos: 2)
+        await controller.start(configuration: RealtimeTranslationConfiguration(apiKey: "key", targetLocale: "zh-CN"))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        provider.sessions.first?.emit(.targetTextFinal("你好。"))
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        await controller.append([firstFrame, secondFrame])
+        await controller.append([thirdFrame])
+
+        XCTAssertEqual(provider.startedConfigurations.map(\.targetLocale), ["zh-CN", "zh-CN"])
+        XCTAssertEqual(provider.sessions.count, 2)
+        XCTAssertTrue(provider.sessions[0].didStop)
+        XCTAssertEqual(provider.sessions[0].appendedFrames, [firstFrame, secondFrame])
+        XCTAssertEqual(provider.sessions[1].appendedFrames, [thirdFrame])
+        XCTAssertEqual(controller.liveTranslationTurns.map(\.text), ["你好。"])
+        XCTAssertEqual(controller.status, .connected)
+    }
 }
 
 private final class FakeRealtimeSpeechTranslationProvider: RealtimeSpeechTranslationProvider {
@@ -97,6 +120,31 @@ private final class FakeRealtimeTranslationSession: RealtimeTranslationSession {
 
     func emit(_ event: RealtimeTranslationEvent) {
         continuation?.yield(event)
+    }
+}
+
+private final class RollingRealtimeSpeechTranslationProvider: RealtimeSpeechTranslationProvider {
+    let descriptor = ProviderDescriptor(
+        id: "rolling-realtime",
+        displayName: "Rolling Realtime",
+        capability: .speechTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+    var startedConfigurations: [RealtimeTranslationConfiguration] = []
+    var sessions: [FakeRealtimeTranslationSession] = []
+
+    func start(configuration: RealtimeTranslationConfiguration) async throws -> RealtimeTranslationSession {
+        if let error = configuration.validationError {
+            throw ProbeError.invalidArguments(error)
+        }
+        startedConfigurations.append(configuration)
+        let session = FakeRealtimeTranslationSession()
+        sessions.append(session)
+        return session
     }
 }
 
