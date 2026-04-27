@@ -8,8 +8,7 @@ let package = Package(
     ],
     products: [
         .library(name: "MeetingAgentCore", targets: ["MeetingAgentCore"]),
-        .executable(name: "MeetingAgentApp", targets: ["MeetingAgentApp"]),
-        .executable(name: "CoreAudioTapProbe", targets: ["CoreAudioTapProbe"])
+        .executable(name: "MeetingAgentApp", targets: ["MeetingAgentApp"])
     ],
     targets: [
         .target(
@@ -18,19 +17,6 @@ let package = Package(
         .executableTarget(
             name: "MeetingAgentApp",
             dependencies: ["MeetingAgentCore"]
-        ),
-        .executableTarget(
-            name: "CoreAudioTapProbe",
-            dependencies: ["MeetingAgentCore"],
-            exclude: ["Info.plist"],
-            linkerSettings: [
-                .unsafeFlags([
-                    "-Xlinker", "-sectcreate",
-                    "-Xlinker", "__TEXT",
-                    "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/CoreAudioTapProbe/Info.plist"
-                ])
-            ]
         ),
         .testTarget(
             name: "MeetingAgentCoreTests",

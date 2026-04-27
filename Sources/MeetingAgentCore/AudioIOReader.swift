@@ -27,7 +27,7 @@ public final class AudioIOReader {
         var createdIOProcID: AudioDeviceIOProcID?
 
         try CoreAudioHelpers.check(
-            AudioDeviceCreateIOProcIDWithBlock(&createdIOProcID, deviceID, DispatchQueue(label: "CoreAudioTapProbe.IOProc")) { [weak self] _, inputData, _, _, _ in
+            AudioDeviceCreateIOProcIDWithBlock(&createdIOProcID, deviceID, DispatchQueue(label: "MeetingAgentApp.IOProc")) { [weak self] _, inputData, _, _, _ in
                 self?.handle(inputData: inputData.pointee)
             },
             "AudioDeviceCreateIOProcIDWithBlock"
