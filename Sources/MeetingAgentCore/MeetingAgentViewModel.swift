@@ -19,11 +19,14 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
     @Published public private(set) var statusText: String = "Idle"
     @Published public private(set) var speechConfiguration: SpeechTranscriptionConfiguration
+    @Published public private(set) var realtimeTranslationStatus: RealtimeTranslationStatus = .idle
+    @Published public private(set) var liveTranslationTurns: [LiveTranslationTurn] = []
 
     private let store: MeetingStore
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
+    private let realtimeTranslationController: RealtimeTranslationController
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -36,13 +39,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
         exportService: MeetingExportService = MeetingExportService(),
+        realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(),
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
         self.speechConfigurationStore = speechConfigurationStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
+        self.realtimeTranslationController = realtimeTranslationController
         self.processTargetsProvider = processTargetsProvider
+        self.recorder.realtimeFrameConsumer = realtimeTranslationController
         if let speechConfiguration {
             self.speechConfiguration = speechConfiguration
         } else if speechProvider != .whisper || speechLocaleIdentifier != Locale.current.identifier {
@@ -169,6 +175,26 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Recording failed: \(error)"
     }
 
+    public func startRealtimeTranslation(targetLocale: String) async {
+        guard isRecording else {
+            realtimeTranslationStatus = .failed("Start recording before live translation")
+            return
+        }
+        let configuration = RealtimeTranslationConfiguration(targetLocale: targetLocale)
+        await realtimeTranslationController.start(configuration: configuration)
+        syncRealtimeTranslationState()
+    }
+
+    public func stopRealtimeTranslation() async {
+        await realtimeTranslationController.stop()
+        syncRealtimeTranslationState()
+    }
+
+    public func syncRealtimeTranslationState() {
+        realtimeTranslationStatus = realtimeTranslationController.status
+        liveTranslationTurns = realtimeTranslationController.liveTranslationTurns
+    }
+
     public func drainRecordingFrames(endedAt: Date = Date()) {
         try? recorder.drainFrames()
         if stopRecordingIfTargetProcessEnded(at: endedAt) {
@@ -176,6 +202,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         updateRecordingStatus()
+        syncRealtimeTranslationState()
         objectWillChange.send()
     }
 
@@ -184,6 +211,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
         }
+        Task { await stopRealtimeTranslation() }
         activeTarget = nil
         statusText = "Idle"
     }
@@ -200,6 +228,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
+        await stopRealtimeTranslation()
         activeTarget = nil
 
         guard let stoppedID else {

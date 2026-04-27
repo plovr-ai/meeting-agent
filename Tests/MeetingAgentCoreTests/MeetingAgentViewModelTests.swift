@@ -308,6 +308,50 @@ final class MeetingAgentViewModelTests: XCTestCase {
             "es-ES"
         ])
     }
+
+    func testStartRealtimeTranslationRequiresRecording() async {
+        let viewModel = MeetingAgentViewModel()
+
+        await viewModel.startRealtimeTranslation(targetLocale: "zh-CN")
+
+        XCTAssertEqual(viewModel.realtimeTranslationStatus, .failed("Start recording before live translation"))
+    }
+
+    func testStopRealtimeTranslationResetsState() async {
+        let controller = RealtimeTranslationController(provider: ViewModelFakeRealtimeProvider())
+        let viewModel = MeetingAgentViewModel(realtimeTranslationController: controller)
+
+        await viewModel.stopRealtimeTranslation()
+
+        XCTAssertEqual(viewModel.realtimeTranslationStatus, .idle)
+    }
+}
+
+private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProvider {
+    let descriptor = ProviderDescriptor(
+        id: "fake-view-model-realtime",
+        displayName: "Fake View Model Realtime",
+        capability: .speechTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    func start(configuration: RealtimeTranslationConfiguration) async throws -> RealtimeTranslationSession {
+        ViewModelFakeRealtimeSession()
+    }
+}
+
+private final class ViewModelFakeRealtimeSession: RealtimeTranslationSession {
+    var events: AsyncStream<RealtimeTranslationEvent> {
+        AsyncStream { _ in }
+    }
+
+    func append(_ frames: [AudioFrame]) async throws {}
+
+    func stop() async {}
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {
