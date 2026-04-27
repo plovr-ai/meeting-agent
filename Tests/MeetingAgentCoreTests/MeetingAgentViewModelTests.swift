@@ -104,6 +104,63 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRecording)
     }
 
+    func testGenerateSummaryUsesMatchingMeetingProgressSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
+        let goal = MeetingGoal(
+            id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            title: "Confirm launch plan",
+            objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+            requiredQuestions: ["Have we confirmed the deadline?"],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        stored.meetingGoal = goal
+        try store.save(stored)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US")
+        ])
+        let progress = MeetingProgressState(
+            meetingID: stored.id,
+            goal: goal,
+            status: .onTrack,
+            objectives: [
+                MeetingObjectiveProgress(
+                    objectiveID: "owner",
+                    title: "Confirm launch owner",
+                    status: .confirmed,
+                    evidenceSegmentIDs: ["segment-1"]
+                )
+            ],
+            confirmedItems: ["Confirm launch owner"],
+            unresolvedItems: [],
+            suggestedQuestions: [
+                FollowUpQuestionSuggestion(
+                    chinese: "请确认：Have we confirmed the deadline?",
+                    english: "Have we confirmed the deadline?",
+                    sourceObjectiveID: nil
+                )
+            ],
+            health: MeetingProgressHealth(caption: .live, translation: .live, analysis: .live),
+            lastAnalyzedSegmentID: "segment-1",
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        try JSONEncoder.meetingAgent.encode(progress).write(to: XCTUnwrap(stored.meetingProgressJSONURL), options: .atomic)
+        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US", processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        try await viewModel.generateSummary(for: stored.id, generatedAt: Date(timeIntervalSince1970: 300))
+
+        let summary = try MeetingSummaryWriter.read(from: XCTUnwrap(stored.summaryJSONURL))
+        XCTAssertEqual(summary.provider, "goal-oriented-deterministic")
+        XCTAssertEqual(summary.overview, "Goal: Confirm launch plan. Current status: on track.")
+        XCTAssertEqual(summary.decisions.first?.description, "Confirm launch owner")
+        XCTAssertEqual(summary.followUps, ["Have we confirmed the deadline?"])
+    }
+
     func testStartRecordingForPendingCandidateUsesConfiguredLocaleAndRecordingState() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
@@ -1002,6 +1059,79 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.startedConfigurations.first?.targetLocale, "fr-FR")
     }
 
+    func testRealtimeTranslationFinalTextAttachesToPendingLiveCaptionTurn() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let provider = ViewModelFakeRealtimeProvider()
+        let controller = RealtimeTranslationController(provider: provider)
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            realtimeTranslationController: controller,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
+        ])
+        viewModel.drainRecordingFrames()
+        await viewModel.startRealtimeTranslation(targetLocale: "zh-CN")
+
+        provider.lastSession?.emit(.targetTextFinal("Alex 是上线负责人。"))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        viewModel.syncRealtimeTranslationState()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "Alex 是上线负责人。")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+        XCTAssertEqual(viewModel.meetingProgressHealth.translation, .live)
+    }
+
+    func testRealtimeTranslationFinalTextsAttachByCaptionOrderOnce() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let provider = ViewModelFakeRealtimeProvider()
+        let controller = RealtimeTranslationController(provider: provider)
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            realtimeTranslationController: controller,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "First decision.", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "segment-2", text: "Second decision.", language: "en-US", isFinal: true)
+        ])
+        viewModel.drainRecordingFrames()
+        await viewModel.startRealtimeTranslation(targetLocale: "zh-CN")
+
+        provider.lastSession?.emit(.targetTextFinal("第一个决定。"))
+        provider.lastSession?.emit(.targetTextFinal("第二个决定。"))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        viewModel.syncRealtimeTranslationState()
+        viewModel.syncRealtimeTranslationState()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.translatedText), ["第一个决定。", "第二个决定。"])
+    }
+
     func testStopRealtimeTranslationResetsState() async {
         let controller = RealtimeTranslationController(provider: ViewModelFakeRealtimeProvider())
         let viewModel = MeetingAgentViewModel(realtimeTranslationController: controller)
@@ -1215,6 +1345,7 @@ private func XCTAssertThrowsErrorAsync(
 
 private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProvider {
     private(set) var startedConfigurations: [RealtimeTranslationConfiguration] = []
+    private(set) var lastSession: ViewModelFakeRealtimeSession?
 
     let descriptor = ProviderDescriptor(
         id: "fake-view-model-realtime",
@@ -1229,18 +1360,32 @@ private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProv
 
     func start(configuration: RealtimeTranslationConfiguration) async throws -> RealtimeTranslationSession {
         startedConfigurations.append(configuration)
-        return ViewModelFakeRealtimeSession()
+        let session = ViewModelFakeRealtimeSession()
+        lastSession = session
+        return session
     }
 }
 
 private final class ViewModelFakeRealtimeSession: RealtimeTranslationSession {
-    var events: AsyncStream<RealtimeTranslationEvent> {
-        AsyncStream { _ in }
+    private let continuation: AsyncStream<RealtimeTranslationEvent>.Continuation
+
+    let events: AsyncStream<RealtimeTranslationEvent>
+
+    init() {
+        var streamContinuation: AsyncStream<RealtimeTranslationEvent>.Continuation!
+        events = AsyncStream { continuation in
+            streamContinuation = continuation
+        }
+        continuation = streamContinuation
     }
 
     func append(_ frames: [AudioFrame]) async throws {}
 
     func stop() async {}
+
+    func emit(_ event: RealtimeTranslationEvent) {
+        continuation.yield(event)
+    }
 }
 
 final class AppRuntimeCapabilitiesTests: XCTestCase {

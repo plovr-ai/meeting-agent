@@ -42,6 +42,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionStore = LiveCaptionStore()
     @Published public private(set) var meetingGoal: MeetingGoal?
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
+    private var attachedRealtimeTranslationTurnIDs = Set<String>()
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -236,6 +237,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func syncRealtimeTranslationState() {
         realtimeTranslationStatus = realtimeTranslationController.status
         liveTranslationTurns = realtimeTranslationController.liveTranslationTurns
+        attachRealtimeTranslationsToLiveCaptions()
     }
 
     public func setMeetingGoal(_ goal: MeetingGoal?) {
@@ -320,18 +322,28 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
 
         let transcript = try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        let provider = Self.summaryProvider()
-        let summary = try await provider.generateSummary(
-            input: MeetingSummaryInput(
-                meetingName: meeting.name,
-                startedAt: meeting.startedAt,
-                endedAt: meeting.endedAt,
-                language: speechLocaleIdentifier,
-                meetingGoal: nil,
-                segments: transcript.segments,
+        let progress = progressState(for: meeting)
+        let summary: MeetingSummary
+        if progress != nil {
+            summary = GoalOrientedSummaryProvider().generate(
+                transcript: transcript,
+                progress: progress,
                 generatedAt: generatedAt
             )
-        )
+        } else {
+            let provider = Self.summaryProvider()
+            summary = try await provider.generateSummary(
+                input: MeetingSummaryInput(
+                    meetingName: meeting.name,
+                    startedAt: meeting.startedAt,
+                    endedAt: meeting.endedAt,
+                    language: speechLocaleIdentifier,
+                    meetingGoal: nil,
+                    segments: transcript.segments,
+                    generatedAt: generatedAt
+                )
+            )
+        }
         try MeetingSummaryWriter.write(summary, jsonURL: summaryJSONURL, markdownURL: summaryMarkdownURL)
         statusText = summary.status == .succeeded ? "Summary generated" : "Summary failed"
         objectWillChange.send()
@@ -603,6 +615,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             sourceLocale: speechConfiguration.localeIdentifier,
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
+        attachedRealtimeTranslationTurnIDs.removeAll()
         liveCaptionTurns = []
         meetingProgressHealth.caption = .idle
         meetingProgressHealth.translation = .idle
@@ -638,6 +651,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         meetingProgressHealth = restored.health
     }
 
+    private func progressState(for meeting: MeetingRecord) -> MeetingProgressState? {
+        guard let progressURL = meeting.meetingProgressJSONURL,
+              let data = try? Data(contentsOf: progressURL),
+              let progress = try? JSONDecoder.meetingAgent.decode(MeetingProgressState.self, from: data)
+        else {
+            return nil
+        }
+        if let meetingGoal = meeting.meetingGoal {
+            return progress.goal.id == meetingGoal.id ? progress : nil
+        }
+        return progress
+    }
+
     private func refreshLiveCaptionTurnsFromSelectedMeeting() {
         guard let meeting = selectedMeeting,
               let transcriptJSONURL = meeting.transcriptJSONURL,
@@ -651,6 +677,46 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
+        attachRealtimeTranslationsToLiveCaptions()
+    }
+
+    private func attachRealtimeTranslationsToLiveCaptions() {
+        let unattachedFinalTranslations = liveTranslationTurns
+            .filter { $0.isFinal && !attachedRealtimeTranslationTurnIDs.contains($0.id) }
+        guard !unattachedFinalTranslations.isEmpty else {
+            updateTranslationHealthFromRealtimeStatus()
+            return
+        }
+        for translation in unattachedFinalTranslations {
+            guard let caption = liveCaptionStore.turns.first(where: {
+                $0.isFinal && ($0.translatedText?.isEmpty ?? true)
+            }) else {
+                break
+            }
+            liveCaptionStore.attachTranslation(translation.text, toTurnID: caption.id)
+            attachedRealtimeTranslationTurnIDs.insert(translation.id)
+        }
+        liveCaptionTurns = liveCaptionStore.turns
+        updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func updateTranslationHealthFromRealtimeStatus() {
+        if liveCaptionTurns.contains(where: { $0.translationHealth == .live }) {
+            meetingProgressHealth.translation = .live
+            return
+        }
+        switch realtimeTranslationStatus {
+        case .connected:
+            meetingProgressHealth.translation = .pending
+        case .connecting:
+            meetingProgressHealth.translation = .pending
+        case .degraded(let message):
+            meetingProgressHealth.translation = .degraded(message)
+        case .failed(let message):
+            meetingProgressHealth.translation = .failed(message)
+        case .idle:
+            meetingProgressHealth.translation = .idle
+        }
     }
 
     private func configureMeetingProgressCoordinator() {

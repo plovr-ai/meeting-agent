@@ -546,6 +546,7 @@ private struct TranscriptPaneView: View {
                     metadata
                     recordingActions
                     failureReason
+                    liveCaptions
                     transcript
                     liveTranslation
                 }
@@ -672,6 +673,35 @@ private struct TranscriptPaneView: View {
                 .foregroundStyle(CommandCenterPalette.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
+        }
+    }
+
+    private var liveCaptions: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Live Captions").commandCenterEyebrow()
+                    Spacer()
+                    CommandCenterChip(
+                        title: liveCaptionTurns.isEmpty ? "Waiting for speech" : "\(liveCaptionTurns.count) turns",
+                        tint: liveCaptionTurns.isEmpty ? CommandCenterPalette.secondaryText : CommandCenterPalette.primary
+                    )
+                }
+
+                if liveCaptionTurns.isEmpty {
+                    Text(isRecording ? "Listening..." : "Recorded captions will appear here.")
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                } else {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(liveCaptionTurns.suffix(8)) { turn in
+                            CaptionTurnView(turn: turn)
+                            if turn.id != liveCaptionTurns.suffix(8).last?.id {
+                                Divider().overlay(CommandCenterPalette.border)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

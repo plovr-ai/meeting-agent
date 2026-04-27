@@ -108,6 +108,24 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("LiveHealthChip"))
     }
 
+    func testTranscriptPaneShowsLiveCaptionStreamBeforeTranscript() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        guard let liveCaptionsRange = source.range(of: "liveCaptions") else {
+            return XCTFail("Live caption stream is missing")
+        }
+        guard let transcriptRange = source.range(of: "transcript", options: [], range: liveCaptionsRange.upperBound..<source.endIndex) else {
+            return XCTFail("Transcript section is missing after live captions")
+        }
+
+        XCTAssertLessThan(liveCaptionsRange.lowerBound, transcriptRange.lowerBound)
+        XCTAssertTrue(source.contains("Text(\"Live Captions\")"))
+        XCTAssertTrue(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
+        XCTAssertTrue(source.contains("CaptionTurnView(turn: turn)"))
+    }
+
     func testMainWindowExposesLightweightMeetingGoalComposer() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
