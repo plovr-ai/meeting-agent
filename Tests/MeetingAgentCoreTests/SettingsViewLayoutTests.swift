@@ -13,6 +13,7 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Model\""))
         XCTAssertTrue(source.contains("Text(\"Deepgram\")"))
+        XCTAssertTrue(source.contains("Text(\"OpenAI Realtime\")"))
         XCTAssertTrue(source.contains("SettingsCommandCenterPanel(\"Deepgram\")"))
         XCTAssertTrue(source.contains("SecureField(\"Deepgram API Key\""))
         XCTAssertTrue(source.contains("SecureField(\"OpenRouter API Key\""))

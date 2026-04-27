@@ -59,12 +59,14 @@ struct MainWindowView: View {
                     localeIdentifiers: MeetingAgentViewModel.supportedLocaleIdentifiers,
                     isRecording: viewModel.isRecording,
                     status: viewModel.speechConfigurationStatus,
+                    primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
             } else {
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
                     speechConfiguration: viewModel.speechConfiguration,
+                    primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     statusText: viewModel.statusText,
                     isRecording: viewModel.isRecording,
                     realtimeTranslationStatus: viewModel.realtimeTranslationStatus,
@@ -180,6 +182,7 @@ struct MainWindowView: View {
 private struct MeetingDetailView: View {
     let meeting: MeetingRecord?
     let speechConfiguration: SpeechTranscriptionConfiguration
+    let primaryChainPreflightResult: PrimaryChainPreflightResult
     let statusText: String
     let isRecording: Bool
     let realtimeTranslationStatus: RealtimeTranslationStatus
@@ -205,6 +208,7 @@ private struct MeetingDetailView: View {
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
                     translationLinkText: translationLinkText(for: speechConfiguration),
                     translationModelText: translationModelText(for: speechConfiguration),
+                    preflightText: preflightText,
                     actualTranscriptionSourceText: actualTranscriptionSourceText(for: meeting),
                     statusText: statusText,
                     isRecording: isRecording,
@@ -257,6 +261,9 @@ private struct MeetingDetailView: View {
         if configuration.usesDeepgram {
             return modelDisplayName(configuration.deepgramModelID, in: BilingualPipelineFactory.hostedTranscriptionModelOptions)
         }
+        if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID {
+            return openAIRealtimeTranscriptionModelDisplayName(configuration.hostedTranscriptionModelID)
+        }
         if configuration.transcriptionExecutionMode == .hosted {
             return modelDisplayName(
                 configuration.hostedTranscriptionModelID,
@@ -286,6 +293,15 @@ private struct MeetingDetailView: View {
         )
     }
 
+    private var preflightText: String {
+        switch primaryChainPreflightResult.status {
+        case .available:
+            return "Primary chain ready"
+        case .unavailable:
+            return primaryChainPreflightResult.messages.joined(separator: "; ")
+        }
+    }
+
     private func actualTranscriptionSourceText(for meeting: MeetingRecord) -> String {
         guard let transcriptJSONURL = meeting.transcriptJSONURL,
               let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
@@ -311,6 +327,17 @@ private struct MeetingDetailView: View {
 
     private func modelDisplayName(_ modelID: String, in options: [BilingualPipelineFactory.ModelOption]) -> String {
         options.first { $0.id == modelID }?.displayName ?? modelID
+    }
+
+    private func openAIRealtimeTranscriptionModelDisplayName(_ modelID: String) -> String {
+        switch modelID {
+        case "gpt-4o-transcribe":
+            return "GPT-4o Transcribe"
+        case "gpt-4o-mini-transcribe":
+            return "GPT-4o Mini Transcribe"
+        default:
+            return modelID
+        }
     }
 
     private func transcriptText(for meeting: MeetingRecord) -> String {
@@ -386,6 +413,7 @@ private struct MeetingCommandCenterView: View {
     let transcriptionModelText: String
     let translationLinkText: String
     let translationModelText: String
+    let preflightText: String
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
@@ -416,6 +444,7 @@ private struct MeetingCommandCenterView: View {
                 transcriptionModelText: transcriptionModelText,
                 translationLinkText: translationLinkText,
                 translationModelText: translationModelText,
+                preflightText: preflightText,
                 actualTranscriptionSourceText: actualTranscriptionSourceText,
                 statusText: statusText,
                 isRecording: isRecording,
@@ -459,6 +488,7 @@ private struct TranscriptPaneView: View {
     let transcriptionModelText: String
     let translationLinkText: String
     let translationModelText: String
+    let preflightText: String
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
@@ -570,6 +600,7 @@ private struct TranscriptPaneView: View {
                 CommandCenterChip(title: "Transcription Model: \(transcriptionModelText)")
                 CommandCenterChip(title: "Translation Link: \(translationLinkText)", tint: CommandCenterPalette.purple)
                 CommandCenterChip(title: "Translation Model: \(translationModelText)")
+                CommandCenterChip(title: "Preflight: \(preflightText)", tint: preflightTint)
             }
         }
     }
@@ -729,6 +760,10 @@ private struct TranscriptPaneView: View {
         case .notStarted:
             return CommandCenterPalette.secondaryText
         }
+    }
+
+    private var preflightTint: Color {
+        preflightText == "Primary chain ready" ? CommandCenterPalette.primary : CommandCenterPalette.danger
     }
 }
 

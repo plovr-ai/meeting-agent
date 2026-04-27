@@ -21,9 +21,14 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var speechConfiguration: SpeechTranscriptionConfiguration
     @Published public private(set) var realtimeTranslationStatus: RealtimeTranslationStatus = .idle
     @Published public private(set) var liveTranslationTurns: [LiveTranslationTurn] = []
+    @Published public private(set) var primaryChainPreflightResult = PrimaryChainPreflightResult(
+        status: .unavailable,
+        messages: ["Primary chain is not checked"]
+    )
 
     private let store: MeetingStore
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
+    private let credentialStore: CredentialStoring
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
     private let realtimeTranslationController: RealtimeTranslationController
@@ -38,6 +43,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechProvider: SpeechProvider = .whisper,
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
+        credentialStore: CredentialStoring = KeychainCredentialStore(),
         exportService: MeetingExportService = MeetingExportService(),
         realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(
             playbackSink: LocalAudioPlaybackSink()
@@ -46,6 +52,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) {
         self.store = store
         self.speechConfigurationStore = speechConfigurationStore
+        self.credentialStore = credentialStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
         self.realtimeTranslationController = realtimeTranslationController
@@ -63,6 +70,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             self.speechConfiguration = (try? speechConfigurationStore.load()) ?? .default
         }
+        hydrateSpeechConfigurationCredentials()
+        refreshPrimaryChainPreflightResult()
     }
 
     public func loadMeetings() throws {
@@ -141,6 +150,9 @@ public final class MeetingAgentViewModel: ObservableObject {
             deepgramAPIKey: configuration.deepgramAPIKey,
             deepgramModelID: configuration.deepgramModelID
         )
+        saveCredential(configuration.openRouterAPIKey, for: .openRouter)
+        saveCredential(configuration.openAIRealtimeAPIKey, for: .openAI)
+        saveCredential(configuration.deepgramAPIKey, for: .deepgram)
         persistSpeechConfiguration()
         statusText = "Settings saved"
     }
@@ -467,6 +479,15 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration.validationStatus()
     }
 
+    public var primaryChainPreflightSummary: String {
+        switch primaryChainPreflightResult.status {
+        case .available:
+            return "Primary chain ready"
+        case .unavailable:
+            return primaryChainPreflightResult.messages.joined(separator: "; ")
+        }
+    }
+
     private static func normalizedSpeechLocaleIdentifier(_ localeIdentifier: String) -> String {
         let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "en-US" : trimmed
@@ -503,6 +524,32 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func persistSpeechConfiguration() {
         try? speechConfigurationStore.save(speechConfiguration)
+        refreshPrimaryChainPreflightResult()
+    }
+
+    private func hydrateSpeechConfigurationCredentials() {
+        speechConfiguration.openRouterAPIKey = loadCredential(.openRouter) ?? speechConfiguration.openRouterAPIKey
+        speechConfiguration.openAIRealtimeAPIKey = loadCredential(.openAI) ?? speechConfiguration.openAIRealtimeAPIKey
+        speechConfiguration.deepgramAPIKey = loadCredential(.deepgram) ?? speechConfiguration.deepgramAPIKey
+    }
+
+    private func refreshPrimaryChainPreflightResult() {
+        primaryChainPreflightResult = PrimaryChainPreflight.evaluate(
+            configuration: speechConfiguration,
+            credentials: [
+                .openRouter: loadCredential(.openRouter),
+                .openAI: loadCredential(.openAI),
+                .deepgram: loadCredential(.deepgram)
+            ].compactMapValues { $0 }
+        )
+    }
+
+    private func loadCredential(_ kind: CredentialKind) -> String? {
+        try? credentialStore.load(kind)
+    }
+
+    private func saveCredential(_ value: String?, for kind: CredentialKind) {
+        try? credentialStore.save(value, for: kind)
     }
 
     private func export(_ label: String, for meetingID: UUID, operation: (MeetingRecord) throws -> Void) throws {

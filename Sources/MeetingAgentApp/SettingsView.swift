@@ -7,6 +7,7 @@ struct SettingsView: View {
     let localeIdentifiers: [String]
     let isRecording: Bool
     let status: SpeechConfigurationValidationStatus
+    let primaryChainPreflightResult: PrimaryChainPreflightResult
     let save: (SpeechTranscriptionConfiguration) -> Void
 
     @State private var draft: SpeechTranscriptionConfiguration
@@ -17,6 +18,7 @@ struct SettingsView: View {
         localeIdentifiers: [String],
         isRecording: Bool,
         status: SpeechConfigurationValidationStatus,
+        primaryChainPreflightResult: PrimaryChainPreflightResult,
         save: @escaping (SpeechTranscriptionConfiguration) -> Void
     ) {
         self.configuration = configuration
@@ -24,6 +26,7 @@ struct SettingsView: View {
         self.localeIdentifiers = localeIdentifiers
         self.isRecording = isRecording
         self.status = status
+        self.primaryChainPreflightResult = primaryChainPreflightResult
         self.save = save
         _draft = State(initialValue: configuration)
     }
@@ -74,12 +77,18 @@ struct SettingsView: View {
                         Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
                             Text("OpenRouter").tag("openrouter-transcribe")
                             Text("Deepgram").tag("deepgram-transcribe")
+                            Text("OpenAI Realtime").tag("openai-realtime-transcribe")
                         }
 
                         if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
                             Picker("Hosted Transcription Model", selection: $draft.deepgramModelID) {
                                 Text("Deepgram Nova 3").tag("nova-3")
                                 Text("Deepgram Nova 2").tag("nova-2")
+                            }
+                        } else if draft.hostedTranscriptionProviderID == "openai-realtime-transcribe" {
+                            Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
+                                Text("GPT-4o Transcribe").tag("gpt-4o-transcribe")
+                                Text("GPT-4o Mini Transcribe").tag("gpt-4o-mini-transcribe")
                             }
                         } else {
                             Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
@@ -134,6 +143,10 @@ struct SettingsView: View {
                 }
 
                 SettingsCommandCenterPanel("Validation") {
+                    Text(primaryChainPreflightText)
+                        .font(.caption)
+                        .foregroundStyle(primaryChainPreflightColor)
+
                     Text(configurationStatusText)
                         .font(.caption)
                         .foregroundStyle(configurationStatusColor)
@@ -163,7 +176,7 @@ struct SettingsView: View {
         }
         .onChange(of: draft.transcriptionExecutionMode) { _, mode in
             if mode == .hosted {
-                if draft.hostedTranscriptionProviderID != "deepgram-transcribe" {
+                if !["deepgram-transcribe", "openai-realtime-transcribe"].contains(draft.hostedTranscriptionProviderID) {
                     draft.hostedTranscriptionProviderID = "openrouter-transcribe"
                 }
                 ensureHostedTranscriptionModel()
@@ -264,6 +277,13 @@ struct SettingsView: View {
             draft.deepgramModelID = SpeechTranscriptionConfiguration.defaultDeepgramModelID
             return
         }
+        if draft.hostedTranscriptionProviderID == "openai-realtime-transcribe" {
+            if ["gpt-4o-transcribe", "gpt-4o-mini-transcribe"].contains(draft.hostedTranscriptionModelID) {
+                return
+            }
+            draft.hostedTranscriptionModelID = SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID
+            return
+        }
         if BilingualPipelineFactory.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
             return
         }
@@ -290,6 +310,24 @@ struct SettingsView: View {
 
     private var configurationStatusColor: Color {
         switch status {
+        case .available:
+            return CommandCenterPalette.secondaryText
+        case .unavailable:
+            return CommandCenterPalette.danger
+        }
+    }
+
+    private var primaryChainPreflightText: String {
+        switch primaryChainPreflightResult.status {
+        case .available:
+            return "Primary chain ready"
+        case .unavailable:
+            return primaryChainPreflightResult.messages.joined(separator: "; ")
+        }
+    }
+
+    private var primaryChainPreflightColor: Color {
+        switch primaryChainPreflightResult.status {
         case .available:
             return CommandCenterPalette.secondaryText
         case .unavailable:

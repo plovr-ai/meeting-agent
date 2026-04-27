@@ -114,7 +114,7 @@ public enum StreamingSpeechTranscriberFactory {
         if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID {
             return try await OpenAIRealtimeTranscriptionProvider(
                 apiKey: configuration.openAIRealtimeAPIKey ?? ProcessInfo.processInfo.environment["MEETING_AGENT_OPENAI_API_KEY"],
-                model: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID
+                model: configuration.hostedTranscriptionModelID
             ).start(context: context)
         }
         guard configuration.transcriptionExecutionMode == .local else {

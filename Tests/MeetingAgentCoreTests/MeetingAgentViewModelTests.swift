@@ -528,8 +528,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let credentialStore = MemoryCredentialStore()
         let viewModel = MeetingAgentViewModel(
             speechConfigurationStore: configurationStore,
+            credentialStore: credentialStore,
             processTargetsProvider: { [] }
         )
 
@@ -562,7 +564,26 @@ final class MeetingAgentViewModelTests: XCTestCase {
         expectedPersistedConfiguration.openAIRealtimeAPIKey = nil
         expectedPersistedConfiguration.deepgramAPIKey = nil
         XCTAssertEqual(try configurationStore.load(), expectedPersistedConfiguration)
+        XCTAssertEqual(try credentialStore.load(.openRouter), "settings-key")
+        XCTAssertEqual(try credentialStore.load(.openAI), "realtime-settings-key")
         XCTAssertEqual(viewModel.statusText, "Settings saved")
+    }
+
+    func testViewModelHydratesCredentialsAndReportsPrimaryChainPreflight() throws {
+        let credentialStore = MemoryCredentialStore()
+        try credentialStore.save("deepgram-key", for: .deepgram)
+        try credentialStore.save("openrouter-key", for: .openRouter)
+
+        let viewModel = MeetingAgentViewModel(
+            speechConfiguration: .default,
+            credentialStore: credentialStore,
+            processTargetsProvider: { [] }
+        )
+
+        XCTAssertEqual(viewModel.speechConfiguration.deepgramAPIKey, "deepgram-key")
+        XCTAssertEqual(viewModel.speechConfiguration.openRouterAPIKey, "openrouter-key")
+        XCTAssertEqual(viewModel.primaryChainPreflightResult.status, .available)
+        XCTAssertEqual(viewModel.primaryChainPreflightSummary, "Primary chain ready")
     }
 
     func testSaveSpeechConfigurationDerivesPipelineProfileFromStepModes() throws {
