@@ -137,6 +137,21 @@ struct CommandCenterActionButtonStyle: ButtonStyle {
     }
 }
 
+struct CommandCenterIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(CommandCenterPalette.secondaryText)
+            .frame(width: 28, height: 28)
+            .background(CommandCenterPalette.panelRaised.opacity(configuration.isPressed ? 0.65 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(CommandCenterPalette.border, lineWidth: 1)
+            )
+    }
+}
+
 extension Text {
     func commandCenterEyebrow() -> some View {
         self

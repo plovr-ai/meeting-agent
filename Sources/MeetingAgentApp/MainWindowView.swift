@@ -132,6 +132,24 @@ struct MainWindowView: View {
                         Task {
                             await viewModel.refreshMeetingProgress()
                         }
+                    },
+                    updateSpeakerLabel: { meeting, speakerID, label in
+                        Task {
+                            do {
+                                try await viewModel.updateSpeakerLabel(for: meeting.id, speakerID: speakerID, label: label)
+                            } catch {
+                                NSSound.beep()
+                            }
+                        }
+                    },
+                    updateTranscriptSegmentText: { meeting, segmentID, text in
+                        Task {
+                            do {
+                                try await viewModel.updateTranscriptSegmentText(for: meeting.id, segmentID: segmentID, text: text)
+                            } catch {
+                                NSSound.beep()
+                            }
+                        }
                     }
                 )
             }
@@ -222,6 +240,8 @@ private struct MeetingDetailView: View {
     let startRealtimeTranslation: (String) -> Void
     let stopRealtimeTranslation: () -> Void
     let setMeetingGoal: (MeetingGoal?) -> Void
+    let updateSpeakerLabel: (MeetingRecord, String, String) -> Void
+    let updateTranscriptSegmentText: (MeetingRecord, String, String) -> Void
     @State private var targetLocale = "zh-CN"
 
     var body: some View {
@@ -262,6 +282,12 @@ private struct MeetingDetailView: View {
                     startRealtimeTranslation: { startRealtimeTranslation(targetLocale) },
                     stopRealtimeTranslation: stopRealtimeTranslation,
                     setMeetingGoal: setMeetingGoal,
+                    updateSpeakerLabel: { speakerID, label in
+                        updateSpeakerLabel(meeting, speakerID, label)
+                    },
+                    updateTranscriptSegmentText: { segmentID, text in
+                        updateTranscriptSegmentText(meeting, segmentID, text)
+                    },
                     liveTranslationCanStop: liveTranslationCanStop(realtimeTranslationStatus)
                 )
             } else {
@@ -474,6 +500,8 @@ private struct MeetingCommandCenterView: View {
     let startRealtimeTranslation: () -> Void
     let stopRealtimeTranslation: () -> Void
     let setMeetingGoal: (MeetingGoal?) -> Void
+    let updateSpeakerLabel: (String, String) -> Void
+    let updateTranscriptSegmentText: (String, String) -> Void
     let liveTranslationCanStop: Bool
 
     var body: some View {
@@ -501,6 +529,8 @@ private struct MeetingCommandCenterView: View {
                 retryTranscription: retryTranscription,
                 startRealtimeTranslation: startRealtimeTranslation,
                 stopRealtimeTranslation: stopRealtimeTranslation,
+                updateSpeakerLabel: updateSpeakerLabel,
+                updateTranscriptSegmentText: updateTranscriptSegmentText,
                 liveTranslationCanStop: liveTranslationCanStop
             )
             .frame(minWidth: 520)
@@ -553,7 +583,13 @@ private struct TranscriptPaneView: View {
     let retryTranscription: () -> Void
     let startRealtimeTranslation: () -> Void
     let stopRealtimeTranslation: () -> Void
+    let updateSpeakerLabel: (String, String) -> Void
+    let updateTranscriptSegmentText: (String, String) -> Void
     let liveTranslationCanStop: Bool
+    @State private var speakerEditTarget: LiveCaptionTurn?
+    @State private var speakerLabelDraft = ""
+    @State private var transcriptEditTarget: LiveCaptionTurn?
+    @State private var transcriptTextDraft = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -574,6 +610,32 @@ private struct TranscriptPaneView: View {
             composer
         }
         .background(CommandCenterPalette.window)
+        .sheet(item: $speakerEditTarget) { turn in
+            CaptionEditSheet(
+                title: "Edit Speaker",
+                text: $speakerLabelDraft,
+                saveTitle: "Save Speaker",
+                save: {
+                    if let speakerID = turn.speaker.identifier {
+                        updateSpeakerLabel(speakerID, speakerLabelDraft)
+                    }
+                    speakerEditTarget = nil
+                },
+                cancel: { speakerEditTarget = nil }
+            )
+        }
+        .sheet(item: $transcriptEditTarget) { turn in
+            CaptionEditSheet(
+                title: "Correct Caption",
+                text: $transcriptTextDraft,
+                saveTitle: "Save Caption",
+                save: {
+                    updateTranscriptSegmentText(turn.id, transcriptTextDraft)
+                    transcriptEditTarget = nil
+                },
+                cancel: { transcriptEditTarget = nil }
+            )
+        }
     }
 
     private var header: some View {
@@ -712,7 +774,17 @@ private struct TranscriptPaneView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(liveCaptionTurns.suffix(8)) { turn in
-                            CaptionTurnView(turn: turn)
+                            CaptionTurnView(
+                                turn: turn,
+                                editSpeaker: turn.speaker.identifier == nil ? nil : {
+                                    speakerLabelDraft = turn.speaker.label ?? turn.speaker.identifier ?? ""
+                                    speakerEditTarget = turn
+                                },
+                                editText: {
+                                    transcriptTextDraft = turn.originalText
+                                    transcriptEditTarget = turn
+                                }
+                            )
                             if turn.id != liveCaptionTurns.suffix(8).last?.id {
                                 Divider().overlay(CommandCenterPalette.border)
                             }
@@ -1043,6 +1115,8 @@ private struct LiveMeetingDashboardView: View {
 
 private struct CaptionTurnView: View {
     let turn: LiveCaptionTurn
+    var editSpeaker: (() -> Void)? = nil
+    var editText: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1051,6 +1125,25 @@ private struct CaptionTurnView: View {
                     .commandCenterMono()
                 Text(turn.isFinal ? "final" : "partial")
                     .commandCenterMono()
+                Spacer()
+                if let editSpeaker {
+                    Button {
+                        editSpeaker()
+                    } label: {
+                        Image(systemName: "person.crop.circle.badge.pencil")
+                    }
+                    .buttonStyle(CommandCenterIconButtonStyle())
+                    .help("Edit speaker")
+                }
+                if let editText {
+                    Button {
+                        editText()
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(CommandCenterIconButtonStyle())
+                    .help("Correct caption")
+                }
             }
             Text(turn.originalText)
                 .font(.system(size: 17, weight: .regular))
@@ -1068,6 +1161,46 @@ private struct CaptionTurnView: View {
                     .commandCenterMono()
             }
         }
+    }
+}
+
+private struct CaptionEditSheet: View {
+    let title: String
+    @Binding var text: String
+    let saveTitle: String
+    let save: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).commandCenterEyebrow()
+            TextEditor(text: $text)
+                .font(.system(size: 15))
+                .foregroundStyle(CommandCenterPalette.text)
+                .scrollContentBackground(.hidden)
+                .frame(width: 420, height: 130)
+                .padding(8)
+                .background(CommandCenterPalette.panelRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(CommandCenterPalette.border, lineWidth: 1)
+                )
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    cancel()
+                }
+                .buttonStyle(CommandCenterActionButtonStyle(variant: .secondary))
+                Button(saveTitle) {
+                    save()
+                }
+                .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(22)
+        .background(CommandCenterPalette.surface)
     }
 }
 

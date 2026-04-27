@@ -123,7 +123,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertLessThan(liveCaptionsRange.lowerBound, transcriptRange.lowerBound)
         XCTAssertTrue(source.contains("Text(\"Live Captions\")"))
         XCTAssertTrue(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
-        XCTAssertTrue(source.contains("CaptionTurnView(turn: turn)"))
+        XCTAssertTrue(source.contains("CaptionTurnView("))
+        XCTAssertTrue(source.contains("turn: turn"))
     }
 
     func testExportsPanelExposesSubtitleExportActions() throws {
@@ -137,6 +138,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Label(\"VTT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
+    }
+
+    func testLiveCaptionsExposeCorrectionControls() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("updateSpeakerLabel"))
+        XCTAssertTrue(source.contains("updateTranscriptSegmentText"))
+        XCTAssertTrue(source.contains("CaptionEditSheet"))
+        XCTAssertTrue(source.contains("person.crop.circle.badge.pencil"))
+        XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
+        XCTAssertTrue(source.contains("Correct Caption"))
+        XCTAssertTrue(source.contains("Save Speaker"))
+        XCTAssertTrue(source.contains("Save Caption"))
     }
 
     func testMainWindowExposesLightweightMeetingGoalComposer() throws {
