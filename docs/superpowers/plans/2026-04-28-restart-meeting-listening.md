@@ -154,4 +154,3 @@ Expected: PASS.
 git add docs/superpowers/specs/2026-04-28-restart-meeting-listening-design.md docs/superpowers/plans/2026-04-28-restart-meeting-listening.md Sources/MeetingAgentCore/MeetingProcessMonitor.swift Sources/MeetingAgentCore/MeetingAgentViewModel.swift Tests/MeetingAgentCoreTests/MeetingProcessMonitorTests.swift Tests/MeetingAgentCoreTests/MeetingAgentViewModelTests.swift
 git commit -m "feat: allow meeting listening restart after stop (#47)"
 ```
-
