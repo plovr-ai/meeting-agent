@@ -39,4 +39,3 @@ This keeps the feature local to the existing detection boundary and avoids chang
 - Add a `MeetingProcessMonitorTests` case proving ignored processes stay ignored even after `allowReprompt(processID:)`.
 - Add a `MeetingAgentViewModelTests` case proving manual Stop permits the same still-running target to become a pending candidate again.
 - Run `make test`.
-
