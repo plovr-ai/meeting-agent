@@ -221,3 +221,19 @@ Keep bundle templates in the app source tree for packaging, but add `exclude: ["
 When adding non-source packaging assets under `Sources/`, update both `Package.swift` source scanning rules and `.gitignore` in the same change.
 
 ---
+
+## [46] Keep interim replacement IDs from collapsing later final segments
+
+**Date**: 2026-04-28
+**Category**: logic-error
+
+### What went wrong
+The first Deepgram interim upsert design used one fallback active segment ID for responses without word timings, which let an interim update become final but also caused later unrelated final responses without word timings to overwrite the previous final segment.
+
+### Correct approach
+Use a stateful fallback ID in the streaming transcriber: keep one active fallback ID through interim updates, then advance it after the final segment is written.
+
+### How to avoid
+When using upsert for streaming interim data, test both interim-to-final replacement and multiple final utterances that lack provider timing IDs.
+
+---
