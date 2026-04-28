@@ -168,7 +168,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("returnToLatest"))
         XCTAssertTrue(source.contains("translation unavailable"))
         XCTAssertTrue(source.contains("Translating"))
-        XCTAssertTrue(source.contains("person.crop.circle.badge.pencil"))
+        XCTAssertTrue(source.contains("Button(\"Edit name\")"))
         XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
     }
 
@@ -195,7 +195,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("updateSpeakerLabel"))
         XCTAssertTrue(source.contains("updateTranscriptSegmentText"))
         XCTAssertTrue(source.contains("CaptionEditSheet"))
-        XCTAssertTrue(source.contains("person.crop.circle.badge.pencil"))
+        XCTAssertTrue(source.contains("Menu {"))
+        XCTAssertTrue(source.contains("Button(\"Edit name\")"))
+        XCTAssertTrue(source.contains("Image(systemName: \"chevron.down\")"))
+        XCTAssertFalse(source.contains("person.crop.circle.badge.pencil"))
         XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
         XCTAssertTrue(source.contains("Correct Caption"))
         XCTAssertTrue(source.contains("Save Speaker"))

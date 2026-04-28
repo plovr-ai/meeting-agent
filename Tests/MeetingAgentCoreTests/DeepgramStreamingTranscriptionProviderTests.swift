@@ -202,6 +202,10 @@ private actor TranscriptSegmentCollector {
     func append(_ segment: TranscriptSegment) {
         segments.append(segment)
     }
+
+    func values() -> [TranscriptSegment] {
+        segments
+    }
 }
 
 private final class FakeDeepgramWebSocketTask: DeepgramWebSocketTask {

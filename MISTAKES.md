@@ -126,6 +126,22 @@ For UI restyles, review both callback wiring and rendered control labels against
 
 ---
 
+## [27] Sync all layout guard tests after replacing UI controls
+
+**Date**: 2026-04-28
+**Category**: test-mistake
+
+### What went wrong
+The first speaker-name menu implementation updated one layout regression test but missed another test that still asserted the removed speaker edit icon. It also introduced an inline `.font(.system(...))`, violating the existing shared typography guard.
+
+### Correct approach
+When replacing a SwiftUI control, search all source-layout tests for the old control marker and use existing design-system typography instead of inline font declarations.
+
+### How to avoid
+Before full verification, search tests for every removed symbol and source files for project-wide prohibited style patterns touched by the change.
+
+---
+
 ## [25] Avoid sorting-only tests for preferred-target behavior
 
 **Date**: 2026-04-28
