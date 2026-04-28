@@ -994,10 +994,11 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func translateCaptionTurns(_ requests: [CaptionTranslationRequest], using provider: TextTranslationProvider) async {
         for request in requests {
             let turn = request.turn
+            let sourceText = translationSourceText(for: turn, final: !request.isDraft)
             let segment = TranscriptSegment(
                 id: turn.sourceSegmentID,
                 speaker: turn.speaker,
-                text: turn.originalText,
+                text: sourceText,
                 language: turn.sourceLocale,
                 isFinal: turn.isFinal,
                 createdAt: turn.createdAt
@@ -1021,6 +1022,27 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
         }
         updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func translationSourceText(for turn: LiveCaptionTurn, final: Bool) -> String {
+        guard final else {
+            return turn.originalText
+        }
+        let groups = LiveCaptionSpeakerGroup.groups(from: liveCaptionStore.turns)
+        guard let group = groups.first(where: { $0.turns.contains(where: { $0.id == turn.id }) }) else {
+            return turn.originalText
+        }
+        var texts: [String] = []
+        for candidate in group.turns {
+            texts.append(candidate.originalText)
+            if candidate.id == turn.id {
+                break
+            }
+        }
+        return texts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func acceptDraftTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
