@@ -26,6 +26,52 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertNil(turn.freezeReason)
     }
 
+    func testLiveCaptionTurnDefaultsDisplayAndTranslationStateFromLegacyChunkState() throws {
+        let data = Data("""
+        {
+          "id": "segment-1",
+          "sourceSegmentID": "segment-1",
+          "sourceSegmentIDs": ["segment-1"],
+          "speaker": {},
+          "originalText": "hello",
+          "sourceLocale": "en-US",
+          "targetLocale": "zh-CN",
+          "isFinal": true,
+          "captionHealth": { "state": "live" },
+          "translationHealth": { "state": "pending" },
+          "createdAt": "2026-04-28T00:00:00Z",
+          "chunkState": "frozen",
+          "freezeReason": "punctuation"
+        }
+        """.utf8)
+
+        let turn = try JSONDecoder.meetingAgent.decode(LiveCaptionTurn.self, from: data)
+
+        XCTAssertEqual(turn.displayState, .sealed)
+        XCTAssertEqual(turn.translationState, .draft)
+        XCTAssertEqual(turn.boundaryReason, .punctuation)
+        XCTAssertEqual(turn.boundaryStrength, .soft)
+        XCTAssertEqual(turn.chunkState, .frozen)
+    }
+
+    func testHardBoundaryDefaultsTranslationStateToFinal() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "done",
+            isFinal: true,
+            displayState: .sealed,
+            translationState: .final,
+            boundaryReason: .speechFinal,
+            boundaryStrength: .hard
+        )
+
+        XCTAssertEqual(turn.displayState, .sealed)
+        XCTAssertEqual(turn.translationState, .final)
+        XCTAssertEqual(turn.boundaryReason, .speechFinal)
+        XCTAssertEqual(turn.boundaryStrength, .hard)
+        XCTAssertEqual(turn.chunkState, .frozen)
+    }
+
     func testAppendFinalSegmentCreatesStableTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let segment = TranscriptSegment(

@@ -56,6 +56,22 @@ public enum LiveCaptionChunkState: String, Codable, Equatable {
     case frozen
 }
 
+public enum LiveCaptionDisplayBlockState: String, Codable, Equatable {
+    case draft
+    case sealed
+}
+
+public enum LiveCaptionTranslationState: String, Codable, Equatable {
+    case draft
+    case pendingFinal
+    case final
+}
+
+public enum LiveCaptionBoundaryStrength: String, Codable, Equatable {
+    case soft
+    case hard
+}
+
 public enum LiveCaptionFreezeReason: String, Codable, Equatable {
     case speechFinal
     case speakerChanged
@@ -63,6 +79,15 @@ public enum LiveCaptionFreezeReason: String, Codable, Equatable {
     case maxDuration
     case punctuation
     case manualStop
+
+    public var boundaryStrength: LiveCaptionBoundaryStrength {
+        switch self {
+        case .speechFinal, .speakerChanged, .manualStop:
+            return .hard
+        case .maxLength, .maxDuration, .punctuation:
+            return .soft
+        }
+    }
 }
 
 public struct MeetingKeyTerm: Codable, Equatable, Identifiable {
@@ -130,6 +155,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var chunkState: LiveCaptionChunkState
     public var translationRevision: Int
     public var freezeReason: LiveCaptionFreezeReason?
+    public var displayState: LiveCaptionDisplayBlockState
+    public var translationState: LiveCaptionTranslationState
+    public var boundaryReason: LiveCaptionFreezeReason?
+    public var boundaryStrength: LiveCaptionBoundaryStrength?
 
     public init(
         id: String? = nil,
@@ -146,8 +175,15 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         createdAt: Date = Date(),
         chunkState: LiveCaptionChunkState = .frozen,
         translationRevision: Int = 0,
-        freezeReason: LiveCaptionFreezeReason? = nil
+        freezeReason: LiveCaptionFreezeReason? = nil,
+        displayState: LiveCaptionDisplayBlockState? = nil,
+        translationState: LiveCaptionTranslationState? = nil,
+        boundaryReason: LiveCaptionFreezeReason? = nil,
+        boundaryStrength: LiveCaptionBoundaryStrength? = nil
     ) {
+        let resolvedDisplayState = displayState ?? (chunkState == .draft ? .draft : .sealed)
+        let resolvedBoundaryReason = boundaryReason ?? freezeReason
+        let resolvedBoundaryStrength = boundaryStrength ?? resolvedBoundaryReason?.boundaryStrength
         self.id = id ?? sourceSegmentID
         self.sourceSegmentID = sourceSegmentID
         self.sourceSegmentIDs = sourceSegmentIDs ?? [sourceSegmentID]
@@ -163,6 +199,15 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         self.chunkState = chunkState
         self.translationRevision = translationRevision
         self.freezeReason = freezeReason
+        self.displayState = resolvedDisplayState
+        self.translationState = translationState ?? {
+            if resolvedDisplayState == .draft {
+                return .draft
+            }
+            return resolvedBoundaryStrength == .hard ? .final : .draft
+        }()
+        self.boundaryReason = resolvedBoundaryReason
+        self.boundaryStrength = resolvedBoundaryStrength
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -181,6 +226,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         case chunkState
         case translationRevision
         case freezeReason
+        case displayState
+        case translationState
+        case boundaryReason
+        case boundaryStrength
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,6 +249,21 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         chunkState = try container.decodeIfPresent(LiveCaptionChunkState.self, forKey: .chunkState) ?? .frozen
         translationRevision = try container.decodeIfPresent(Int.self, forKey: .translationRevision) ?? 0
         freezeReason = try container.decodeIfPresent(LiveCaptionFreezeReason.self, forKey: .freezeReason)
+        let decodedDisplayState = try container.decodeIfPresent(LiveCaptionDisplayBlockState.self, forKey: .displayState)
+        let decodedTranslationState = try container.decodeIfPresent(LiveCaptionTranslationState.self, forKey: .translationState)
+        let decodedBoundaryReason = try container.decodeIfPresent(LiveCaptionFreezeReason.self, forKey: .boundaryReason) ?? freezeReason
+        let decodedBoundaryStrength = try container.decodeIfPresent(LiveCaptionBoundaryStrength.self, forKey: .boundaryStrength) ?? decodedBoundaryReason?.boundaryStrength
+        let resolvedDisplayState = decodedDisplayState ?? (chunkState == .draft ? .draft : .sealed)
+        let resolvedTranslationState = decodedTranslationState ?? {
+            if resolvedDisplayState == .draft {
+                return .draft
+            }
+            return decodedBoundaryStrength == .hard ? .final : .draft
+        }()
+        displayState = resolvedDisplayState
+        translationState = resolvedTranslationState
+        boundaryReason = decodedBoundaryReason
+        boundaryStrength = decodedBoundaryStrength
     }
 }
 
