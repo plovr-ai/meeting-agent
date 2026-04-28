@@ -205,3 +205,19 @@ Use the semantic translation key and in-flight state to decide whether a pending
 When preserving old UI state during async refreshes, audit every downstream predicate that previously treated empty state as the only signal for pending work.
 
 ---
+
+## [38] Exclude bundle templates from SwiftPM source scanning
+
+**Date**: 2026-04-28
+**Category**: build-config
+
+### What went wrong
+The first app packaging pass added `Sources/MeetingAgentApp/Resources/Info.plist` under an executable target without excluding it from SwiftPM, which produced an unhandled-file warning. The packaging command also generated `dist/MeetingAgent.app` before `dist/` was ignored.
+
+### Correct approach
+Keep bundle templates in the app source tree for packaging, but add `exclude: ["Resources"]` to the SwiftPM target and ignore generated package output directories.
+
+### How to avoid
+When adding non-source packaging assets under `Sources/`, update both `Package.swift` source scanning rules and `.gitignore` in the same change.
+
+---
