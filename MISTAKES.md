@@ -269,3 +269,19 @@ If `origin/HEAD` is absent or empty, query `git remote show origin` or fall back
 Validate the resolved default branch is non-empty before passing it to `git fetch` or `git worktree add`.
 
 ---
+
+## [54] Keep awaited actor values out of XCTest autoclosures
+
+**Date**: 2026-04-28
+**Category**: test-mistake
+
+### What went wrong
+The first streaming raw-response logging test placed `await received.texts` directly inside `XCTAssertEqual`, which Swift rejects because XCTest assertions use non-async autoclosures.
+
+### Correct approach
+Await actor-isolated values into local constants before passing them to XCTest assertions.
+
+### How to avoid
+When asserting actor state in XCTest, split `let value = await actor.value` from `XCTAssertEqual(value, expected)`.
+
+---
