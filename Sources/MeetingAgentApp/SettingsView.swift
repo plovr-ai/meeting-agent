@@ -32,8 +32,10 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        CommandCenterScrollView(content: {
             VStack(alignment: .leading, spacing: 16) {
+                CommandCenterPageHeader(title: "Settings", subtitle: "Speech, transcription chain, and provider credentials")
+
                 SettingsCommandCenterPanel("Speech") {
                     Picker("Source Locale", selection: $draft.localeIdentifier) {
                         ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
@@ -108,12 +110,10 @@ struct SettingsView: View {
 
                 SettingsCommandCenterPanel("Validation") {
                     Text(primaryChainPreflightText)
-                        .font(.caption)
-                        .foregroundStyle(primaryChainPreflightColor)
+                        .commandCenterCaption(primaryChainPreflightColor)
 
                     Text(configurationStatusText)
-                        .font(.caption)
-                        .foregroundStyle(configurationStatusColor)
+                        .commandCenterCaption(configurationStatusColor)
 
                     HStack {
                         Button("Save") {
@@ -133,12 +133,11 @@ struct SettingsView: View {
             .padding(24)
             .foregroundStyle(CommandCenterPalette.text)
             .tint(CommandCenterPalette.primary)
-        }
+        })
         .background(CommandCenterPalette.window)
         .foregroundStyle(CommandCenterPalette.text)
         .tint(CommandCenterPalette.primary)
         .disabled(isRecording)
-        .navigationTitle("Settings")
         .onChange(of: draft.localTranscriptionProviderID) { _, providerID in
             draft.provider = providerID == "macos-speech-local" ? .local : .whisper
         }

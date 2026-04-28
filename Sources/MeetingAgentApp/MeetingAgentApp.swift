@@ -10,6 +10,7 @@ struct MeetingAgentApp: App {
         WindowGroup("Meeting Agent") {
             MainWindowView(viewModel: viewModel)
                 .frame(minWidth: 900, minHeight: 600)
+                .commandCenterAppTheme()
                 .onAppear {
                     appDelegate.viewModel = viewModel
                 }

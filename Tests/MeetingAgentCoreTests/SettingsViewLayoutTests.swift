@@ -51,6 +51,15 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".tint(CommandCenterPalette.primary)"))
     }
 
+    func testSettingsViewUsesInContentThemedHeaderInsteadOfSystemNavigationTitle() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/SettingsView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("CommandCenterPageHeader(title: \"Settings\""))
+        XCTAssertFalse(source.contains(".navigationTitle(\"Settings\")"))
+    }
+
     func testMainWindowUsesCommandCenterStyling() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
@@ -81,9 +90,51 @@ final class SettingsViewLayoutTests: XCTestCase {
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("enum CommandCenterPalette"))
+        XCTAssertTrue(source.contains("enum CommandCenterTypography"))
         XCTAssertTrue(source.contains("struct CommandCenterPanel"))
+        XCTAssertTrue(source.contains("struct CommandCenterPageHeader"))
+        XCTAssertTrue(source.contains("struct CommandCenterScrollView"))
+        XCTAssertTrue(source.contains("struct CommandCenterTextEditor"))
         XCTAssertTrue(source.contains("struct CommandCenterChip"))
         XCTAssertTrue(source.contains("struct CommandCenterActionButtonStyle"))
+        XCTAssertTrue(source.contains("commandCenterAppTheme()"))
+        XCTAssertTrue(source.contains("CommandCenterNativeAppearance"))
         XCTAssertTrue(source.contains("extension Text"))
+    }
+
+    func testAppViewsUseSharedThemeAndAvoidAdHocFonts() throws {
+        let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MeetingAgentApp.swift")
+        let mainSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let settingsSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/SettingsView.swift")
+        let appSource = try String(contentsOf: appSourceURL)
+        let mainSource = try String(contentsOf: mainSourceURL)
+        let settingsSource = try String(contentsOf: settingsSourceURL)
+
+        XCTAssertTrue(appSource.contains(".commandCenterAppTheme()"))
+        XCTAssertFalse(mainSource.contains(".font(.system("))
+        XCTAssertFalse(mainSource.contains(".font(.headline)"))
+        XCTAssertFalse(mainSource.contains(".font(.caption)"))
+        XCTAssertFalse(settingsSource.contains(".font(.system("))
+        XCTAssertFalse(settingsSource.contains(".font(.headline)"))
+        XCTAssertFalse(settingsSource.contains(".font(.caption)"))
+    }
+
+    func testScrollableAndEditableSurfacesUseSharedCommandCenterComponents() throws {
+        let mainSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let settingsSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/SettingsView.swift")
+        let mainSource = try String(contentsOf: mainSourceURL)
+        let settingsSource = try String(contentsOf: settingsSourceURL)
+
+        XCTAssertTrue(mainSource.contains("CommandCenterScrollView"))
+        XCTAssertTrue(settingsSource.contains("CommandCenterScrollView"))
+        XCTAssertTrue(mainSource.contains("CommandCenterTextEditor(text: $text)"))
+        XCTAssertFalse(mainSource.contains("\n            TextEditor(text:"))
+        XCTAssertFalse(mainSource.contains("\n            ScrollView {"))
+        XCTAssertFalse(settingsSource.contains("\n        ScrollView {"))
     }
 }
