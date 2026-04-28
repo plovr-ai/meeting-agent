@@ -23,10 +23,13 @@ Use these from the repository root:
 ```sh
 make test
 swift build --product MeetingAgentApp
+make package-app
 swift run MeetingAgentApp
 ```
 
 The app stores user meeting data under `~/Library/Application Support/MeetingAgent/Meetings/`.
+
+Use `make package-app` to create `dist/MeetingAgent.app` for local installation or prototype sharing. The generated app bundle is not Developer ID signed or Apple notarized, so recipients may need to right-click Open or approve it in System Settings the first time they launch it.
 
 Implemented STT providers are `local`, backed by macOS Speech, and `whisper`, backed by a local `whisper.cpp` CLI and model.
 The default STT provider is `whisper` for the app. Use the app settings to select `local` only when explicitly testing macOS Speech.

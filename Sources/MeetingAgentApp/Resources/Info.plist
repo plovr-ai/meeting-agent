@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Meeting Agent</string>
+    <key>CFBundleExecutable</key>
+    <string>MeetingAgentApp</string>
+    <key>CFBundleIdentifier</key>
+    <string>ai.plovr.MeetingAgent</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Meeting Agent</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Meeting Agent needs microphone access to capture meeting audio for transcription and summaries.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Meeting Agent uses speech recognition to transcribe meeting audio when the local Apple Speech provider is selected.</string>
+    <key>NSUserNotificationUsageDescription</key>
+    <string>Meeting Agent uses notifications to alert you when a meeting app is detected.</string>
+</dict>
+</plist>
