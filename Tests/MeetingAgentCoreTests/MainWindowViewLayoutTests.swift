@@ -71,14 +71,38 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("showSettings = true"))
     }
 
-    func testMainWindowContainsLiveTranslationControls() throws {
+    func testWindowToolbarUsesCommandCenterThemeBackground() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("Live Translation"))
-        XCTAssertTrue(source.contains("Start Live Translation"))
-        XCTAssertTrue(source.contains("Stop Live Translation"))
+        XCTAssertTrue(source.contains(".toolbarBackground(CommandCenterPalette.surface, for: .windowToolbar)"))
+        XCTAssertTrue(source.contains(".toolbarBackground(.visible, for: .windowToolbar)"))
+        XCTAssertTrue(source.contains(".toolbarColorScheme(.dark, for: .windowToolbar)"))
+        XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.text)"))
+    }
+
+    func testSidebarSectionHeaderUsesThemeTextColor() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertFalse(source.contains("Section(\"Meetings\")"))
+        XCTAssertTrue(source.contains("Section {"))
+        XCTAssertTrue(source.contains("Text(\"Meetings\")"))
+        XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.secondaryText)"))
+    }
+
+    func testMainWindowRemovesUnimplementedLiveTranslationControls() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertFalse(source.contains("Live Translation"))
+        XCTAssertFalse(source.contains("Start Live Translation"))
+        XCTAssertFalse(source.contains("Stop Live Translation"))
+        XCTAssertFalse(source.contains("Send to call"))
+        XCTAssertFalse(source.contains("Type what you want to say in Chinese or English"))
     }
 
     func testMeetingDetailShowsCurrentPipelineAndActualSTTSource() throws {
@@ -90,22 +114,22 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Current Pipeline"))
         XCTAssertTrue(source.contains("Transcription Link"))
         XCTAssertTrue(source.contains("Transcription Model"))
-        XCTAssertTrue(source.contains("Translation Link"))
-        XCTAssertTrue(source.contains("Translation Model"))
+        XCTAssertFalse(source.contains("Translation Link"))
+        XCTAssertFalse(source.contains("Translation Model"))
         XCTAssertTrue(source.contains("Actual STT Source"))
         XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
     }
 
-    func testMainWindowExposesLiveMeetingDashboardStructure() throws {
+    func testMainWindowRemovesUnimplementedMeetingGoalDashboardStructure() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("LiveMeetingDashboardView"))
+        XCTAssertFalse(source.contains("LiveMeetingDashboardView"))
         XCTAssertTrue(source.contains("CaptionTurnView"))
-        XCTAssertTrue(source.contains("GoalStatusPanel"))
-        XCTAssertTrue(source.contains("SuggestedQuestionRow"))
-        XCTAssertTrue(source.contains("LiveHealthChip"))
+        XCTAssertFalse(source.contains("GoalStatusPanel"))
+        XCTAssertFalse(source.contains("SuggestedQuestionRow"))
+        XCTAssertFalse(source.contains("LiveHealthChip"))
     }
 
     func testTranscriptPaneShowsLiveCaptionStreamBeforeTranscript() throws {
@@ -127,7 +151,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("turn: turn"))
     }
 
-    func testExportsPanelExposesSubtitleExportActions() throws {
+    func testExportsPanelExposesImplementedExportActionsOnly() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
@@ -138,6 +162,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Label(\"VTT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
+        XCTAssertFalse(source.contains("exportReadinessReport"))
+        XCTAssertFalse(source.contains("Readiness Report"))
     }
 
     func testLiveCaptionsExposeCorrectionControls() throws {
@@ -155,19 +181,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save Caption"))
     }
 
-    func testMainWindowExposesLightweightMeetingGoalComposer() throws {
+    func testMainWindowRemovesUnimplementedMeetingGoalComposer() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("GoalComposerPanel"))
-        XCTAssertTrue(source.contains("TextField(\"Goal title\""))
-        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Objectives\""))
-        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Required Questions\""))
-        XCTAssertTrue(source.contains("LabeledTextEditor(title: \"Key Terms\""))
-        XCTAssertTrue(source.contains("Label(\"Apply Goal\", systemImage: \"target\")"))
-        XCTAssertTrue(source.contains("setMeetingGoal(buildGoal())"))
-        XCTAssertTrue(source.contains("meetingGoal: viewModel.meetingGoal"))
-        XCTAssertTrue(source.contains("draftGoal: meetingGoal"))
+        XCTAssertFalse(source.contains("GoalComposerPanel"))
+        XCTAssertFalse(source.contains("TextField(\"Goal title\""))
+        XCTAssertFalse(source.contains("LabeledTextEditor(title: \"Objectives\""))
+        XCTAssertFalse(source.contains("LabeledTextEditor(title: \"Required Questions\""))
+        XCTAssertFalse(source.contains("LabeledTextEditor(title: \"Key Terms\""))
+        XCTAssertFalse(source.contains("Label(\"Apply Goal\", systemImage: \"target\")"))
+        XCTAssertFalse(source.contains("setMeetingGoal(buildGoal())"))
+        XCTAssertFalse(source.contains("meetingGoal: viewModel.meetingGoal"))
+        XCTAssertFalse(source.contains("draftGoal: meetingGoal"))
     }
 }

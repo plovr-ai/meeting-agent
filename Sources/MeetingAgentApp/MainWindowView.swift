@@ -16,7 +16,7 @@ struct MainWindowView: View {
                         viewModel.selectMeeting(id)
                     }
                 )) {
-                    Section("Meetings") {
+                    Section {
                         ForEach(viewModel.meetings) { meeting in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(meeting.name)
@@ -29,9 +29,13 @@ struct MainWindowView: View {
                             .padding(.vertical, 4)
                             .tag(Optional(meeting.id))
                         }
+                    } header: {
+                        Text("Meetings")
+                            .foregroundStyle(CommandCenterPalette.secondaryText)
                     }
                 }
                 .scrollContentBackground(.hidden)
+                .foregroundStyle(CommandCenterPalette.text)
 
                 Spacer()
 
@@ -69,12 +73,7 @@ struct MainWindowView: View {
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     statusText: viewModel.statusText,
                     isRecording: viewModel.isRecording,
-                    realtimeTranslationStatus: viewModel.realtimeTranslationStatus,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
-                    meetingGoal: viewModel.meetingGoal,
-                    meetingProgressState: viewModel.meetingProgressState,
-                    meetingProgressHealth: viewModel.meetingProgressHealth,
-                    liveTranslationTurns: viewModel.liveTranslationTurns,
                     stopRecording: {
                         Task {
                             do {
@@ -107,30 +106,9 @@ struct MainWindowView: View {
                             try viewModel.exportSubtitles(for: meeting.id, format: .vtt, to: destination)
                         }
                     },
-                    exportReadinessReport: { meeting in
-                        export("readiness-report.md", for: meeting) { destination in
-                            try viewModel.exportReadinessReport(for: meeting.id, to: destination)
-                        }
-                    },
                     retryTranscription: { meeting in
                         Task {
                             await viewModel.retryTranscription(for: meeting.id)
-                        }
-                    },
-                    startRealtimeTranslation: { locale in
-                        Task {
-                            await viewModel.startRealtimeTranslation(targetLocale: locale)
-                        }
-                    },
-                    stopRealtimeTranslation: {
-                        Task {
-                            await viewModel.stopRealtimeTranslation()
-                        }
-                    },
-                    setMeetingGoal: { goal in
-                        viewModel.setMeetingGoal(goal)
-                        Task {
-                            await viewModel.refreshMeetingProgress()
                         }
                     },
                     updateSpeakerLabel: { meeting, speakerID, label in
@@ -155,6 +133,10 @@ struct MainWindowView: View {
             }
         }
         .background(CommandCenterPalette.window)
+        .foregroundStyle(CommandCenterPalette.text)
+        .toolbarBackground(CommandCenterPalette.surface, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarColorScheme(.dark, for: .windowToolbar)
         .alert(
             "Meeting detected",
             isPresented: Binding(
@@ -223,26 +205,16 @@ private struct MeetingDetailView: View {
     let primaryChainPreflightResult: PrimaryChainPreflightResult
     let statusText: String
     let isRecording: Bool
-    let realtimeTranslationStatus: RealtimeTranslationStatus
     let liveCaptionTurns: [LiveCaptionTurn]
-    let meetingGoal: MeetingGoal?
-    let meetingProgressState: MeetingProgressState?
-    let meetingProgressHealth: MeetingProgressHealth
-    let liveTranslationTurns: [LiveTranslationTurn]
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
     let exportMeetingData: (MeetingRecord) -> Void
     let exportSRT: (MeetingRecord) -> Void
     let exportVTT: (MeetingRecord) -> Void
-    let exportReadinessReport: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
-    let startRealtimeTranslation: (String) -> Void
-    let stopRealtimeTranslation: () -> Void
-    let setMeetingGoal: (MeetingGoal?) -> Void
     let updateSpeakerLabel: (MeetingRecord, String, String) -> Void
     let updateTranscriptSegmentText: (MeetingRecord, String, String) -> Void
-    @State private var targetLocale = "zh-CN"
 
     var body: some View {
         ZStack {
@@ -253,23 +225,13 @@ private struct MeetingDetailView: View {
                     pipelineDisplayName: pipelineDisplayName(for: speechConfiguration),
                     transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
-                    translationLinkText: translationLinkText(for: speechConfiguration),
-                    translationModelText: translationModelText(for: speechConfiguration),
                     preflightText: preflightText,
                     actualTranscriptionSourceText: actualTranscriptionSourceText(for: meeting),
                     statusText: statusText,
                     isRecording: isRecording,
-                    realtimeTranslationStatus: realtimeTranslationStatus,
                     liveCaptionTurns: liveCaptionTurns,
-                    meetingGoal: meetingGoal,
-                    meetingProgressState: meetingProgressState,
-                    meetingProgressHealth: meetingProgressHealth,
-                    liveTranslationTurns: liveTranslationTurns,
-                    targetLocale: $targetLocale,
                     transcriptText: transcriptText(for: meeting),
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
-                    liveTranslationStatusText: liveTranslationStatusText(realtimeTranslationStatus),
-                    liveTranslationStatusColor: liveTranslationStatusColor(realtimeTranslationStatus),
                     summary: summary(for: meeting),
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
@@ -277,18 +239,13 @@ private struct MeetingDetailView: View {
                     exportMeetingData: { exportMeetingData(meeting) },
                     exportSRT: { exportSRT(meeting) },
                     exportVTT: { exportVTT(meeting) },
-                    exportReadinessReport: { exportReadinessReport(meeting) },
                     retryTranscription: { retryTranscription(meeting) },
-                    startRealtimeTranslation: { startRealtimeTranslation(targetLocale) },
-                    stopRealtimeTranslation: stopRealtimeTranslation,
-                    setMeetingGoal: setMeetingGoal,
                     updateSpeakerLabel: { speakerID, label in
                         updateSpeakerLabel(meeting, speakerID, label)
                     },
                     updateTranscriptSegmentText: { segmentID, text in
                         updateTranscriptSegmentText(meeting, segmentID, text)
-                    },
-                    liveTranslationCanStop: liveTranslationCanStop(realtimeTranslationStatus)
+                    }
                 )
             } else {
                 CommandCenterPanel {
@@ -334,23 +291,6 @@ private struct MeetingDetailView: View {
             return configuration.whisperModelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Not configured"
         }
         return "System model"
-    }
-
-    private func translationLinkText(for configuration: SpeechTranscriptionConfiguration) -> String {
-        let providerID = configuration.translationExecutionMode == .hosted
-            ? configuration.hostedTranslationProviderID
-            : configuration.localTranslationProviderID
-        return "\(modeDisplayName(configuration.translationExecutionMode)) / \(providerDisplayName(providerID))"
-    }
-
-    private func translationModelText(for configuration: SpeechTranscriptionConfiguration) -> String {
-        guard configuration.translationExecutionMode == .hosted else {
-            return "Local model"
-        }
-        return modelDisplayName(
-            configuration.hostedTranslationModelID,
-            in: BilingualPipelineFactory.hostedTranslationModelOptions
-        )
     }
 
     private var preflightText: String {
@@ -425,41 +365,6 @@ private struct MeetingDetailView: View {
         }
     }
 
-    private func liveTranslationCanStop(_ status: RealtimeTranslationStatus) -> Bool {
-        switch status {
-        case .connecting, .connected, .degraded:
-            return true
-        case .idle, .failed:
-            return false
-        }
-    }
-
-    private func liveTranslationStatusText(_ status: RealtimeTranslationStatus) -> String {
-        switch status {
-        case .idle:
-            return "Live translation idle"
-        case .connecting:
-            return "Connecting live translation"
-        case .connected:
-            return "Live translation connected"
-        case .degraded(let message):
-            return "Live translation degraded: \(message)"
-        case .failed(let message):
-            return "Live translation failed: \(message)"
-        }
-    }
-
-    private func liveTranslationStatusColor(_ status: RealtimeTranslationStatus) -> Color {
-        switch status {
-        case .failed:
-            return CommandCenterPalette.danger
-        case .degraded:
-            return CommandCenterPalette.warning
-        default:
-            return CommandCenterPalette.secondaryText
-        }
-    }
-
     private func summary(for meeting: MeetingRecord) -> MeetingSummary? {
         guard let summaryJSONURL = meeting.summaryJSONURL else { return nil }
         return try? MeetingSummaryWriter.read(from: summaryJSONURL)
@@ -471,23 +376,13 @@ private struct MeetingCommandCenterView: View {
     let pipelineDisplayName: String
     let transcriptionLinkText: String
     let transcriptionModelText: String
-    let translationLinkText: String
-    let translationModelText: String
     let preflightText: String
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
-    let realtimeTranslationStatus: RealtimeTranslationStatus
     let liveCaptionTurns: [LiveCaptionTurn]
-    let meetingGoal: MeetingGoal?
-    let meetingProgressState: MeetingProgressState?
-    let meetingProgressHealth: MeetingProgressHealth
-    let liveTranslationTurns: [LiveTranslationTurn]
-    @Binding var targetLocale: String
     let transcriptText: String
     let transcriptionStatusText: String
-    let liveTranslationStatusText: String
-    let liveTranslationStatusColor: Color
     let summary: MeetingSummary?
     let stopRecording: () -> Void
     let copySummary: () -> Void
@@ -495,14 +390,9 @@ private struct MeetingCommandCenterView: View {
     let exportMeetingData: () -> Void
     let exportSRT: () -> Void
     let exportVTT: () -> Void
-    let exportReadinessReport: () -> Void
     let retryTranscription: () -> Void
-    let startRealtimeTranslation: () -> Void
-    let stopRealtimeTranslation: () -> Void
-    let setMeetingGoal: (MeetingGoal?) -> Void
     let updateSpeakerLabel: (String, String) -> Void
     let updateTranscriptSegmentText: (String, String) -> Void
-    let liveTranslationCanStop: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -511,27 +401,17 @@ private struct MeetingCommandCenterView: View {
                 pipelineDisplayName: pipelineDisplayName,
                 transcriptionLinkText: transcriptionLinkText,
                 transcriptionModelText: transcriptionModelText,
-                translationLinkText: translationLinkText,
-                translationModelText: translationModelText,
                 preflightText: preflightText,
                 actualTranscriptionSourceText: actualTranscriptionSourceText,
                 statusText: statusText,
                 isRecording: isRecording,
-                realtimeTranslationStatus: realtimeTranslationStatus,
                 liveCaptionTurns: liveCaptionTurns,
-                liveTranslationTurns: liveTranslationTurns,
-                targetLocale: $targetLocale,
                 transcriptText: transcriptText,
                 transcriptionStatusText: transcriptionStatusText,
-                liveTranslationStatusText: liveTranslationStatusText,
-                liveTranslationStatusColor: liveTranslationStatusColor,
                 stopRecording: stopRecording,
                 retryTranscription: retryTranscription,
-                startRealtimeTranslation: startRealtimeTranslation,
-                stopRealtimeTranslation: stopRealtimeTranslation,
                 updateSpeakerLabel: updateSpeakerLabel,
-                updateTranscriptSegmentText: updateTranscriptSegmentText,
-                liveTranslationCanStop: liveTranslationCanStop
+                updateTranscriptSegmentText: updateTranscriptSegmentText
             )
             .frame(minWidth: 520)
 
@@ -541,18 +421,12 @@ private struct MeetingCommandCenterView: View {
             InsightPaneView(
                 meeting: meeting,
                 isRecording: isRecording,
-                liveCaptionTurns: liveCaptionTurns,
-                meetingGoal: meetingGoal,
-                meetingProgressState: meetingProgressState,
-                meetingProgressHealth: meetingProgressHealth,
                 summary: summary,
                 copySummary: copySummary,
                 exportTranscript: exportTranscript,
                 exportMeetingData: exportMeetingData,
                 exportSRT: exportSRT,
-                exportVTT: exportVTT,
-                exportReadinessReport: exportReadinessReport,
-                setMeetingGoal: setMeetingGoal
+                exportVTT: exportVTT
             )
             .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
         }
@@ -565,27 +439,17 @@ private struct TranscriptPaneView: View {
     let pipelineDisplayName: String
     let transcriptionLinkText: String
     let transcriptionModelText: String
-    let translationLinkText: String
-    let translationModelText: String
     let preflightText: String
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
-    let realtimeTranslationStatus: RealtimeTranslationStatus
     let liveCaptionTurns: [LiveCaptionTurn]
-    let liveTranslationTurns: [LiveTranslationTurn]
-    @Binding var targetLocale: String
     let transcriptText: String
     let transcriptionStatusText: String
-    let liveTranslationStatusText: String
-    let liveTranslationStatusColor: Color
     let stopRecording: () -> Void
     let retryTranscription: () -> Void
-    let startRealtimeTranslation: () -> Void
-    let stopRealtimeTranslation: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
     let updateTranscriptSegmentText: (String, String) -> Void
-    let liveTranslationCanStop: Bool
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
     @State private var transcriptEditTarget: LiveCaptionTurn?
@@ -594,7 +458,6 @@ private struct TranscriptPaneView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            progress
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     metadata
@@ -602,12 +465,10 @@ private struct TranscriptPaneView: View {
                     failureReason
                     liveCaptions
                     transcript
-                    liveTranslation
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(28)
             }
-            composer
         }
         .background(CommandCenterPalette.window)
         .sheet(item: $speakerEditTarget) { turn in
@@ -663,8 +524,7 @@ private struct TranscriptPaneView: View {
                 .lineLimit(1)
 
             Spacer()
-
-            CommandCenterChip(title: "\(meeting.speechLocaleIdentifier) -> \(targetLocale)", tint: CommandCenterPalette.secondaryText)
+            CommandCenterChip(title: meeting.speechLocaleIdentifier, tint: CommandCenterPalette.secondaryText)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 16)
@@ -674,25 +534,6 @@ private struct TranscriptPaneView: View {
                 .fill(CommandCenterPalette.border)
                 .frame(height: 1)
         }
-    }
-
-    private var progress: some View {
-        HStack(spacing: 14) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(CommandCenterPalette.panel)
-                    Capsule()
-                        .fill(CommandCenterPalette.primary.opacity(0.65))
-                        .frame(width: proxy.size.width * progressFraction)
-                }
-            }
-            .frame(height: 6)
-
-            Text("Phase 2 - Regional P&L - 2 of 5")
-                .commandCenterMono()
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
     }
 
     private var metadata: some View {
@@ -711,8 +552,6 @@ private struct TranscriptPaneView: View {
                 CommandCenterChip(title: pipelineDisplayName, tint: CommandCenterPalette.primary)
                 CommandCenterChip(title: "Transcription Link: \(transcriptionLinkText)", tint: CommandCenterPalette.cyan)
                 CommandCenterChip(title: "Transcription Model: \(transcriptionModelText)")
-                CommandCenterChip(title: "Translation Link: \(translationLinkText)", tint: CommandCenterPalette.purple)
-                CommandCenterChip(title: "Translation Model: \(translationModelText)")
                 CommandCenterChip(title: "Preflight: \(preflightText)", tint: preflightTint)
             }
         }
@@ -795,110 +634,11 @@ private struct TranscriptPaneView: View {
         }
     }
 
-    private var liveTranslation: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Live Translation").commandCenterEyebrow()
-                    Spacer()
-                    Text(liveTranslationStatusText)
-                        .font(.caption)
-                        .foregroundStyle(liveTranslationStatusColor)
-                }
-
-                if liveTranslationTurns.isEmpty {
-                    Text("Translated turns will appear here while the meeting is live.")
-                        .foregroundStyle(CommandCenterPalette.secondaryText)
-                } else {
-                    ForEach(liveTranslationTurns.suffix(5)) { turn in
-                        Text(turn.text)
-                            .foregroundStyle(turn.isFinal ? CommandCenterPalette.text : CommandCenterPalette.secondaryText)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                HStack {
-                    Picker("Target", selection: $targetLocale) {
-                        ForEach(MeetingAgentViewModel.supportedLocaleIdentifiers, id: \.self) { locale in
-                            Text(locale).tag(locale)
-                        }
-                    }
-                    .frame(maxWidth: 160)
-
-                    Button("Start Live Translation") {
-                        startRealtimeTranslation()
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle(variant: .secondary))
-                    .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
-
-                    Button("Stop Live Translation") {
-                        stopRealtimeTranslation()
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
-                    .disabled(!liveTranslationCanStop)
-                }
-            }
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Image(systemName: "mic")
-                    .foregroundStyle(CommandCenterPalette.danger)
-                    .frame(width: 42, height: 42)
-                    .background(CommandCenterPalette.danger.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(CommandCenterPalette.danger.opacity(0.45), lineWidth: 1)
-                    )
-
-                Text("Type what you want to say in Chinese or English")
-                    .foregroundStyle(CommandCenterPalette.secondaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(CommandCenterPalette.panelRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                Button {
-                    startRealtimeTranslation()
-                } label: {
-                    Label("Send to call", systemImage: "paperplane")
-                }
-                .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
-                .disabled(!isRecording || realtimeTranslationStatus == .connecting || realtimeTranslationStatus == .connected)
-            }
-
-            HStack {
-                Text("Mic into app is isolated - your speech will not leak into the meeting")
-                Spacer()
-                Text(statusText)
-            }
-            .font(.caption)
-            .foregroundStyle(CommandCenterPalette.mutedText)
-        }
-        .padding(18)
-        .background(CommandCenterPalette.surface)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(CommandCenterPalette.border)
-                .frame(height: 1)
-        }
-    }
-
     private var elapsedText: String {
         let interval = (meeting.endedAt ?? Date()).timeIntervalSince(meeting.startedAt)
         let minutes = max(Int(interval) / 60, 0)
         let seconds = max(Int(interval) % 60, 0)
         return String(format: "%02d:%02d", minutes, seconds)
-    }
-
-    private var progressFraction: CGFloat {
-        guard isRecording else { return 1 }
-        let interval = Date().timeIntervalSince(meeting.startedAt)
-        return min(max(interval / 3600, 0.05), 1)
     }
 
     private var transcriptionTint: Color {
@@ -922,27 +662,18 @@ private struct TranscriptPaneView: View {
 private struct InsightPaneView: View {
     let meeting: MeetingRecord
     let isRecording: Bool
-    let liveCaptionTurns: [LiveCaptionTurn]
-    let meetingGoal: MeetingGoal?
-    let meetingProgressState: MeetingProgressState?
-    let meetingProgressHealth: MeetingProgressHealth
     let summary: MeetingSummary?
     let copySummary: () -> Void
     let exportTranscript: () -> Void
     let exportMeetingData: () -> Void
     let exportSRT: () -> Void
     let exportVTT: () -> Void
-    let exportReadinessReport: () -> Void
-    let setMeetingGoal: (MeetingGoal?) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     phaseSummary
-                    liveGoalCockpit
-                    goalComposer
-                    suggestedReplies
                     exports
                     summaryPanel
                 }
@@ -955,8 +686,8 @@ private struct InsightPaneView: View {
     private var phaseSummary: some View {
         CommandCenterPanel {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Phase Summary - Regional P&L").commandCenterEyebrow()
-                Text(summary?.overview.isEmpty == false ? summary?.overview ?? "" : "Meeting progress, risks, and decisions will appear here as the transcript develops.")
+                Text("Summary").commandCenterEyebrow()
+                Text(summary?.overview.isEmpty == false ? summary?.overview ?? "" : "Meeting summary will appear here after recording stops.")
                     .commandCenterBody()
                     .lineSpacing(4)
                     .textSelection(.enabled)
@@ -966,44 +697,6 @@ private struct InsightPaneView: View {
                 }
             }
         }
-    }
-
-    private var suggestedReplies: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Suggested Replies").commandCenterEyebrow()
-                    Spacer()
-                    Text("from live translation")
-                        .commandCenterMono()
-                }
-                Text("Use the live translation controls to prepare localized wording during the meeting.")
-                    .foregroundStyle(CommandCenterPalette.secondaryText)
-                CommandCenterChip(title: "REFRAME", tint: CommandCenterPalette.cyan)
-            }
-        }
-    }
-
-    private var liveGoalCockpit: some View {
-        LiveMeetingDashboardView(
-            captions: liveCaptionTurns,
-            progress: meetingProgressState,
-            health: meetingProgressHealth,
-            copyEnglishQuestion: copyToPasteboard
-        )
-    }
-
-    private var goalComposer: some View {
-        GoalComposerPanel(
-            currentGoal: meetingProgressState?.goal,
-            draftGoal: meetingGoal,
-            setMeetingGoal: setMeetingGoal
-        )
-    }
-
-    private func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private var exports: some View {
@@ -1049,14 +742,6 @@ private struct InsightPaneView: View {
                     }
                     .buttonStyle(CommandCenterActionButtonStyle())
                 }
-                HStack {
-                    Button {
-                        exportReadinessReport()
-                    } label: {
-                        Label("Readiness Report", systemImage: "checklist")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                }
             }
         }
     }
@@ -1065,7 +750,7 @@ private struct InsightPaneView: View {
     private var summaryPanel: some View {
         CommandCenterPanel {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Goal Progress").commandCenterEyebrow()
+                Text("Details").commandCenterEyebrow()
                 if let summary {
                     if summary.status == .failed {
                         Text(summary.failureReason ?? "Summary generation failed.")
@@ -1081,33 +766,6 @@ private struct InsightPaneView: View {
                     Text("No summary generated yet.")
                         .foregroundStyle(CommandCenterPalette.secondaryText)
                 }
-            }
-        }
-    }
-}
-
-private struct LiveMeetingDashboardView: View {
-    let captions: [LiveCaptionTurn]
-    let progress: MeetingProgressState?
-    let health: MeetingProgressHealth
-    let copyEnglishQuestion: (String) -> Void
-
-    var body: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 8) {
-                    Text("Live Goal Cockpit").commandCenterEyebrow()
-                    Spacer()
-                    LiveHealthChip(title: "Captions", health: health.caption)
-                    LiveHealthChip(title: "Translation", health: health.translation)
-                    LiveHealthChip(title: "Analysis", health: health.analysis)
-                }
-
-                if let latestCaption = captions.last {
-                    CaptionTurnView(turn: latestCaption)
-                }
-
-                GoalStatusPanel(progress: progress, copyEnglishQuestion: copyEnglishQuestion)
             }
         }
     }
@@ -1201,269 +859,6 @@ private struct CaptionEditSheet: View {
         }
         .padding(22)
         .background(CommandCenterPalette.surface)
-    }
-}
-
-private struct GoalStatusPanel: View {
-    let progress: MeetingProgressState?
-    let copyEnglishQuestion: (String) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let progress {
-                HStack {
-                    Text(progress.goal.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(CommandCenterPalette.text)
-                        .lineLimit(1)
-                    Spacer()
-                    CommandCenterChip(title: progress.status.displayText.uppercased(), tint: statusTint, filled: true)
-                }
-
-                ForEach(progress.objectives, id: \.objectiveID) { objective in
-                    HStack(spacing: 8) {
-                        Image(systemName: objective.status == .confirmed ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(objective.status == .confirmed ? CommandCenterPalette.primary : CommandCenterPalette.secondaryText)
-                        Text(objective.title)
-                            .foregroundStyle(CommandCenterPalette.secondaryText)
-                            .lineLimit(2)
-                    }
-                }
-
-                ForEach(progress.suggestedQuestions.prefix(3)) { suggestion in
-                    SuggestedQuestionRow(suggestion: suggestion, copyEnglishQuestion: copyEnglishQuestion)
-                }
-            } else {
-                Text("No meeting goal set.")
-                    .foregroundStyle(CommandCenterPalette.secondaryText)
-            }
-        }
-    }
-
-    private var statusTint: Color {
-        switch progress?.status {
-        case .onTrack:
-            return CommandCenterPalette.primary
-        case .partiallyCovered:
-            return CommandCenterPalette.warning
-        case .blocked:
-            return CommandCenterPalette.danger
-        case .notStarted, nil:
-            return CommandCenterPalette.secondaryText
-        }
-    }
-}
-
-private struct GoalComposerPanel: View {
-    let currentGoal: MeetingGoal?
-    let draftGoal: MeetingGoal?
-    let setMeetingGoal: (MeetingGoal?) -> Void
-    @State private var title = ""
-    @State private var objectivesText = ""
-    @State private var requiredQuestionsText = ""
-    @State private var keyTermsText = ""
-
-    var body: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Meeting Goal").commandCenterEyebrow()
-                    Spacer()
-                    if currentGoal != nil || draftGoal != nil {
-                        CommandCenterChip(title: "SET", tint: CommandCenterPalette.primary, filled: true)
-                    }
-                }
-
-                TextField("Goal title", text: $title)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(CommandCenterPalette.panelRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledTextEditor(title: "Objectives", text: $objectivesText, minHeight: 76)
-                    LabeledTextEditor(title: "Required Questions", text: $requiredQuestionsText, minHeight: 64)
-                    LabeledTextEditor(title: "Key Terms", text: $keyTermsText, minHeight: 54)
-                }
-
-                HStack {
-                    Button {
-                        setMeetingGoal(buildGoal())
-                    } label: {
-                        Label("Apply Goal", systemImage: "target")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
-                    .disabled(!canApply)
-
-                    Button {
-                        clearDraft()
-                        setMeetingGoal(nil)
-                    } label: {
-                        Label("Clear", systemImage: "xmark.circle")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                    .disabled(!canClear)
-                }
-            }
-        }
-        .onAppear(perform: seedDraftIfNeeded)
-        .onChange(of: currentGoal?.id) {
-            seedDraftIfNeeded()
-        }
-        .onChange(of: draftGoal?.id) {
-            seedDraftIfNeeded()
-        }
-    }
-
-    private var canApply: Bool {
-        !normalized(title).isEmpty && !parsedLines(objectivesText).isEmpty
-    }
-
-    private var canClear: Bool {
-        currentGoal != nil || draftGoal != nil || !normalized(title).isEmpty || !normalized(objectivesText).isEmpty
-            || !normalized(requiredQuestionsText).isEmpty || !normalized(keyTermsText).isEmpty
-    }
-
-    private func buildGoal() -> MeetingGoal {
-        let objectives = parsedLines(objectivesText).enumerated().map { index, line in
-            MeetingObjective(
-                id: "objective-\(index + 1)",
-                title: line,
-                keywords: keywords(from: line)
-            )
-        }
-        let requiredQuestions = parsedLines(requiredQuestionsText)
-        let terms = parsedLines(keyTermsText).map { MeetingKeyTerm(value: $0) }
-        return MeetingGoal(
-            title: normalized(title),
-            objectives: objectives,
-            requiredQuestions: requiredQuestions,
-            expectedDecisions: [],
-            keyTerms: terms
-        )
-    }
-
-    private func seedDraftIfNeeded() {
-        guard let goal = currentGoal ?? draftGoal else { return }
-        title = goal.title
-        objectivesText = goal.objectives.map(\.title).joined(separator: "\n")
-        requiredQuestionsText = goal.requiredQuestions.joined(separator: "\n")
-        keyTermsText = goal.keyTerms.map(\.value).joined(separator: "\n")
-    }
-
-    private func clearDraft() {
-        title = ""
-        objectivesText = ""
-        requiredQuestionsText = ""
-        keyTermsText = ""
-    }
-
-    private func parsedLines(_ value: String) -> [String] {
-        value
-            .components(separatedBy: .newlines)
-            .map(normalized)
-            .filter { !$0.isEmpty }
-    }
-
-    private func normalized(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func keywords(from objective: String) -> [String] {
-        let words = objective
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .map(normalized)
-            .filter { $0.count >= 4 }
-        return Array(Set(words)).sorted()
-    }
-}
-
-private struct LabeledTextEditor: View {
-    let title: String
-    @Binding var text: String
-    let minHeight: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .commandCenterMono()
-            TextEditor(text: $text)
-                .font(.system(size: 13))
-                .scrollContentBackground(.hidden)
-                .foregroundStyle(CommandCenterPalette.text)
-                .frame(minHeight: minHeight)
-                .padding(8)
-                .background(CommandCenterPalette.panelRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-    }
-}
-
-private struct SuggestedQuestionRow: View {
-    let suggestion: FollowUpQuestionSuggestion
-    let copyEnglishQuestion: (String) -> Void
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Ask next").commandCenterEyebrow()
-            Text("中文：\(suggestion.chinese)")
-                .foregroundStyle(CommandCenterPalette.text)
-                .textSelection(.enabled)
-            HStack(alignment: .top, spacing: 8) {
-                Text("EN: \(suggestion.english)")
-                    .foregroundStyle(CommandCenterPalette.secondaryText)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    copyEnglishQuestion(suggestion.english)
-                    copied = true
-                } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                }
-                .buttonStyle(CommandCenterActionButtonStyle())
-            }
-        }
-        .padding(.top, 4)
-    }
-}
-
-private struct LiveHealthChip: View {
-    let title: String
-    let health: LivePipelineHealth
-
-    var body: some View {
-        CommandCenterChip(title: "\(title): \(label)", tint: tint)
-    }
-
-    private var label: String {
-        switch health {
-        case .idle:
-            return "idle"
-        case .pending:
-            return "pending"
-        case .live:
-            return "live"
-        case .degraded:
-            return "delayed"
-        case .failed:
-            return "failed"
-        }
-    }
-
-    private var tint: Color {
-        switch health {
-        case .live:
-            return CommandCenterPalette.primary
-        case .pending, .degraded:
-            return CommandCenterPalette.warning
-        case .failed:
-            return CommandCenterPalette.danger
-        case .idle:
-            return CommandCenterPalette.secondaryText
-        }
     }
 }
 

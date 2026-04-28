@@ -13,18 +13,18 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Model\""))
         XCTAssertTrue(source.contains("Text(\"Deepgram\")"))
-        XCTAssertTrue(source.contains("Text(\"OpenAI Realtime\")"))
         XCTAssertTrue(source.contains("SettingsCommandCenterPanel(\"Deepgram\")"))
         XCTAssertTrue(source.contains("SecureField(\"Deepgram API Key\""))
         XCTAssertTrue(source.contains("SecureField(\"OpenRouter API Key\""))
-        XCTAssertTrue(source.contains("SettingsCommandCenterPanel(\"Live Translation\")"))
-        XCTAssertTrue(source.contains("SecureField(\"OpenAI Realtime API Key\""))
-        XCTAssertTrue(source.contains("openAIRealtimeAPIKeyBinding"))
+        XCTAssertFalse(source.contains("Text(\"OpenAI Realtime\")"))
+        XCTAssertFalse(source.contains("SettingsCommandCenterPanel(\"Live Translation\")"))
+        XCTAssertFalse(source.contains("SecureField(\"OpenAI Realtime API Key\""))
+        XCTAssertFalse(source.contains("openAIRealtimeAPIKeyBinding"))
         XCTAssertTrue(source.contains("usesOpenRouter"))
-        XCTAssertTrue(source.contains("Picker(\"Translation Mode\""))
-        XCTAssertTrue(source.contains("Picker(\"Local Translation Provider\""))
-        XCTAssertTrue(source.contains("Picker(\"Hosted Translation Provider\""))
-        XCTAssertTrue(source.contains("Picker(\"Hosted Translation Model\""))
+        XCTAssertFalse(source.contains("Picker(\"Translation Mode\""))
+        XCTAssertFalse(source.contains("Picker(\"Local Translation Provider\""))
+        XCTAssertFalse(source.contains("Picker(\"Hosted Translation Provider\""))
+        XCTAssertFalse(source.contains("Picker(\"Hosted Translation Model\""))
         XCTAssertFalse(source.contains("Picker(\"Bilingual Pipeline Profile\""))
         XCTAssertFalse(source.contains("Section(\"Bilingual Pipeline\")"))
         XCTAssertTrue(source.contains("Picker(\"Whisper Binary Path\""))
@@ -42,6 +42,15 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".disabled(isRecording)"))
     }
 
+    func testSettingsViewAppliesCommandCenterTextColorToNativeControls() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/SettingsView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.text)"))
+        XCTAssertTrue(source.contains(".tint(CommandCenterPalette.primary)"))
+    }
+
     func testMainWindowUsesCommandCenterStyling() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
@@ -52,8 +61,8 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("MeetingCommandCenterView"))
         XCTAssertTrue(source.contains("TranscriptPaneView"))
         XCTAssertTrue(source.contains("InsightPaneView"))
-        XCTAssertTrue(source.contains("Live Translation"))
-        XCTAssertTrue(source.contains("Send to call"))
+        XCTAssertFalse(source.contains("Live Translation"))
+        XCTAssertFalse(source.contains("Send to call"))
     }
 
     func testSettingsViewUsesCommandCenterPanels() throws {

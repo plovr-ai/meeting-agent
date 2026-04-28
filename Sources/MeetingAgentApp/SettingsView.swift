@@ -77,7 +77,6 @@ struct SettingsView: View {
                         Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
                             Text("OpenRouter").tag("openrouter-transcribe")
                             Text("Deepgram").tag("deepgram-transcribe")
-                            Text("OpenAI Realtime").tag("openai-realtime-transcribe")
                         }
 
                         if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
@@ -85,40 +84,11 @@ struct SettingsView: View {
                                 Text("Deepgram Nova 3").tag("nova-3")
                                 Text("Deepgram Nova 2").tag("nova-2")
                             }
-                        } else if draft.hostedTranscriptionProviderID == "openai-realtime-transcribe" {
-                            Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
-                                Text("GPT-4o Transcribe").tag("gpt-4o-transcribe")
-                                Text("GPT-4o Mini Transcribe").tag("gpt-4o-mini-transcribe")
-                            }
                         } else {
                             Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
                                 ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
                                     Text(model.displayName).tag(model.id)
                                 }
-                            }
-                        }
-                    }
-                }
-
-                SettingsCommandCenterPanel("Translation Chain") {
-                    Picker("Translation Mode", selection: $draft.translationExecutionMode) {
-                        Text("Local").tag(ProviderExecutionMode.local)
-                        Text("Hosted").tag(ProviderExecutionMode.hosted)
-                    }
-
-                    if draft.translationExecutionMode == .local {
-                        Picker("Local Translation Provider", selection: $draft.localTranslationProviderID) {
-                            Text("Qwen Local Translation").tag("qwen-local-translation")
-                            Text("NLLB Local").tag("nllb-local")
-                        }
-                    } else {
-                        Picker("Hosted Translation Provider", selection: $draft.hostedTranslationProviderID) {
-                            Text("OpenRouter").tag("openrouter-translation")
-                        }
-
-                        Picker("Hosted Translation Model", selection: $draft.hostedTranslationModelID) {
-                            ForEach(BilingualPipelineFactory.hostedTranslationModelOptions) { model in
-                                Text(model.displayName).tag(model.id)
                             }
                         }
                     }
@@ -134,12 +104,6 @@ struct SettingsView: View {
                     SettingsCommandCenterPanel("Deepgram") {
                         SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
                     }
-                }
-
-                SettingsCommandCenterPanel("Live Translation") {
-                    Text("Realtime speech translation")
-                        .foregroundStyle(CommandCenterPalette.secondaryText)
-                    SecureField("OpenAI Realtime API Key", text: openAIRealtimeAPIKeyBinding)
                 }
 
                 SettingsCommandCenterPanel("Validation") {
@@ -167,8 +131,12 @@ struct SettingsView: View {
             }
             .frame(maxWidth: 720, alignment: .leading)
             .padding(24)
+            .foregroundStyle(CommandCenterPalette.text)
+            .tint(CommandCenterPalette.primary)
         }
         .background(CommandCenterPalette.window)
+        .foregroundStyle(CommandCenterPalette.text)
+        .tint(CommandCenterPalette.primary)
         .disabled(isRecording)
         .navigationTitle("Settings")
         .onChange(of: draft.localTranscriptionProviderID) { _, providerID in
@@ -176,7 +144,7 @@ struct SettingsView: View {
         }
         .onChange(of: draft.transcriptionExecutionMode) { _, mode in
             if mode == .hosted {
-                if !["deepgram-transcribe", "openai-realtime-transcribe"].contains(draft.hostedTranscriptionProviderID) {
+                if draft.hostedTranscriptionProviderID != "deepgram-transcribe" {
                     draft.hostedTranscriptionProviderID = "openrouter-transcribe"
                 }
                 ensureHostedTranscriptionModel()
@@ -186,12 +154,6 @@ struct SettingsView: View {
         }
         .onChange(of: draft.hostedTranscriptionProviderID) { _, _ in
             ensureHostedTranscriptionModel()
-        }
-        .onChange(of: draft.translationExecutionMode) { _, mode in
-            if mode == .hosted {
-                draft.hostedTranslationProviderID = "openrouter-translation"
-                ensureHostedTranslationModel()
-            }
         }
     }
 
@@ -213,13 +175,6 @@ struct SettingsView: View {
         Binding(
             get: { draft.openRouterAPIKey ?? "" },
             set: { draft.openRouterAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
-        )
-    }
-
-    private var openAIRealtimeAPIKeyBinding: Binding<String> {
-        Binding(
-            get: { draft.openAIRealtimeAPIKey ?? "" },
-            set: { draft.openAIRealtimeAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
         )
     }
 
@@ -277,26 +232,11 @@ struct SettingsView: View {
             draft.deepgramModelID = SpeechTranscriptionConfiguration.defaultDeepgramModelID
             return
         }
-        if draft.hostedTranscriptionProviderID == "openai-realtime-transcribe" {
-            if ["gpt-4o-transcribe", "gpt-4o-mini-transcribe"].contains(draft.hostedTranscriptionModelID) {
-                return
-            }
-            draft.hostedTranscriptionModelID = SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID
-            return
-        }
         if BilingualPipelineFactory.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
             return
         }
         draft.hostedTranscriptionModelID = BilingualPipelineFactory.hostedTranscriptionModelOptions.first?.id
             ?? SpeechTranscriptionConfiguration.defaultHostedTranscriptionModelID
-    }
-
-    private func ensureHostedTranslationModel() {
-        if BilingualPipelineFactory.hostedTranslationModelOptions.contains(where: { $0.id == draft.hostedTranslationModelID }) {
-            return
-        }
-        draft.hostedTranslationModelID = BilingualPipelineFactory.hostedTranslationModelOptions.first?.id
-            ?? SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
     }
 
     private var configurationStatusText: String {
