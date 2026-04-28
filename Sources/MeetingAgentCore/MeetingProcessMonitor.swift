@@ -13,7 +13,7 @@ public final class MeetingProcessMonitor {
         guard !isRecording else { return [] }
 
         let candidates = targets.filter { target in
-            let isPreferred = target.bundleIdentifier.map(RunningProcessDiscovery.preferredBundleIDs.contains) ?? false
+            let isPreferred = RunningProcessDiscovery.isPreferredMeetingTarget(target)
             guard isPreferred else { return false }
             guard target.isAudioOutputActive else { return false }
             guard !promptedProcessIDs.contains(target.processID) else { return false }

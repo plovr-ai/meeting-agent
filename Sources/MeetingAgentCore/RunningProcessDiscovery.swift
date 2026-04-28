@@ -15,6 +15,12 @@ public struct RunningProcessDiscovery {
         "com.tencent.meeting"
     ]
 
+    private static let preferredDisplayNamePrefixes = [
+        "feishu",
+        "飞书",
+        "lark"
+    ]
+
     public static func currentTargets() -> [AudioCaptureTarget] {
         let apps = NSWorkspace.shared.runningApplications.map {
             RunningAppSnapshot(
@@ -46,8 +52,8 @@ public struct RunningProcessDiscovery {
             )
         }
         .sorted { lhs, rhs in
-            let lhsPreferred = lhs.bundleIdentifier.map(preferredBundleIDs.contains) ?? false
-            let rhsPreferred = rhs.bundleIdentifier.map(preferredBundleIDs.contains) ?? false
+            let lhsPreferred = isPreferredMeetingTarget(lhs)
+            let rhsPreferred = isPreferredMeetingTarget(rhs)
 
             if lhsPreferred != rhsPreferred {
                 return lhsPreferred && !rhsPreferred
@@ -59,8 +65,21 @@ public struct RunningProcessDiscovery {
 
     public static func automaticTarget(from targets: [AudioCaptureTarget]) -> AudioCaptureTarget? {
         targets.first { target in
-            (target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false)
-                && target.isAudioOutputActive
+            isPreferredMeetingTarget(target) && target.isAudioOutputActive
+        }
+    }
+
+    public static func isPreferredMeetingTarget(_ target: AudioCaptureTarget) -> Bool {
+        if target.bundleIdentifier.map(preferredBundleIDs.contains) ?? false {
+            return true
+        }
+
+        let displayName = target.displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return preferredDisplayNamePrefixes.contains { prefix in
+            displayName == prefix || displayName.hasPrefix("\(prefix) ")
         }
     }
 }
