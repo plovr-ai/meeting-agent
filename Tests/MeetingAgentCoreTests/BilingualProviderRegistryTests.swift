@@ -35,6 +35,15 @@ final class BilingualProviderRegistryTests: XCTestCase {
         XCTAssertTrue(descriptor.supports(sourceLocale: "ko-KR", targetLocale: "zh-CN"))
     }
 
+    func testTranslationOptionsDetectSameLanguageLocales() {
+        XCTAssertTrue(TranslationOptions(sourceLocale: "en-US", targetLocale: "en-GB").isSameLanguage)
+        XCTAssertTrue(TranslationOptions(sourceLocale: " zh_CN ", targetLocale: "zh-TW").isSameLanguage)
+        XCTAssertTrue(TranslationOptions(sourceLocale: "JA", targetLocale: "ja-JP").isSameLanguage)
+        XCTAssertFalse(TranslationOptions(sourceLocale: "en-US", targetLocale: "zh-CN").isSameLanguage)
+        XCTAssertFalse(TranslationOptions(sourceLocale: "", targetLocale: "en-US").isSameLanguage)
+        XCTAssertFalse(TranslationOptions(sourceLocale: "   ", targetLocale: "   ").isSameLanguage)
+    }
+
     func testBuiltInRegistryIncludesOpenAIRealtimeTranscriptionDescriptor() {
         let descriptor = BilingualPipelineFactory.builtInRegistry.descriptor(id: "openai-realtime-transcribe")
 
