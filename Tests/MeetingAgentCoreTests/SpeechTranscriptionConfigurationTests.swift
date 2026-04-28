@@ -148,14 +148,13 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         try store.save(configuration)
 
         var expected = configuration
-        expected.openRouterAPIKey = nil
-        expected.openAIRealtimeAPIKey = nil
-        expected.deepgramAPIKey = nil
+        expected.openAIRealtimeAPIKey = "realtime-key"
+        expected.deepgramAPIKey = "deepgram-key"
         expected.deepgramModelID = "nova-2"
         XCTAssertEqual(try store.load(), expected)
     }
 
-    func testConfigurationStoreDoesNotPersistAPIKeys() throws {
+    func testConfigurationStorePersistsAPIKeys() throws {
         let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
@@ -173,9 +172,9 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         try store.save(configuration)
         let loaded = try store.load()
 
-        XCTAssertNil(loaded.openRouterAPIKey)
-        XCTAssertNil(loaded.openAIRealtimeAPIKey)
-        XCTAssertNil(loaded.deepgramAPIKey)
+        XCTAssertEqual(loaded.openRouterAPIKey, "openrouter-secret")
+        XCTAssertEqual(loaded.openAIRealtimeAPIKey, "openai-secret")
+        XCTAssertEqual(loaded.deepgramAPIKey, "deepgram-secret")
     }
 
     func testConfigurationDecodesWhenRealtimeAPIKeyIsAbsent() throws {

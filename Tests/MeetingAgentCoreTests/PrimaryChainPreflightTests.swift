@@ -7,7 +7,6 @@ final class PrimaryChainPreflightTests: XCTestCase {
 
         let result = PrimaryChainPreflight.evaluate(
             configuration: configuration,
-            credentials: [:],
             environment: [:]
         )
 
@@ -29,15 +28,13 @@ final class PrimaryChainPreflightTests: XCTestCase {
             translationExecutionMode: .hosted,
             hostedTranscriptionProviderID: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID,
             hostedTranslationProviderID: SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID,
-            hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID
+            hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID,
+            openRouterAPIKey: "openrouter-key",
+            openAIRealtimeAPIKey: "openai-key"
         )
 
         let result = PrimaryChainPreflight.evaluate(
             configuration: configuration,
-            credentials: [
-                .openAI: "openai-key",
-                .openRouter: "openrouter-key"
-            ],
             environment: [:]
         )
 
@@ -48,7 +45,6 @@ final class PrimaryChainPreflightTests: XCTestCase {
     func testEnvironmentCredentialsSatisfyPreflight() {
         let result = PrimaryChainPreflight.evaluate(
             configuration: .default,
-            credentials: [:],
             environment: [
                 "MEETING_AGENT_DEEPGRAM_API_KEY": "deepgram-key",
                 "MEETING_AGENT_OPENROUTER_API_KEY": "openrouter-key"

@@ -35,7 +35,6 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private let store: MeetingStore
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
-    private let credentialStore: CredentialStoring
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
     private let realtimeTranslationController: RealtimeTranslationController
@@ -58,7 +57,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechProvider: SpeechProvider = .whisper,
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
-        credentialStore: CredentialStoring = KeychainCredentialStore(),
         exportService: MeetingExportService = MeetingExportService(),
         realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(
             playbackSink: LocalAudioPlaybackSink()
@@ -68,7 +66,6 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) {
         self.store = store
         self.speechConfigurationStore = speechConfigurationStore
-        self.credentialStore = credentialStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
         self.realtimeTranslationController = realtimeTranslationController
@@ -87,7 +84,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             self.speechConfiguration = (try? speechConfigurationStore.load()) ?? .default
         }
-        hydrateSpeechConfigurationCredentials()
         refreshPrimaryChainPreflightResult()
     }
 
@@ -174,9 +170,6 @@ public final class MeetingAgentViewModel: ObservableObject {
             deepgramAPIKey: configuration.deepgramAPIKey,
             deepgramModelID: configuration.deepgramModelID
         )
-        saveCredential(configuration.openRouterAPIKey, for: .openRouter)
-        saveCredential(configuration.openAIRealtimeAPIKey, for: .openAI)
-        saveCredential(configuration.deepgramAPIKey, for: .deepgram)
         persistSpeechConfiguration()
         statusText = "Settings saved"
     }
@@ -648,20 +641,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         refreshPrimaryChainPreflightResult()
     }
 
-    private func hydrateSpeechConfigurationCredentials() {
-        speechConfiguration.openRouterAPIKey = loadCredential(.openRouter) ?? speechConfiguration.openRouterAPIKey
-        speechConfiguration.openAIRealtimeAPIKey = loadCredential(.openAI) ?? speechConfiguration.openAIRealtimeAPIKey
-        speechConfiguration.deepgramAPIKey = loadCredential(.deepgram) ?? speechConfiguration.deepgramAPIKey
-    }
-
     private func refreshPrimaryChainPreflightResult() {
         primaryChainPreflightResult = PrimaryChainPreflight.evaluate(
-            configuration: speechConfiguration,
-            credentials: [
-                .openRouter: loadCredential(.openRouter),
-                .openAI: loadCredential(.openAI),
-                .deepgram: loadCredential(.deepgram)
-            ].compactMapValues { $0 }
+            configuration: speechConfiguration
         )
     }
 
@@ -866,14 +848,6 @@ public final class MeetingAgentViewModel: ObservableObject {
             analyzer: DeterministicMeetingProgressAnalyzer(meetingID: selectedMeeting?.id ?? UUID()),
             progressURL: progressURL
         )
-    }
-
-    private func loadCredential(_ kind: CredentialKind) -> String? {
-        try? credentialStore.load(kind)
-    }
-
-    private func saveCredential(_ value: String?, for kind: CredentialKind) {
-        try? credentialStore.save(value, for: kind)
     }
 
     private func export(_ label: String, for meetingID: UUID, operation: (MeetingRecord) throws -> Void) throws {

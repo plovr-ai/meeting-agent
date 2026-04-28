@@ -1144,10 +1144,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
-        let credentialStore = MemoryCredentialStore()
         let viewModel = MeetingAgentViewModel(
             speechConfigurationStore: configurationStore,
-            credentialStore: credentialStore,
             processTargetsProvider: { [] }
         )
 
@@ -1175,24 +1173,22 @@ final class MeetingAgentViewModelTests: XCTestCase {
         var expectedConfiguration = configuration
         expectedConfiguration.bilingualPipelineProfileID = "hosted-transcribe-hosted-translation"
         XCTAssertEqual(viewModel.speechConfiguration, expectedConfiguration)
-        var expectedPersistedConfiguration = expectedConfiguration
-        expectedPersistedConfiguration.openRouterAPIKey = nil
-        expectedPersistedConfiguration.openAIRealtimeAPIKey = nil
-        expectedPersistedConfiguration.deepgramAPIKey = nil
-        XCTAssertEqual(try configurationStore.load(), expectedPersistedConfiguration)
-        XCTAssertEqual(try credentialStore.load(.openRouter), "settings-key")
-        XCTAssertEqual(try credentialStore.load(.openAI), "realtime-settings-key")
+        XCTAssertEqual(try configurationStore.load(), expectedConfiguration)
         XCTAssertEqual(viewModel.statusText, "Settings saved")
     }
 
-    func testViewModelHydratesCredentialsAndReportsPrimaryChainPreflight() throws {
-        let credentialStore = MemoryCredentialStore()
-        try credentialStore.save("deepgram-key", for: .deepgram)
-        try credentialStore.save("openrouter-key", for: .openRouter)
+    func testViewModelLoadsPersistedCredentialsFromUserDefaultsAndReportsPrimaryChainPreflight() throws {
+        let suiteName = "meeting-vm-settings-credentials-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let configurationStore = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        var persistedConfiguration = SpeechTranscriptionConfiguration.default
+        persistedConfiguration.deepgramAPIKey = "deepgram-key"
+        persistedConfiguration.openRouterAPIKey = "openrouter-key"
+        try configurationStore.save(persistedConfiguration)
 
         let viewModel = MeetingAgentViewModel(
-            speechConfiguration: .default,
-            credentialStore: credentialStore,
+            speechConfigurationStore: configurationStore,
             processTargetsProvider: { [] }
         )
 

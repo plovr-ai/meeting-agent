@@ -18,28 +18,24 @@ public struct PrimaryChainPreflightResult: Equatable {
 public enum PrimaryChainPreflight {
     public static func evaluate(
         configuration: SpeechTranscriptionConfiguration,
-        credentials: [CredentialKind: String],
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> PrimaryChainPreflightResult {
         var messages: [String] = []
 
         if configuration.usesDeepgram,
            normalized(configuration.deepgramAPIKey) == nil,
-           normalized(credentials[.deepgram]) == nil,
            normalized(environment["MEETING_AGENT_DEEPGRAM_API_KEY"]) == nil {
             messages.append("Deepgram API key is not configured")
         }
 
         if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID,
            normalized(configuration.openAIRealtimeAPIKey) == nil,
-           normalized(credentials[.openAI]) == nil,
            normalized(environment["MEETING_AGENT_OPENAI_API_KEY"]) == nil {
             messages.append("OpenAI API key is not configured")
         }
 
         if configuration.usesOpenRouter,
            normalized(configuration.openRouterAPIKey) == nil,
-           normalized(credentials[.openRouter]) == nil,
            normalized(environment["MEETING_AGENT_OPENROUTER_API_KEY"]) == nil {
             messages.append("OpenRouter API key is not configured")
         }
