@@ -73,7 +73,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         await session.close()
         await receiveTask.value
 
-        let receivedTexts = await received.values().map(\.text)
+        let receivedTexts = await received.texts
         XCTAssertEqual(receivedTexts, ["hello"])
         XCTAssertEqual(task.sentMessages.count, 2)
         if case .data(let data) = task.sentMessages.first {
@@ -194,6 +194,10 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
 
 private actor TranscriptSegmentCollector {
     private var segments: [TranscriptSegment] = []
+
+    var texts: [String] {
+        segments.map(\.text)
+    }
 
     func append(_ segment: TranscriptSegment) {
         segments.append(segment)

@@ -43,6 +43,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var meetingGoal: MeetingGoal?
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private var attachedRealtimeTranslationTurnIDs = Set<String>()
+    private var realtimeTranslationAttachmentCountsByCaptionID: [String: Int] = [:]
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -665,6 +666,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
         attachedRealtimeTranslationTurnIDs.removeAll()
+        realtimeTranslationAttachmentCountsByCaptionID.removeAll()
         liveCaptionTurns = []
         meetingProgressHealth.caption = .idle
         meetingProgressHealth.translation = .idle
@@ -738,15 +740,20 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         for translation in unattachedFinalTranslations {
             guard let caption = liveCaptionStore.turns.first(where: {
-                $0.isFinal && ($0.translatedText?.isEmpty ?? true)
+                $0.isFinal && realtimeTranslationAttachmentCount(for: $0) < $0.sourceSegmentIDs.count
             }) else {
                 break
             }
-            liveCaptionStore.attachTranslation(translation.text, toTurnID: caption.id)
+            liveCaptionStore.appendTranslation(translation.text, toTurnID: caption.id)
+            realtimeTranslationAttachmentCountsByCaptionID[caption.id, default: 0] += 1
             attachedRealtimeTranslationTurnIDs.insert(translation.id)
         }
         liveCaptionTurns = liveCaptionStore.turns
         updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func realtimeTranslationAttachmentCount(for caption: LiveCaptionTurn) -> Int {
+        realtimeTranslationAttachmentCountsByCaptionID[caption.id, default: 0]
     }
 
     private func updateTranslationHealthFromRealtimeStatus() {

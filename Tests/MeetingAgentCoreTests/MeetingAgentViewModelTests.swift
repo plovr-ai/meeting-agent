@@ -1254,7 +1254,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.syncRealtimeTranslationState()
         viewModel.syncRealtimeTranslationState()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.translatedText), ["第一个决定。", "第二个决定。"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.translatedText), ["第一个决定。 第二个决定。"])
     }
 
     func testStopRealtimeTranslationResetsState() async {

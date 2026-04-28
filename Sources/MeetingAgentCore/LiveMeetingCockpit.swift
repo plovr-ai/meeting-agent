@@ -103,6 +103,7 @@ public struct MeetingGoal: Codable, Equatable, Identifiable {
 public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var id: String
     public var sourceSegmentID: String
+    public var sourceSegmentIDs: [String]
     public var speaker: TranscriptSpeaker
     public var originalText: String
     public var translatedText: String?
@@ -116,6 +117,7 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public init(
         id: String? = nil,
         sourceSegmentID: String,
+        sourceSegmentIDs: [String]? = nil,
         speaker: TranscriptSpeaker = .default,
         originalText: String,
         translatedText: String? = nil,
@@ -128,6 +130,7 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     ) {
         self.id = id ?? sourceSegmentID
         self.sourceSegmentID = sourceSegmentID
+        self.sourceSegmentIDs = sourceSegmentIDs ?? [sourceSegmentID]
         self.speaker = speaker
         self.originalText = originalText
         self.translatedText = translatedText
@@ -137,6 +140,37 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         self.captionHealth = captionHealth
         self.translationHealth = translationHealth
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case sourceSegmentID
+        case sourceSegmentIDs
+        case speaker
+        case originalText
+        case translatedText
+        case sourceLocale
+        case targetLocale
+        case isFinal
+        case captionHealth
+        case translationHealth
+        case createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        sourceSegmentID = try container.decode(String.self, forKey: .sourceSegmentID)
+        sourceSegmentIDs = try container.decodeIfPresent([String].self, forKey: .sourceSegmentIDs) ?? [sourceSegmentID]
+        speaker = try container.decode(TranscriptSpeaker.self, forKey: .speaker)
+        originalText = try container.decode(String.self, forKey: .originalText)
+        translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
+        sourceLocale = try container.decode(String.self, forKey: .sourceLocale)
+        targetLocale = try container.decode(String.self, forKey: .targetLocale)
+        isFinal = try container.decode(Bool.self, forKey: .isFinal)
+        captionHealth = try container.decode(LivePipelineHealth.self, forKey: .captionHealth)
+        translationHealth = try container.decode(LivePipelineHealth.self, forKey: .translationHealth)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
 }
 
@@ -204,6 +238,10 @@ public struct LiveCaptionStore: Equatable {
             translationHealth: segment.isFinal ? .pending : .idle,
             createdAt: segment.createdAt
         )
+        if let representedIndex = turns.firstIndex(where: { $0.sourceSegmentIDs.contains(segment.id) }),
+           turns[representedIndex].sourceSegmentIDs.count > 1 {
+            return turns[representedIndex]
+        }
         if let index = turns.firstIndex(where: { $0.sourceSegmentID == segment.id }) {
             let previousTurn = turns[index]
             var updated = turn
@@ -214,13 +252,61 @@ public struct LiveCaptionStore: Equatable {
             turns[index] = updated
             return updated
         }
+        if let index = mergeTargetIndex(for: turn) {
+            turns[index] = mergedTurn(turns[index], appending: turn)
+            return turns[index]
+        }
         turns.append(turn)
         return turn
+    }
+
+    private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
+        guard turn.isFinal,
+              let lastIndex = turns.indices.last,
+              turns[lastIndex].isFinal,
+              turns[lastIndex].speaker == turn.speaker
+        else {
+            return nil
+        }
+        return lastIndex
+    }
+
+    private func mergedTurn(_ existing: LiveCaptionTurn, appending turn: LiveCaptionTurn) -> LiveCaptionTurn {
+        var merged = existing
+        merged.sourceSegmentID = turn.sourceSegmentID
+        merged.sourceSegmentIDs.append(contentsOf: turn.sourceSegmentIDs)
+        merged.originalText = joinedTranscriptText(existing.originalText, turn.originalText)
+        merged.sourceLocale = turn.sourceLocale
+        merged.targetLocale = turn.targetLocale
+        merged.isFinal = turn.isFinal
+        merged.captionHealth = turn.captionHealth
+        merged.translatedText = nil
+        merged.translationHealth = .pending
+        merged.createdAt = turn.createdAt
+        return merged
+    }
+
+    private func joinedTranscriptText(_ first: String, _ second: String) -> String {
+        let trimmedFirst = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSecond = second.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedFirst.isEmpty {
+            return trimmedSecond
+        }
+        if trimmedSecond.isEmpty {
+            return trimmedFirst
+        }
+        return "\(trimmedFirst) \(trimmedSecond)"
     }
 
     public mutating func attachTranslation(_ text: String, toTurnID turnID: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        turns[index].translationHealth = .live
+    }
+
+    public mutating func appendTranslation(_ text: String, toTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translatedText = joinedTranscriptText(turns[index].translatedText ?? "", text)
         turns[index].translationHealth = .live
     }
 

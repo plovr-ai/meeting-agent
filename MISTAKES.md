@@ -157,3 +157,19 @@ Test preferred-target behavior through automatic selection or candidate detectio
 When testing priority classification, choose assertions that fail without the classification, not assertions that can pass due to unrelated ordering.
 
 ---
+
+## [28] Preserve idempotence when merging append-only state
+
+**Date**: 2026-04-28
+**Category**: logic-error
+
+### What went wrong
+The first same-speaker live caption merge only checked the latest `sourceSegmentID`, so refreshing the same transcript document could append an earlier already-represented segment into the merged turn again.
+
+### Correct approach
+Merged display turns need to track every represented source segment ID and reject appends for segment IDs already present in that merged turn.
+
+### How to avoid
+When changing append-only state into grouped state, add an idempotent replay test that appends the same source item again after grouping.
+
+---
