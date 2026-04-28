@@ -331,7 +331,11 @@ public struct LiveCaptionStore: Equatable {
             translationHealth: .pending,
             createdAt: segment.createdAt,
             chunkState: segment.isFinal ? .frozen : .draft,
-            translationRevision: 1
+            translationRevision: 1,
+            displayState: segment.isFinal ? .sealed : .draft,
+            translationState: .draft,
+            boundaryReason: nil,
+            boundaryStrength: nil
         )
         if let representedIndex = turns.firstIndex(where: { $0.sourceSegmentIDs.contains(segment.id) }),
            turns[representedIndex].sourceSegmentIDs.count > 1 {
@@ -422,6 +426,10 @@ public struct LiveCaptionStore: Equatable {
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
         merged.createdAt = turn.createdAt
+        merged.displayState = turn.displayState
+        merged.translationState = turn.translationState
+        merged.boundaryReason = turn.boundaryReason
+        merged.boundaryStrength = turn.boundaryStrength
         return merged
     }
 
@@ -438,6 +446,10 @@ public struct LiveCaptionStore: Equatable {
         merged.chunkState = .draft
         merged.translationRevision += 1
         merged.freezeReason = nil
+        merged.displayState = .draft
+        merged.translationState = .draft
+        merged.boundaryReason = nil
+        merged.boundaryStrength = nil
         return merged
     }
 
