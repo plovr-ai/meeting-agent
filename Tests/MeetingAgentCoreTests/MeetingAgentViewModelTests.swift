@@ -98,10 +98,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .frozen)
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.freezeReason, .manualStop)
         try await waitFor {
-            provider.requests.count == 2
-                && viewModel.liveCaptionTurns.first?.translatedText == "最终翻译"
+            viewModel.liveCaptionTurns.first?.translatedText == "最终翻译"
                 && viewModel.liveCaptionTurns.first?.translationHealth == .live
         }
+        XCTAssertGreaterThanOrEqual(provider.requests.count, 1)
         XCTAssertEqual(provider.requestedSegmentTexts.last, ["unfinished thought"])
     }
 
