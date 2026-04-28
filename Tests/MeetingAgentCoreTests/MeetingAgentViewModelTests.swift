@@ -420,7 +420,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 speaker: speaker,
                 text: "second",
                 language: "en-US",
-                isFinal: true
+                isFinal: true,
+                speechFinal: true
             )
         ])
 
@@ -438,6 +439,77 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requests.map(\.segmentIDs), [["segment-1"], ["segment-2"]])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句 第二句")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+    }
+
+    func testDraftCaptionTranslationUpdatesSameTurnAsTextGrows() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part", language: "en-US")
+        ])
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "第一部分"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第一部分" }
+
+        let longSecondPart = "and the second part adds enough detail about owners timelines risks and next steps to refresh the draft translation"
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part", language: "en-US"),
+            TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: longSecondPart, language: "en-US")
+        ])
+        provider.translations = ["segment-2": "第一部分和第二部分"]
+
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第一部分和第二部分" }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
+        XCTAssertEqual(provider.requestedSegmentTexts.last, ["This is the first part \(longSecondPart)"])
+    }
+
+    func testOlderDraftTranslationDoesNotOverwriteNewerDraft() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft", language: "en-US")
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft", language: "en-US"),
+            TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "second draft adds enough detail about owners timelines risks and next steps to refresh the draft translation", language: "en-US")
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 2 }
+
+        provider.completeRequest(at: 1, targetText: "newer translation")
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "newer translation" }
+        provider.completeRequest(at: 0, targetText: "older translation")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "newer translation")
     }
 
     func testRefreshMeetingProgressAnalyzesLiveCaptionsAndWritesProgressArtifact() async throws {
@@ -1720,7 +1792,8 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
     }
 
     var requests: [Request] = []
-    private let translations: [String: String]
+    var requestedSegmentTexts: [[String]] = []
+    var translations: [String: String]
     private let delayNanoseconds: UInt64
 
     init(translations: [String: String], delayNanoseconds: UInt64 = 0) {
@@ -1745,6 +1818,7 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
             targetLocale: options.targetLocale,
             segmentIDs: transcript.segments.map(\.id)
         ))
+        requestedSegmentTexts.append(transcript.segments.map(\.text))
         if delayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: delayNanoseconds)
         }
@@ -1763,6 +1837,58 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
             },
             provenance: PipelineProvenance(profileID: "fake-view-model-translation")
         )
+    }
+}
+
+private final class DelayedViewModelFakeTextTranslationProvider: TextTranslationProvider {
+    struct PendingRequest {
+        let transcript: TranscriptDocument
+        let continuation: CheckedContinuation<TranslatedTranscript, Error>
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "delayed-view-model-translation",
+        displayName: "Delayed Translation",
+        capability: .textTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    private(set) var pendingRequests: [PendingRequest] = []
+
+    var pendingRequestCount: Int {
+        pendingRequests.count
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingRequests.append(PendingRequest(transcript: transcript, continuation: continuation))
+        }
+    }
+
+    func completeRequest(at index: Int, targetText: String) {
+        let request = pendingRequests[index]
+        let source = request.transcript.segments[0]
+        request.continuation.resume(returning: TranslatedTranscript(
+            sourceLocale: source.language ?? "en-US",
+            targetLocale: "zh-CN",
+            segments: [
+                BilingualSubtitleSegment(
+                    id: source.id,
+                    startTimeSeconds: source.startTimeSeconds,
+                    endTimeSeconds: source.endTimeSeconds,
+                    speaker: source.speaker,
+                    sourceText: source.text,
+                    targetText: targetText,
+                    confidence: source.confidence,
+                    providerChain: ["delayed-view-model-translation"]
+                )
+            ],
+            provenance: PipelineProvenance(profileID: "delayed-view-model-translation")
+        ))
     }
 }
 
