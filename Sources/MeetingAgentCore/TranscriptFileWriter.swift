@@ -108,6 +108,7 @@ public final class TranscriptFileWriter {
                 language: segment.language,
                 sourceProvider: segment.sourceProvider,
                 isFinal: segment.isFinal,
+                speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
                 timingSource: segment.timingSource
@@ -149,6 +150,7 @@ public final class TranscriptFileWriter {
                 language: segment.language,
                 sourceProvider: segment.sourceProvider,
                 isFinal: segment.isFinal,
+                speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
                 timingSource: segment.timingSource
@@ -196,6 +198,7 @@ public final class TranscriptFileWriter {
                 language: segment.language,
                 sourceProvider: segment.sourceProvider,
                 isFinal: segment.isFinal,
+                speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
                 timingSource: segment.timingSource

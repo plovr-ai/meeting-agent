@@ -27,6 +27,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(query["sample_rate"], "16000")
         XCTAssertEqual(query["channels"], "1")
         XCTAssertEqual(query["interim_results"], "true")
+        XCTAssertEqual(query["endpointing"], "500")
     }
 
     func testURLSessionStreamingClientRejectsUnavailableConfiguration() async {
@@ -362,6 +363,34 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.text), ["Hello team.", "Yes."])
         XCTAssertEqual(document.segments.map(\.startTimeSeconds), [0.0, 0.9])
         XCTAssertEqual(document.segments.map(\.endTimeSeconds), [0.8, 1.1])
+    }
+
+    func testStreamingResponseMarksOnlyLastSpeakerRunAsSpeechFinal() throws {
+        let segments = DeepgramStreamingResponseMapper.segments(
+            from: Data("""
+            {
+              "is_final": true,
+              "speech_final": true,
+              "channel": {
+                "alternatives": [
+                  {
+                    "transcript": "hello yes",
+                    "confidence": 0.91,
+                    "words": [
+                      { "word": "hello", "punctuated_word": "Hello.", "start": 0.0, "end": 0.4, "speaker": 0 },
+                      { "word": "yes", "punctuated_word": "Yes.", "start": 0.5, "end": 0.8, "speaker": 1 }
+                    ]
+                  }
+                ]
+              }
+            }
+            """.utf8),
+            localeIdentifier: "en-US",
+            providerID: "deepgram-transcribe"
+        )
+
+        XCTAssertEqual(segments.map(\.text), ["Hello.", "Yes."])
+        XCTAssertEqual(segments.map(\.speechFinal), [false, true])
     }
 }
 

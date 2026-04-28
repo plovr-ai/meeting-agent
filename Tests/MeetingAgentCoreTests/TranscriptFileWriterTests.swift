@@ -2,6 +2,28 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranscriptFileWriterTests: XCTestCase {
+    func testTranscriptSegmentDecodesMissingSpeechFinalAsFalse() throws {
+        let data = Data("""
+        {
+          "version": 1,
+          "segments": [
+            {
+              "id": "segment-1",
+              "text": "hello",
+              "sourceProvider": "deepgram-transcribe",
+              "isFinal": true,
+              "createdAt": "2026-04-28T00:00:00Z",
+              "timingSource": "unavailable"
+            }
+          ]
+        }
+        """.utf8)
+
+        let document = try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
+
+        XCTAssertEqual(document.segments.first?.speechFinal, false)
+    }
+
     func testTranscriptWriterReplacesPartialTextWithLatestText() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")

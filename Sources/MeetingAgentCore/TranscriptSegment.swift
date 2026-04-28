@@ -30,6 +30,7 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
     public let language: String?
     public let sourceProvider: String
     public let isFinal: Bool
+    public let speechFinal: Bool
     public let confidence: Double?
     public let createdAt: Date
     public let timingSource: TranscriptTimingSource
@@ -47,6 +48,7 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         language: String? = nil,
         sourceProvider: String = "unknown",
         isFinal: Bool = true,
+        speechFinal: Bool = false,
         confidence: Double? = nil,
         createdAt: Date = Date(),
         timingSource: TranscriptTimingSource = .unavailable
@@ -60,9 +62,43 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         self.language = language
         self.sourceProvider = sourceProvider
         self.isFinal = isFinal
+        self.speechFinal = speechFinal
         self.confidence = confidence
         self.createdAt = createdAt
         self.timingSource = timingSource
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case speakerID
+        case speakerLabel
+        case startTimeSeconds
+        case endTimeSeconds
+        case text
+        case language
+        case sourceProvider
+        case isFinal
+        case speechFinal
+        case confidence
+        case createdAt
+        case timingSource
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        speakerID = try container.decodeIfPresent(String.self, forKey: .speakerID)
+        speakerLabel = try container.decodeIfPresent(String.self, forKey: .speakerLabel)
+        startTimeSeconds = try container.decodeIfPresent(Double.self, forKey: .startTimeSeconds)
+        endTimeSeconds = try container.decodeIfPresent(Double.self, forKey: .endTimeSeconds)
+        text = try container.decode(String.self, forKey: .text)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        sourceProvider = try container.decodeIfPresent(String.self, forKey: .sourceProvider) ?? "unknown"
+        isFinal = try container.decodeIfPresent(Bool.self, forKey: .isFinal) ?? true
+        speechFinal = try container.decodeIfPresent(Bool.self, forKey: .speechFinal) ?? false
+        confidence = try container.decodeIfPresent(Double.self, forKey: .confidence)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        timingSource = try container.decodeIfPresent(TranscriptTimingSource.self, forKey: .timingSource) ?? .unavailable
     }
 }
 

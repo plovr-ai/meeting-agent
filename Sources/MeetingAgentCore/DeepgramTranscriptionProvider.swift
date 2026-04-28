@@ -143,7 +143,8 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "diarize", value: "true"),
-            URLQueryItem(name: "interim_results", value: "true")
+            URLQueryItem(name: "interim_results", value: "true"),
+            URLQueryItem(name: "endpointing", value: "500")
         ]
         guard let url = components.url else {
             throw DeepgramTranscriptionError.invalidRequest
@@ -248,11 +249,12 @@ public enum DeepgramStreamingResponseMapper {
                     language: localeIdentifier,
                     sourceProvider: providerID,
                     isFinal: isFinal,
+                    speechFinal: response.speechFinal == true,
                     confidence: alternative.confidence
                 )
             ]
         }
-        return runs.compactMap { run in
+        let mapped = runs.compactMap { run -> TranscriptSegment? in
             let text = run.words
                 .map { $0.displayText }
                 .joined(separator: " ")
@@ -271,6 +273,25 @@ public enum DeepgramStreamingResponseMapper {
                 isFinal: isFinal,
                 confidence: alternative.confidence,
                 timingSource: firstWord?.start == nil && lastWord?.end == nil ? .unavailable : .precise
+            )
+        }
+        guard response.speechFinal == true, !mapped.isEmpty else {
+            return mapped
+        }
+        return mapped.enumerated().map { index, segment in
+            TranscriptSegment(
+                id: segment.id,
+                speaker: segment.speaker,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                text: segment.text,
+                language: segment.language,
+                sourceProvider: segment.sourceProvider,
+                isFinal: segment.isFinal,
+                speechFinal: index == mapped.count - 1,
+                confidence: segment.confidence,
+                createdAt: segment.createdAt,
+                timingSource: segment.timingSource
             )
         }
     }
@@ -549,10 +570,12 @@ private struct DeepgramResponse: Decodable {
 
 public struct DeepgramStreamingResponse: Decodable {
     let isFinal: Bool?
+    let speechFinal: Bool?
     let channel: Channel?
 
     enum CodingKeys: String, CodingKey {
         case isFinal = "is_final"
+        case speechFinal = "speech_final"
         case channel
     }
 
