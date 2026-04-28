@@ -372,6 +372,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
         }
         freezeOpenLiveCaptionChunk(reason: .manualStop)
+        allowActiveTargetReprompt()
         Task { await stopRealtimeTranslation() }
         activeTarget = nil
         activeMeetingID = nil
@@ -391,6 +392,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             stoppedID = nil
         }
         await stopRealtimeTranslation()
+        allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
 
@@ -675,6 +677,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.activeTarget = nil
         activeMeetingID = nil
         return true
+    }
+
+    private func allowActiveTargetReprompt() {
+        guard let activeTarget else { return }
+        processMonitor.allowReprompt(processID: activeTarget.processID)
     }
 
     public var selectedMeeting: MeetingRecord? {
