@@ -52,6 +52,89 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 
+    func testAppendingFinalSegmentFromSameSpeakerMergesIntoLatestTurn() {
+        var store = LiveCaptionStore(sourceLocale: "zh-CN", targetLocale: "en-US")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")
+        _ = store.append(TranscriptSegment(
+            id: "segment-1",
+            speaker: speaker,
+            text: "我们先看一下",
+            language: "zh-CN",
+            isFinal: true,
+            createdAt: Date(timeIntervalSince1970: 100)
+        ))
+
+        let merged = store.append(TranscriptSegment(
+            id: "segment-2",
+            speaker: speaker,
+            text: "这个季度的目标",
+            language: "zh-CN",
+            isFinal: true,
+            createdAt: Date(timeIntervalSince1970: 120)
+        ))
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(merged.id, "segment-1")
+        XCTAssertEqual(merged.sourceSegmentID, "segment-2")
+        XCTAssertEqual(merged.sourceSegmentIDs, ["segment-1", "segment-2"])
+        XCTAssertEqual(merged.originalText, "我们先看一下 这个季度的目标")
+        XCTAssertEqual(merged.speaker, speaker)
+        XCTAssertEqual(merged.sourceLocale, "zh-CN")
+        XCTAssertEqual(merged.targetLocale, "en-US")
+        XCTAssertTrue(merged.isFinal)
+        XCTAssertEqual(merged.translationHealth, .pending)
+        XCTAssertEqual(merged.createdAt, Date(timeIntervalSince1970: 120))
+    }
+
+    func testAppendingFinalSegmentFromDifferentSpeakerCreatesNewTurn() {
+        var store = LiveCaptionStore(sourceLocale: "zh-CN", targetLocale: "en-US")
+        _ = store.append(TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User 1"),
+            text: "我们先看一下",
+            language: "zh-CN",
+            isFinal: true
+        ))
+
+        _ = store.append(TranscriptSegment(
+            id: "segment-2",
+            speaker: TranscriptSpeaker(identifier: "speaker-2", label: "User 2"),
+            text: "我有一个问题",
+            language: "zh-CN",
+            isFinal: true
+        ))
+
+        XCTAssertEqual(store.turns.count, 2)
+        XCTAssertEqual(store.turns.map(\.originalText), ["我们先看一下", "我有一个问题"])
+    }
+
+    func testMergingSameSpeakerClearsStaleTranslation() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")
+        _ = store.append(TranscriptSegment(
+            id: "segment-1",
+            speaker: speaker,
+            text: "first",
+            language: "en-US",
+            isFinal: true
+        ))
+        store.attachTranslation("第一句", toTurnID: "segment-1")
+
+        let merged = store.append(TranscriptSegment(
+            id: "segment-2",
+            speaker: speaker,
+            text: "second",
+            language: "en-US",
+            isFinal: true
+        ))
+
+        XCTAssertEqual(merged.originalText, "first second")
+        XCTAssertNil(merged.translatedText)
+        XCTAssertEqual(merged.translationHealth, .pending)
+        XCTAssertNil(store.turns.first?.translatedText)
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
+    }
+
     func testAttachTranslationUpdatesSameTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = store.append(TranscriptSegment(id: "segment-1", text: "hello", language: "en-US"))
@@ -59,6 +142,19 @@ final class LiveCaptionStoreTests: XCTestCase {
         store.attachTranslation("你好", toTurnID: "segment-1")
 
         XCTAssertEqual(store.turns.first?.translatedText, "你好")
+        XCTAssertEqual(store.turns.first?.translationHealth, .live)
+    }
+
+    func testAppendTranslationCombinesTranslatedTextForMergedTurn() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")
+        _ = store.append(TranscriptSegment(id: "segment-1", speaker: speaker, text: "first", language: "en-US", isFinal: true))
+        _ = store.append(TranscriptSegment(id: "segment-2", speaker: speaker, text: "second", language: "en-US", isFinal: true))
+
+        store.appendTranslation("第一句", toTurnID: "segment-1")
+        store.appendTranslation("第二句", toTurnID: "segment-1")
+
+        XCTAssertEqual(store.turns.first?.translatedText, "第一句 第二句")
         XCTAssertEqual(store.turns.first?.translationHealth, .live)
     }
 
