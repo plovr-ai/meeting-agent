@@ -151,7 +151,6 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
 
         let segments = DeepgramStreamingResponseMapper.segments(
             from: data,
-            localeIdentifier: "en-US",
             providerID: "deepgram-transcribe"
         )
 
@@ -282,7 +281,6 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram-transcribe"
         )
         let updated = DeepgramStreamingResponseMapper.segments(
@@ -303,7 +301,6 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram-transcribe"
         )
 
