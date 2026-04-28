@@ -132,6 +132,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains(".onTapGesture {\n                            viewModel.selectMeeting(meeting.id)"))
     }
 
+    func testDetectedMeetingStartRecordingOpensMeetingDetail() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let alertButtonRange = source.range(of: "Button(\"Start Recording\")") else {
+            return XCTFail("Detected meeting Start Recording button is missing")
+        }
+        guard let notNowRange = source.range(of: "Button(\"Not Now\"", range: alertButtonRange.upperBound..<source.endIndex) else {
+            return XCTFail("Detected meeting Not Now button is missing")
+        }
+
+        let startRecordingAction = source[alertButtonRange.lowerBound..<notNowRange.lowerBound]
+        XCTAssertTrue(startRecordingAction.contains("try await viewModel.startRecording(for: target)"))
+        XCTAssertTrue(startRecordingAction.contains("destination = .workspace"))
+    }
+
     func testSettingsEntryIsFixedAtBottomOfSidebar() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

@@ -211,6 +211,7 @@ struct MainWindowView: View {
                 Task {
                     do {
                         try await viewModel.startRecording(for: target)
+                        destination = .workspace
                     } catch {
                         viewModel.setRecordingStartError(error)
                     }
