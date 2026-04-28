@@ -253,3 +253,19 @@ When `MISTAKES.md` contains a relevant prior lesson, apply it before writing the
 Before adding tests in an area mentioned by `MISTAKES.md`, choose assertions that would fail without the intended behavior and document why.
 
 ---
+
+## [52] Do not publish capture sessions before consumers are ready
+
+**Date**: 2026-04-28
+**Category**: logic-error
+
+### What went wrong
+The first startup replay implementation focused on the Deepgram connection delay but left `captureSession` visible to the app drain loop before the WAV writer and startup spool state were ready.
+
+### Correct approach
+Start Core Audio capture first, but expose the session to drain callers only after local writing and startup transcription buffering have been initialized.
+
+### How to avoid
+When a producer starts before its consumers, test the exact window where external drain or poll loops can observe partially initialized state.
+
+---
