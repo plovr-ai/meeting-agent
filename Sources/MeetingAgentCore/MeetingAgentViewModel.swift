@@ -742,8 +742,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func scheduleCaptionTextTranslationIfNeeded() {
         let candidates = liveCaptionStore.turns.filter { turn in
             guard turn.isFinal,
-                  turn.translationHealth == .pending,
-                  (turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                  turn.translationHealth == .pending
             else {
                 return false
             }
