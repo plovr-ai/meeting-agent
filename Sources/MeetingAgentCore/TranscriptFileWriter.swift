@@ -50,6 +50,7 @@ public final class TranscriptFileWriter {
             document.segments.removeAll { Self.shouldReplaceExistingSegment($0, with: segment) }
             document.segments.append(segment)
         }
+        document.segments = Self.prunedCoveredInterimSegments(document.segments)
         try replace(with: document.segments)
     }
 
@@ -233,6 +234,57 @@ public final class TranscriptFileWriter {
         guard coversTiming else { return false }
         return speakersAreCompatible(final.speaker, interim.speaker)
             || normalizedTextsOverlap(final.text, interim.text)
+    }
+
+    private static func prunedCoveredInterimSegments(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        let finalSegments = segments.filter(\.isFinal)
+        guard !finalSegments.isEmpty else { return segments }
+        return segments.filter { segment in
+            guard !segment.isFinal else { return true }
+            return !finalSegmentsCoverInterim(finalSegments, segment)
+        }
+    }
+
+    private static func finalSegmentsCoverInterim(_ finalSegments: [TranscriptSegment], _ interim: TranscriptSegment) -> Bool {
+        guard let interimStart = interim.startTimeSeconds,
+              let interimEnd = interim.endTimeSeconds
+        else {
+            return false
+        }
+        let tolerance = 0.25
+        let candidates = finalSegments
+            .filter { final in
+                guard final.sourceProvider == interim.sourceProvider,
+                      let finalStart = final.startTimeSeconds,
+                      let finalEnd = final.endTimeSeconds
+                else {
+                    return false
+                }
+                return finalStart <= interimEnd + tolerance
+                    && finalEnd + tolerance >= interimStart
+            }
+            .sorted {
+                ($0.startTimeSeconds ?? 0) < ($1.startTimeSeconds ?? 0)
+            }
+        guard let first = candidates.first,
+              let firstStart = first.startTimeSeconds,
+              firstStart <= interimStart + tolerance
+        else {
+            return false
+        }
+        var coveredEnd = first.endTimeSeconds ?? firstStart
+        for final in candidates.dropFirst() {
+            guard let finalStart = final.startTimeSeconds,
+                  let finalEnd = final.endTimeSeconds,
+                  finalStart <= coveredEnd + tolerance
+            else {
+                break
+            }
+            coveredEnd = max(coveredEnd, finalEnd)
+        }
+        guard coveredEnd + tolerance >= interimEnd else { return false }
+        let combinedFinalText = candidates.map(\.text).joined(separator: " ")
+        return normalizedTextsOverlap(combinedFinalText, interim.text)
     }
 
     private static func speakersAreCompatible(_ first: TranscriptSpeaker, _ second: TranscriptSpeaker) -> Bool {

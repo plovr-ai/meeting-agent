@@ -439,6 +439,55 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
+    func testAdjacentFinalSegmentsRemoveInterimSpanningTheirBoundary() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "User A")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.08",
+            speaker: speaker,
+            startTimeSeconds: 0.08,
+            endTimeSeconds: 25.04,
+            text: "And simplified. My name is Sherwin Shaffee, and I work at Micro Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents, but today, I'm very excited to share an agent that Microsoft has built and that is the interpreter agent. So I I just No. It works. It",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-23.36",
+            speaker: speaker,
+            startTimeSeconds: 23.36,
+            endTimeSeconds: 25.84,
+            text: "No. It works. It works very well.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-25.04",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-1", label: "User B"),
+            startTimeSeconds: 25.04,
+            endTimeSeconds: 28.48,
+            text: "works very well. It works very very well. Oh,",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), [
+            "deepgram-transcribe-stream-0.08",
+            "deepgram-transcribe-stream-25.04"
+        ])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true, true])
+    }
+
     func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
