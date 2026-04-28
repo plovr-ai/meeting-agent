@@ -12,12 +12,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)"))
     }
 
-    func testMeetingsSidebarUsesWiderDefaultWidth() throws {
+    func testMainWindowUsesAgendaFeedInsteadOfNavigationSplitView() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
+        XCTAssertFalse(source.contains("NavigationSplitView"))
+        XCTAssertTrue(source.contains("AgendaShellView("))
+        XCTAssertTrue(source.contains("AgendaFeedView("))
+        XCTAssertTrue(source.contains("AgendaMeetingCard("))
     }
 
     func testRecordingAndRetryButtonsShareActionRow() throws {
@@ -57,7 +60,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("@State private var showSettings = false"))
+        XCTAssertTrue(source.contains("@State private var destination: MainWindowDestination = .agenda"))
         XCTAssertTrue(source.contains("SettingsView("))
         XCTAssertFalse(source.contains("TextField("))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
@@ -65,30 +68,39 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("\"STT Locale\""))
     }
 
-    func testMeetingRowsUseListSelectionTags() throws {
+    func testAgendaFeedShowsTodayAndRecentHistoryWithoutStaticYesterdaySection() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("List(selection: Binding("))
-        XCTAssertTrue(source.contains(".tag(Optional(meeting.id))"))
-        XCTAssertFalse(source.contains(".onTapGesture {\n                            viewModel.selectMeeting(meeting.id)"))
+        XCTAssertTrue(source.contains("Text(\"Today\")"))
+        XCTAssertTrue(source.contains("Text(\"Recent\")"))
+        XCTAssertTrue(source.contains("recentHistoryDays = 7"))
+        XCTAssertTrue(source.contains("recentHistoryStart"))
+        XCTAssertFalse(source.contains("Text(\"Yesterday\")"))
     }
 
-    func testSettingsEntryIsFixedAtBottomOfSidebar() throws {
+    func testAgendaCardsExposeMeetingMetadata() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        guard let spacerRange = source.range(of: "Spacer()") else {
-            return XCTFail("Sidebar spacer is missing")
-        }
-        guard let settingsRange = source.range(of: "Button {") else {
-            return XCTFail("Settings bottom button is missing")
-        }
+        XCTAssertTrue(source.contains("statusText(for: meeting)"))
+        XCTAssertTrue(source.contains("durationText(for: meeting)"))
+        XCTAssertTrue(source.contains("artifactText(for: meeting)"))
+        XCTAssertTrue(source.contains("meeting.speechLocaleIdentifier"))
+        XCTAssertTrue(source.contains("meeting.startedAt.formatted(date: .abbreviated, time: .shortened)"))
+    }
 
-        XCTAssertLessThan(spacerRange.lowerBound, settingsRange.lowerBound)
-        XCTAssertTrue(source.contains("showSettings = true"))
+    func testSettingsEntryRemainsFixedInAgendaShell() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("AgendaShellView("))
+        XCTAssertTrue(source.contains("Label(\"Agenda\", systemImage: \"calendar\")"))
+        XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
+        XCTAssertTrue(source.contains("destination = .settings"))
     }
 
     func testSidebarTitleUsesCommandCenterStylingInsteadOfSystemNavigationTitle() throws {
@@ -118,8 +130,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertFalse(source.contains("Section(\"Meetings\")"))
-        XCTAssertTrue(source.contains("Section {"))
-        XCTAssertTrue(source.contains("Text(\"Meetings\")"))
+        XCTAssertTrue(source.contains("AgendaMeetingCard("))
+        XCTAssertTrue(source.contains("Text(\"Today\")"))
         XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.secondaryText)"))
     }
 
