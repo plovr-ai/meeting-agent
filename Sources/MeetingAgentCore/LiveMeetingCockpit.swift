@@ -292,6 +292,10 @@ public struct LiveCaptionStore: Equatable {
             turns[index] = updated
             return updated
         }
+        if let index = provisionalMergeTargetIndex(for: turn) {
+            turns[index] = mergedProvisionalTurn(turns[index], appending: turn)
+            return turns[index]
+        }
         if let index = mergeTargetIndex(for: turn) {
             turns[index] = mergedTurn(turns[index], appending: turn)
             return turns[index]
@@ -331,6 +335,18 @@ public struct LiveCaptionStore: Equatable {
         return lastIndex
     }
 
+    private func provisionalMergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
+        guard !turn.isFinal,
+              let lastIndex = turns.indices.last,
+              turns[lastIndex].speaker == turn.speaker,
+              !turns[lastIndex].sourceSegmentIDs.contains(turn.sourceSegmentID),
+              transcriptTextOverlapsOrContains(turns[lastIndex].originalText, turn.originalText)
+        else {
+            return nil
+        }
+        return lastIndex
+    }
+
     private func mergedTurn(_ existing: LiveCaptionTurn, appending turn: LiveCaptionTurn) -> LiveCaptionTurn {
         var merged = existing
         merged.sourceSegmentID = turn.sourceSegmentID
@@ -345,6 +361,22 @@ public struct LiveCaptionStore: Equatable {
         return merged
     }
 
+    private func mergedProvisionalTurn(_ existing: LiveCaptionTurn, appending turn: LiveCaptionTurn) -> LiveCaptionTurn {
+        var merged = existing
+        merged.sourceSegmentIDs.append(contentsOf: turn.sourceSegmentIDs.filter { !merged.sourceSegmentIDs.contains($0) })
+        merged.originalText = joinedTranscriptText(existing.originalText, turn.originalText)
+        merged.sourceLocale = turn.sourceLocale
+        merged.targetLocale = turn.targetLocale
+        merged.isFinal = false
+        merged.captionHealth = turn.captionHealth
+        merged.translationHealth = .pending
+        merged.createdAt = turn.createdAt
+        merged.chunkState = .draft
+        merged.translationRevision += 1
+        merged.freezeReason = nil
+        return merged
+    }
+
     private func joinedTranscriptText(_ first: String, _ second: String) -> String {
         let trimmedFirst = first.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSecond = second.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,7 +386,94 @@ public struct LiveCaptionStore: Equatable {
         if trimmedSecond.isEmpty {
             return trimmedFirst
         }
+        if tokenSequence(normalizedTokens(trimmedFirst), contains: normalizedTokens(trimmedSecond)) {
+            return trimmedFirst
+        }
+        if tokenSequence(normalizedTokens(trimmedSecond), contains: normalizedTokens(trimmedFirst)) {
+            return trimmedSecond
+        }
+        let overlap = suffixPrefixOverlapCount(trimmedFirst, trimmedSecond)
+        if overlap > 0 {
+            let secondRemainder = droppingFirstWords(overlap, from: trimmedSecond)
+            if secondRemainder.isEmpty {
+                return trimmedFirst
+            }
+            return "\(trimmedFirst) \(secondRemainder)"
+        }
         return "\(trimmedFirst) \(trimmedSecond)"
+    }
+
+    private func transcriptTextOverlapsOrContains(_ first: String, _ second: String) -> Bool {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        guard !firstTokens.isEmpty, !secondTokens.isEmpty else {
+            return false
+        }
+        return tokenSequence(firstTokens, contains: secondTokens)
+            || tokenSequence(secondTokens, contains: firstTokens)
+            || suffixPrefixOverlapCount(first, second) > 0
+    }
+
+    private func suffixPrefixOverlapCount(_ first: String, _ second: String) -> Int {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        let maxOverlap = min(firstTokens.count, secondTokens.count)
+        guard maxOverlap > 0 else {
+            return 0
+        }
+        for overlap in stride(from: maxOverlap, through: 1, by: -1) {
+            if Array(firstTokens.suffix(overlap)) == Array(secondTokens.prefix(overlap)) {
+                return overlap
+            }
+        }
+        return 0
+    }
+
+    private func tokenSequence(_ haystack: [String], contains needle: [String]) -> Bool {
+        guard !needle.isEmpty, needle.count <= haystack.count else {
+            return false
+        }
+        if needle.count == haystack.count {
+            return haystack == needle
+        }
+        for start in 0...(haystack.count - needle.count) {
+            if Array(haystack[start..<(start + needle.count)]) == needle {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func normalizedTokens(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private func droppingFirstWords(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.startIndex
+        var insideWord = false
+        while index < text.endIndex {
+            let scalar = text[index].unicodeScalars.first
+            let isWord = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isWord {
+                insideWord = true
+            } else if insideWord {
+                remaining -= 1
+                insideWord = false
+                if remaining == 0 {
+                    return String(text[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            index = text.index(after: index)
+        }
+        if insideWord {
+            remaining -= 1
+        }
+        return remaining <= 0 ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public mutating func attachTranslation(_ text: String, toTurnID turnID: String) {
