@@ -232,7 +232,15 @@ public final class TranscriptFileWriter {
         let first = normalizedTranscriptComparisonText(first)
         let second = normalizedTranscriptComparisonText(second)
         guard !first.isEmpty, !second.isEmpty else { return false }
-        return first.contains(second) || second.contains(first)
+        if first.contains(second) || second.contains(first) {
+            return true
+        }
+        let firstWords = first.components(separatedBy: " ")
+        let secondWords = second.components(separatedBy: " ")
+        let shorterCount = min(firstWords.count, secondWords.count)
+        guard shorterCount >= 4 else { return false }
+        let overlapCount = orderedWordOverlapCount(firstWords, secondWords)
+        return Double(overlapCount) / Double(shorterCount) >= 0.7
     }
 
     private static func normalizedTranscriptComparisonText(_ text: String) -> String {
@@ -241,6 +249,23 @@ public final class TranscriptFileWriter {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private static func orderedWordOverlapCount(_ first: [String], _ second: [String]) -> Int {
+        guard !first.isEmpty, !second.isEmpty else { return 0 }
+        var previous = Array(repeating: 0, count: second.count + 1)
+        for firstWord in first {
+            var current = Array(repeating: 0, count: second.count + 1)
+            for index in second.indices {
+                if firstWord == second[index] {
+                    current[index + 1] = previous[index] + 1
+                } else {
+                    current[index + 1] = max(previous[index + 1], current[index])
+                }
+            }
+            previous = current
+        }
+        return previous[second.count]
     }
 
     private static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {

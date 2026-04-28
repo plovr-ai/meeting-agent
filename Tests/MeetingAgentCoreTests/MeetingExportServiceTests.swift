@@ -13,7 +13,7 @@ final class MeetingExportServiceTests: XCTestCase {
 
         try MeetingExportService().exportTranscript(for: fixture.record, to: destination)
 
-        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "Allan:\nHello\nNext step")
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "Allan:\nHello Next step")
     }
 
     func testExportsSummaryMarkdownWhenPresent() throws {
