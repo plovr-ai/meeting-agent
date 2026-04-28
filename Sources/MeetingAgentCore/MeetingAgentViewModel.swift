@@ -62,6 +62,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let minDraftTranslationCharacterDelta = 80
     private let minDraftTranslationInterval: TimeInterval = 2
     private let captionTranslationProviderFactory: (SpeechTranscriptionConfiguration) -> TextTranslationProvider?
+    private let summaryProviderFactory: (SpeechTranscriptionConfiguration) -> MeetingSummaryProvider
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -78,6 +79,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             playbackSink: LocalAudioPlaybackSink()
         ),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
+        summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
@@ -86,6 +88,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.exportService = exportService
         self.realtimeTranslationController = realtimeTranslationController
         self.captionTranslationProviderFactory = captionTranslationProviderFactory
+        self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
+            Self.summaryProvider(for: configuration)
+        }
         self.processTargetsProvider = processTargetsProvider
         self.recorder.realtimeFrameConsumer = realtimeTranslationController
         if let speechConfiguration {
@@ -372,6 +377,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
         }
         freezeOpenLiveCaptionChunk(reason: .manualStop)
+        allowActiveTargetReprompt()
         Task { await stopRealtimeTranslation() }
         activeTarget = nil
         activeMeetingID = nil
@@ -391,6 +397,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             stoppedID = nil
         }
         await stopRealtimeTranslation()
+        allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
 
@@ -425,7 +432,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 generatedAt: generatedAt
             )
         } else {
-            let provider = Self.summaryProvider()
+            let provider = summaryProviderFactory(speechConfiguration)
             summary = try await provider.generateSummary(
                 input: MeetingSummaryInput(
                     meetingName: meeting.name,
@@ -677,6 +684,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         return true
     }
 
+    private func allowActiveTargetReprompt() {
+        guard let activeTarget else { return }
+        processMonitor.allowReprompt(processID: activeTarget.processID)
+    }
+
     public var selectedMeeting: MeetingRecord? {
         meetings.first { $0.id == selectedMeetingID }
     }
@@ -747,16 +759,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
-    private static func summaryProvider(
+    private nonisolated static func summaryProvider(
+        for configuration: SpeechTranscriptionConfiguration,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MeetingSummaryProvider {
         let provider = environment["MEETING_AGENT_SUMMARY_PROVIDER"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if provider == "openrouter" {
-            return OpenRouterMeetingSummaryProvider(configuration: .environment(
-                model: environment["MEETING_AGENT_OPENROUTER_MODEL"],
-                environment: environment
+            return OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
+                apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
+                    ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
+                model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
+                    ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
             ))
         }
         return ExtractiveMeetingSummaryProvider()

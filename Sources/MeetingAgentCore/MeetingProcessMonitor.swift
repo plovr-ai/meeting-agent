@@ -13,7 +13,7 @@ public final class MeetingProcessMonitor {
         guard !isRecording else { return [] }
 
         let candidates = targets.filter { target in
-            let isPreferred = target.bundleIdentifier.map(RunningProcessDiscovery.preferredBundleIDs.contains) ?? false
+            let isPreferred = RunningProcessDiscovery.isPreferredMeetingTarget(target)
             guard isPreferred else { return false }
             guard target.isAudioOutputActive else { return false }
             guard !promptedProcessIDs.contains(target.processID) else { return false }
@@ -30,6 +30,10 @@ public final class MeetingProcessMonitor {
 
     public func ignore(processID: pid_t) {
         ignoredProcessIDs.insert(processID)
+    }
+
+    public func allowReprompt(processID: pid_t) {
+        promptedProcessIDs.remove(processID)
     }
 
     public func reconcileRunningProcessIDs(_ runningProcessIDs: Set<pid_t>) {

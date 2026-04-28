@@ -37,6 +37,51 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
     }
 }
 
+public enum DeepgramRawResponseTransport: String, Equatable {
+    case http
+    case webSocket
+}
+
+public struct DeepgramRawResponseContext: Equatable {
+    public let providerID: String
+    public let transport: DeepgramRawResponseTransport
+
+    public init(providerID: String, transport: DeepgramRawResponseTransport) {
+        self.providerID = providerID
+        self.transport = transport
+    }
+}
+
+public protocol DeepgramRawResponseLogger {
+    func logRawResponse(_ data: Data, context: DeepgramRawResponseContext)
+}
+
+public final class DeepgramEnvironmentRawResponseLogger: DeepgramRawResponseLogger {
+    private let isEnabled: Bool
+    private let errorOutput: FileHandle
+
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        errorOutput: FileHandle = .standardError
+    ) {
+        self.isEnabled = environment["MEETING_AGENT_DEEPGRAM_RAW_RESPONSE_LOG"] == "1"
+        self.errorOutput = errorOutput
+    }
+
+    public func logRawResponse(_ data: Data, context: DeepgramRawResponseContext) {
+        guard isEnabled else { return }
+        let text = String(data: data, encoding: .utf8) ?? data.base64EncodedString()
+        let message = """
+        [MeetingAgent] Deepgram raw \(context.transport.rawValue) response (\(data.count) bytes, provider: \(context.providerID)):
+        \(text)
+
+        """
+        if let output = message.data(using: .utf8) {
+            try? errorOutput.write(contentsOf: output)
+        }
+    }
+}
+
 public protocol DeepgramTranscriptionClient {
     func transcribe(
         configuration: DeepgramTranscriptionConfiguration,
@@ -108,16 +153,25 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
 
 public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStreamingTranscriptionClient {
     private let webSocketFactory: (URLRequest) -> DeepgramWebSocketTask
+    private let rawResponseLogger: DeepgramRawResponseLogger
 
     public convenience init() {
-        self.init(webSocketFactory: { request in
-            URLSession.shared.webSocketTask(with: request)
-        })
+        self.init(
+            rawResponseLogger: DeepgramEnvironmentRawResponseLogger(),
+            webSocketFactory: { request in
+                URLSession.shared.webSocketTask(with: request)
+            }
+        )
     }
 
-    init(webSocketFactory: @escaping (URLRequest) -> DeepgramWebSocketTask) {
+    init(
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger(),
+        webSocketFactory: @escaping (URLRequest) -> DeepgramWebSocketTask
+    ) {
+        self.rawResponseLogger = rawResponseLogger
         self.webSocketFactory = webSocketFactory
     }
+
     public func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
@@ -147,7 +201,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         let task = webSocketFactory(request)
-        let session = URLSessionDeepgramStreamingSession(task: task)
+        let session = URLSessionDeepgramStreamingSession(task: task, rawResponseLogger: rawResponseLogger)
         task.resume()
         return session
     }
@@ -164,10 +218,15 @@ extension URLSessionWebSocketTask: DeepgramWebSocketTask {}
 
 final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private let task: DeepgramWebSocketTask
+    private let rawResponseLogger: DeepgramRawResponseLogger
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
 
-    init(task: DeepgramWebSocketTask) {
+    init(
+        task: DeepgramWebSocketTask,
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
+    ) {
         self.task = task
+        self.rawResponseLogger = rawResponseLogger
     }
 
     var segments: AsyncStream<TranscriptSegment> {
@@ -207,6 +266,10 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     }
 
     private func yieldSegments(from data: Data) {
+        rawResponseLogger.logRawResponse(
+            data,
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe", transport: .webSocket)
+        )
         for segment in DeepgramStreamingResponseMapper.segments(
             from: data,
             providerID: "deepgram-transcribe"
@@ -508,21 +571,26 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
 
     private let configuration: DeepgramTranscriptionConfiguration
     private let client: DeepgramTranscriptionClient
+    private let rawResponseLogger: DeepgramRawResponseLogger
 
     public init(
         configuration: DeepgramTranscriptionConfiguration,
-        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient()
+        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient(),
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
     ) {
         self.configuration = configuration
         self.client = client
+        self.rawResponseLogger = rawResponseLogger
     }
 
     public init(
         appConfiguration: SpeechTranscriptionConfiguration = .default,
-        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient()
+        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient(),
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
     ) {
         self.configuration = .app(appConfiguration)
         self.client = client
+        self.rawResponseLogger = rawResponseLogger
     }
 
     public func transcribe(audio: AudioInput, options: TranscriptionOptions) async throws -> TranscriptDocument {
@@ -535,6 +603,10 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
         let data = try await client.transcribe(
             configuration: configuration,
             wavURL: wavURL
+        )
+        rawResponseLogger.logRawResponse(
+            data,
+            context: DeepgramRawResponseContext(providerID: descriptor.id, transport: .http)
         )
         let response = try JSONDecoder.meetingAgent.decode(DeepgramResponse.self, from: data)
         return TranscriptDocument(segments: Self.segments(from: response, providerID: descriptor.id))

@@ -78,6 +78,36 @@ final class RunningProcessDiscoveryTests: XCTestCase {
         XCTAssertEqual(selected?.processID, 201)
     }
 
+    func testFeishuDisplayNameSortsBeforeOtherAppsWithoutKnownBundleIdentifier() {
+        let apps = [
+            RunningAppSnapshot(processID: 200, displayName: "Aardvark", bundleIdentifier: "com.example.aardvark"),
+            RunningAppSnapshot(processID: 201, displayName: "Feishu", bundleIdentifier: "com.unknown.desktop")
+        ]
+
+        let targets = RunningProcessDiscovery.targets(from: apps, currentProcessID: 999)
+
+        XCTAssertEqual(targets.map(\.displayName), ["Feishu", "Aardvark"])
+    }
+
+    func testAutomaticallySelectsLarkDisplayNameOnlyWhenAudioOutputIsActive() {
+        let inactiveLark = AudioCaptureTarget(
+            processID: 201,
+            displayName: "Lark Meeting",
+            bundleIdentifier: "com.unknown.desktop",
+            isAudioOutputActive: false
+        )
+        let activeLark = AudioCaptureTarget(
+            processID: 202,
+            displayName: "Lark",
+            bundleIdentifier: nil,
+            isAudioOutputActive: true
+        )
+
+        let selected = RunningProcessDiscovery.automaticTarget(from: [inactiveLark, activeLark])
+
+        XCTAssertEqual(selected?.processID, 202)
+    }
+
     func testAutomaticallySelectsFirstPreferredTarget() {
         let targets = [
             AudioCaptureTarget(processID: 200, displayName: "Notes", bundleIdentifier: "com.apple.Notes"),

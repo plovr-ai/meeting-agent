@@ -88,6 +88,45 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(task.cancelCloseCode, .normalClosure)
     }
 
+    func testURLSessionStreamingSessionLogsRawWebSocketResponsesBeforeMapping() async throws {
+        let task = FakeDeepgramWebSocketTask()
+        let logger = RecordingDeepgramRawResponseLogger()
+        let session = URLSessionDeepgramStreamingSession(task: task, rawResponseLogger: logger)
+        let received = TranscriptSegmentCollector()
+        let receiveTask = Task {
+            for await segment in session.segments {
+                await received.append(segment)
+            }
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let stringPayload = """
+        {
+          "is_final": true,
+          "channel": {
+            "alternatives": [
+              { "transcript": "string payload", "confidence": 0.7, "words": [] }
+            ]
+          }
+        }
+        """
+        let dataPayload = Data(#"{"is_final":false}"#.utf8)
+        task.completeReceive(.success(.string(stringPayload)))
+        task.completeReceive(.success(.data(dataPayload)))
+        task.completeReceive(.failure(ProbeError.speechRecognition("closed")))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        await session.close()
+        await receiveTask.value
+
+        let receivedTexts = await received.texts
+        XCTAssertEqual(receivedTexts, ["string payload"])
+        XCTAssertEqual(logger.entries.count, 2)
+        XCTAssertEqual(logger.entries.map(\.context.providerID), ["deepgram-transcribe", "deepgram-transcribe"])
+        XCTAssertEqual(logger.entries.map(\.context.transport), [.webSocket, .webSocket])
+        XCTAssertEqual(String(data: logger.entries[0].data, encoding: .utf8), stringPayload)
+        XCTAssertEqual(logger.entries[1].data, dataPayload)
+    }
+
     func testStreamingProviderSendsAudioFramesAndWritesIncomingTranscriptSegments() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-\(UUID().uuidString)")
@@ -564,6 +603,19 @@ private final class FakeDeepgramStreamingClient: DeepgramStreamingTranscriptionC
             channelCount: channelCount
         ))
         return session
+    }
+}
+
+private final class RecordingDeepgramRawResponseLogger: DeepgramRawResponseLogger {
+    struct Entry {
+        let data: Data
+        let context: DeepgramRawResponseContext
+    }
+
+    private(set) var entries: [Entry] = []
+
+    func logRawResponse(_ data: Data, context: DeepgramRawResponseContext) {
+        entries.append(Entry(data: data, context: context))
     }
 }
 

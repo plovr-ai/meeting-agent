@@ -67,11 +67,58 @@ final class MeetingProcessMonitorTests: XCTestCase {
         XCTAssertEqual(active, [activeChrome])
     }
 
+    func testAllowRepromptDetectsSameActiveProcessAgain() {
+        let zoom = AudioCaptureTarget(
+            processID: 123,
+            displayName: "zoom.us",
+            bundleIdentifier: "us.zoom.xos",
+            isAudioOutputActive: true
+        )
+        let monitor = MeetingProcessMonitor()
+
+        _ = monitor.detectNewCandidates(in: [zoom], isRecording: false)
+        XCTAssertEqual(monitor.detectNewCandidates(in: [zoom], isRecording: false), [])
+
+        monitor.allowReprompt(processID: 123)
+
+        XCTAssertEqual(monitor.detectNewCandidates(in: [zoom], isRecording: false), [zoom])
+    }
+
+    func testAllowRepromptDoesNotClearIgnoredProcess() {
+        let zoom = AudioCaptureTarget(
+            processID: 123,
+            displayName: "zoom.us",
+            bundleIdentifier: "us.zoom.xos",
+            isAudioOutputActive: true
+        )
+        let monitor = MeetingProcessMonitor()
+
+        _ = monitor.detectNewCandidates(in: [zoom], isRecording: false)
+        monitor.ignore(processID: 123)
+        monitor.allowReprompt(processID: 123)
+
+        XCTAssertEqual(monitor.detectNewCandidates(in: [zoom], isRecording: false), [])
+    }
+
     func testDetectsFeishuWhenAudioOutputIsActive() {
         let feishu = AudioCaptureTarget(
             processID: 321,
             displayName: "Feishu",
             bundleIdentifier: "com.electron.larkFeishu",
+            isAudioOutputActive: true
+        )
+        let monitor = MeetingProcessMonitor()
+
+        let candidates = monitor.detectNewCandidates(in: [feishu], isRecording: false)
+
+        XCTAssertEqual(candidates, [feishu])
+    }
+
+    func testDetectsFeishuDisplayNameWhenAudioOutputIsActive() {
+        let feishu = AudioCaptureTarget(
+            processID: 321,
+            displayName: "飞书",
+            bundleIdentifier: "com.unknown.desktop",
             isAudioOutputActive: true
         )
         let monitor = MeetingProcessMonitor()
