@@ -2,87 +2,26 @@ import AppKit
 import MeetingAgentCore
 import SwiftUI
 
+private enum MainWindowDestination: Equatable {
+    case agenda
+    case detail
+    case settings
+}
+
 struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
-    @State private var showSettings = false
+    @State private var destination: MainWindowDestination = .agenda
 
     var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Meeting Agent")
-                        .commandCenterEyebrow()
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 16)
-                .background(CommandCenterPalette.surface)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(CommandCenterPalette.border)
-                        .frame(height: 1)
-                }
-
-                List(selection: Binding(
-                    get: { showSettings ? nil : viewModel.selectedMeetingID },
-                    set: { id in
-                        showSettings = false
-                        viewModel.selectMeeting(id)
-                    }
-                )) {
-                    Section {
-                        ForEach(viewModel.meetings) { meeting in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(meeting.name)
-                                    .font(CommandCenterTypography.title)
-                                    .foregroundStyle(CommandCenterPalette.text)
-                                Text(meeting.startedAt, style: .date)
-                                    .font(CommandCenterTypography.caption)
-                                    .foregroundStyle(CommandCenterPalette.secondaryText)
-                            }
-                            .padding(.vertical, 4)
-                            .tag(Optional(meeting.id))
-                        }
-                    } header: {
-                        Text("Meetings")
-                            .foregroundStyle(CommandCenterPalette.secondaryText)
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .background(CommandCenterPalette.surface)
-                .environment(\.colorScheme, .dark)
-                .foregroundStyle(CommandCenterPalette.text)
-
-                Spacer()
-
-                Divider()
-                    .overlay(CommandCenterPalette.border)
-
-                Button {
-                    showSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(showSettings ? CommandCenterPalette.primary : CommandCenterPalette.text)
-                .padding(12)
-                .background(showSettings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
-            }
-            .background(CommandCenterPalette.surface)
-            .frame(minWidth: 260, idealWidth: 300)
-        } detail: {
-            if showSettings {
-                SettingsView(
-                    configuration: viewModel.speechConfiguration,
-                    profiles: BilingualPipelineFactory.builtInProfiles,
-                    localeIdentifiers: MeetingAgentViewModel.supportedLocaleIdentifiers,
-                    isRecording: viewModel.isRecording,
-                    status: viewModel.speechConfigurationStatus,
-                    primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
-                    save: { viewModel.saveSpeechConfiguration($0) }
-                )
-            } else {
+        AgendaShellView(
+            destination: $destination,
+            selectedMeetingID: viewModel.selectedMeetingID,
+            meetings: viewModel.meetings,
+            selectMeeting: { id in
+                viewModel.selectMeeting(id)
+                destination = .detail
+            },
+            detail: {
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
                     speechConfiguration: viewModel.speechConfiguration,
@@ -146,8 +85,19 @@ struct MainWindowView: View {
                         }
                     }
                 )
+            },
+            settings: {
+                SettingsView(
+                    configuration: viewModel.speechConfiguration,
+                    profiles: BilingualPipelineFactory.builtInProfiles,
+                    localeIdentifiers: MeetingAgentViewModel.supportedLocaleIdentifiers,
+                    isRecording: viewModel.isRecording,
+                    status: viewModel.speechConfigurationStatus,
+                    primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
+                    save: { viewModel.saveSpeechConfiguration($0) }
+                )
             }
-        }
+        )
         .background(CommandCenterPalette.window)
         .foregroundStyle(CommandCenterPalette.text)
         .toolbarBackground(CommandCenterPalette.surface, for: .windowToolbar)
@@ -213,6 +163,284 @@ struct MainWindowView: View {
         return sanitized.isEmpty ? "meeting" : sanitized
     }
 
+}
+
+private struct AgendaShellView<Detail: View, Settings: View>: View {
+    @Binding var destination: MainWindowDestination
+    let selectedMeetingID: UUID?
+    let meetings: [MeetingRecord]
+    let selectMeeting: (UUID) -> Void
+    private let detail: Detail
+    private let settings: Settings
+
+    init(
+        destination: Binding<MainWindowDestination>,
+        selectedMeetingID: UUID?,
+        meetings: [MeetingRecord],
+        selectMeeting: @escaping (UUID) -> Void,
+        @ViewBuilder detail: () -> Detail,
+        @ViewBuilder settings: () -> Settings
+    ) {
+        _destination = destination
+        self.selectedMeetingID = selectedMeetingID
+        self.meetings = meetings
+        self.selectMeeting = selectMeeting
+        self.detail = detail()
+        self.settings = settings()
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            navigationRail
+
+            Divider()
+                .overlay(CommandCenterPalette.border)
+
+            Group {
+                switch destination {
+                case .agenda:
+                    AgendaFeedView(
+                        meetings: meetings,
+                        selectedMeetingID: selectedMeetingID,
+                        selectMeeting: selectMeeting
+                    )
+                case .detail:
+                    detail
+                case .settings:
+                    settings
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(CommandCenterPalette.window)
+    }
+
+    private var navigationRail: some View {
+        VStack(spacing: 0) {
+            Text("Meeting Agent")
+                .commandCenterEyebrow()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 16)
+
+            Button {
+                destination = .agenda
+            } label: {
+                Label("Agenda", systemImage: "calendar")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(destination == .agenda ? CommandCenterPalette.primary : CommandCenterPalette.text)
+            .padding(12)
+            .background(destination == .agenda ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
+
+            Spacer()
+
+            Divider()
+                .overlay(CommandCenterPalette.border)
+
+            Button {
+                destination = .settings
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(destination == .settings ? CommandCenterPalette.primary : CommandCenterPalette.text)
+            .padding(12)
+            .background(destination == .settings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
+        }
+        .background(CommandCenterPalette.surface)
+        .frame(minWidth: 180, idealWidth: 210, maxWidth: 240)
+    }
+}
+
+private struct AgendaFeedView: View {
+    private let recentHistoryDays = 7
+    let meetings: [MeetingRecord]
+    let selectedMeetingID: UUID?
+    let selectMeeting: (UUID) -> Void
+
+    var body: some View {
+        CommandCenterScrollView(content: {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                todaySection
+                recentSection
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(28)
+        })
+        .background(CommandCenterPalette.window)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Agenda")
+                .commandCenterTitle()
+            Text("Meeting schedule and metadata")
+                .commandCenterCaption(CommandCenterPalette.secondaryText)
+        }
+    }
+
+    private var todayMeetings: [MeetingRecord] {
+        sortedMeetings.filter { Calendar.current.isDateInToday($0.startedAt) }
+    }
+
+    private var recentGroups: [(Date, [MeetingRecord])] {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let recentHistoryStart = calendar.date(byAdding: .day, value: -recentHistoryDays, to: startOfToday) ?? startOfToday
+        let recentMeetings = sortedMeetings.filter { meeting in
+            let day = calendar.startOfDay(for: meeting.startedAt)
+            return day >= recentHistoryStart && day < startOfToday
+        }
+        let grouped = Dictionary(grouping: recentMeetings) { meeting in
+            calendar.startOfDay(for: meeting.startedAt)
+        }
+        return grouped.keys.sorted(by: >).map { day in
+            (day, grouped[day] ?? [])
+        }
+    }
+
+    private var sortedMeetings: [MeetingRecord] {
+        meetings.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    private var todaySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Today")
+                .commandCenterEyebrow()
+            if todayMeetings.isEmpty {
+                CommandCenterPanel {
+                    Text("No meetings scheduled for this section.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                }
+            } else {
+                ForEach(todayMeetings) { meeting in
+                    AgendaMeetingCard(
+                        meeting: meeting,
+                        isSelected: selectedMeetingID == meeting.id,
+                        prominent: true,
+                        open: { selectMeeting(meeting.id) }
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var recentSection: some View {
+        if !recentGroups.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Recent")
+                    .commandCenterEyebrow()
+                ForEach(recentGroups, id: \.0) { day, meetings in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(day.formatted(date: .abbreviated, time: .omitted))
+                            .font(CommandCenterTypography.sectionTitle)
+                            .foregroundStyle(CommandCenterPalette.text)
+                        ForEach(meetings) { meeting in
+                            AgendaMeetingCard(
+                                meeting: meeting,
+                                isSelected: selectedMeetingID == meeting.id,
+                                prominent: false,
+                                open: { selectMeeting(meeting.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AgendaMeetingCard: View {
+    let meeting: MeetingRecord
+    let isSelected: Bool
+    let prominent: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            CommandCenterPanel {
+                VStack(alignment: .leading, spacing: prominent ? 12 : 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(meeting.name)
+                            .font(prominent ? CommandCenterTypography.title : CommandCenterTypography.sectionTitle)
+                            .foregroundStyle(CommandCenterPalette.text)
+                            .lineLimit(2)
+                        Spacer()
+                        Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
+                            .commandCenterMono()
+                    }
+
+                    HStack(spacing: 8) {
+                        CommandCenterChip(title: statusText(for: meeting), tint: statusTint(for: meeting), filled: true)
+                        CommandCenterChip(title: durationText(for: meeting))
+                        CommandCenterChip(title: meeting.speechLocaleIdentifier, tint: CommandCenterPalette.cyan)
+                        CommandCenterChip(title: artifactText(for: meeting), tint: artifactTint(for: meeting))
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? CommandCenterPalette.primary : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func statusText(for meeting: MeetingRecord) -> String {
+        switch meeting.transcriptionStatus {
+        case .notStarted:
+            return "Not started"
+        case .transcribing:
+            return "Transcribing"
+        case .transcribed:
+            return "Transcribed"
+        case .failed:
+            return "Failed"
+        case .retryRequested:
+            return "Retry requested"
+        }
+    }
+
+    private func statusTint(for meeting: MeetingRecord) -> Color {
+        switch meeting.transcriptionStatus {
+        case .failed:
+            return CommandCenterPalette.danger
+        case .transcribed:
+            return CommandCenterPalette.primary
+        case .transcribing, .retryRequested:
+            return CommandCenterPalette.warning
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+
+    private func durationText(for meeting: MeetingRecord) -> String {
+        let interval = (meeting.endedAt ?? Date()).timeIntervalSince(meeting.startedAt)
+        let minutes = max(Int(interval) / 60, 0)
+        return minutes == 1 ? "1 min" : "\(minutes) min"
+    }
+
+    private func artifactText(for meeting: MeetingRecord) -> String {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil {
+            return "Summary ready"
+        }
+        if meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return "Transcript ready"
+        }
+        return "Artifacts pending"
+    }
+
+    private func artifactTint(for meeting: MeetingRecord) -> Color {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil || meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return CommandCenterPalette.primary
+        }
+        return CommandCenterPalette.secondaryText
+    }
 }
 
 private struct MeetingDetailView: View {
