@@ -229,7 +229,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("UnifiedTranscriptView("))
-        XCTAssertTrue(source.contains("BilingualTranscriptRow("))
+        XCTAssertTrue(source.contains("BilingualTranscriptBlock("))
         XCTAssertTrue(source.contains("LiveCaptionDisplayState("))
         XCTAssertTrue(source.contains("ScrollViewReader"))
         XCTAssertTrue(source.contains("LazyVStack"))
@@ -250,6 +250,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Translating"))
         XCTAssertTrue(source.contains("Button(\"Edit name\")"))
         XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
+    }
+
+    func testUnifiedTranscriptRendersSpeakerGroupsInsteadOfOneLabelPerBlock() throws {
+        let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("LiveCaptionSpeakerGroup.groups(from: turns)"))
+        XCTAssertTrue(source.contains("ForEach(group.turns)"))
+        XCTAssertTrue(source.contains("BilingualTranscriptBlock"))
     }
 
     func testExportsPanelExposesImplementedExportActionsOnly() throws {

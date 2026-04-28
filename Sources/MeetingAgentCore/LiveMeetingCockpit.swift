@@ -267,6 +267,31 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     }
 }
 
+public struct LiveCaptionSpeakerGroup: Equatable, Identifiable {
+    public var id: String
+    public var speaker: TranscriptSpeaker
+    public var turns: [LiveCaptionTurn]
+
+    public init(id: String, speaker: TranscriptSpeaker, turns: [LiveCaptionTurn]) {
+        self.id = id
+        self.speaker = speaker
+        self.turns = turns
+    }
+
+    public static func groups(from turns: [LiveCaptionTurn]) -> [LiveCaptionSpeakerGroup] {
+        var groups: [LiveCaptionSpeakerGroup] = []
+        for turn in turns {
+            if let lastIndex = groups.indices.last,
+               groups[lastIndex].speaker == turn.speaker {
+                groups[lastIndex].turns.append(turn)
+            } else {
+                groups.append(LiveCaptionSpeakerGroup(id: turn.id, speaker: turn.speaker, turns: [turn]))
+            }
+        }
+        return groups
+    }
+}
+
 public enum LiveCaptionDisplayState: Equatable {
     case originalOnly(String)
     case translated(primaryText: String, sourceText: String)

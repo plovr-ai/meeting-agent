@@ -72,6 +72,33 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(turn.chunkState, .frozen)
     }
 
+    func testSpeakerGroupsCombineConsecutiveSameSpeakerCaptionBlocks() {
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        let groups = LiveCaptionSpeakerGroup.groups(from: [
+            LiveCaptionTurn(sourceSegmentID: "s1", speaker: speaker, originalText: "First block.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "s2", speaker: speaker, originalText: "Second block.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "s3", speaker: TranscriptSpeaker(identifier: "speaker-2", label: "User B"), originalText: "Other speaker.", isFinal: true)
+        ])
+
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].speaker, speaker)
+        XCTAssertEqual(groups[0].turns.map(\.sourceSegmentID), ["s1", "s2"])
+        XCTAssertEqual(groups[1].turns.map(\.sourceSegmentID), ["s3"])
+    }
+
+    func testSpeakerGroupsStartNewGroupWhenSameSpeakerReturnsAfterDifferentSpeaker() {
+        let userA = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        let userB = TranscriptSpeaker(identifier: "speaker-2", label: "User B")
+        let groups = LiveCaptionSpeakerGroup.groups(from: [
+            LiveCaptionTurn(sourceSegmentID: "a1", speaker: userA, originalText: "A first.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "b1", speaker: userB, originalText: "B.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "a2", speaker: userA, originalText: "A again.", isFinal: true)
+        ])
+
+        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.map { $0.speaker.label }, ["User A", "User B", "User A"])
+    }
+
     func testAppendFinalSegmentCreatesStableTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let segment = TranscriptSegment(
