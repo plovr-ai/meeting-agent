@@ -140,6 +140,31 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "Allan:\nHello\n\nUser B:\nHi\n\nAllan:\nNext\n")
     }
 
+    func testAppendingSpeakerAfterRenameKeepsOriginalGenericSpeakerSlots() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [
+            TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"), text: "Hello")
+        ])
+
+        try TranscriptFileWriter.updateSpeakerLabel(
+            speakerID: "speaker-1",
+            label: "Allan",
+            textURL: url,
+            structuredURL: jsonURL
+        )
+        try writer.append(TranscriptSegment(speaker: TranscriptSpeaker(identifier: "speaker-2"), text: "Hi"))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.speakerLabel), ["Allan", "User B"])
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "Allan:\nHello\n\nUser B:\nHi\n")
+    }
+
     func testUpdateSegmentTextRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")

@@ -109,7 +109,7 @@ public struct BilingualSubtitleSegment: Codable, Equatable, Identifiable {
 
 public enum BilingualTranscriptFormatter {
     public static func render(_ transcript: BilingualTranscript) -> String {
-        var mapper = SpeakerLabelMapper()
+        var mapper = SpeakerLabelMapper(speakers: transcript.segments.map(\.speaker))
         return transcript.segments.map { segment in
             let targetText = renderedTarget(for: segment)
             return [

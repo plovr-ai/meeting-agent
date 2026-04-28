@@ -161,7 +161,7 @@ public struct MeetingExportService {
     }
 
     private func subtitleCues(from segments: [TranscriptSegment]) -> [SubtitleCue] {
-        var mapper = SpeakerLabelMapper()
+        var mapper = SpeakerLabelMapper(speakers: segments.map(\.speaker))
         var fallbackStart = 0.0
         return segments.compactMap { segment in
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)

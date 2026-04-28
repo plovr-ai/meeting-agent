@@ -78,8 +78,9 @@ public struct TranscriptDocument: Codable, Equatable {
 
 public struct TranscriptFormatter {
     public static func render(_ segments: [TranscriptSegment]) -> String {
-        var mapper = SpeakerLabelMapper()
-        return turns(from: segments).map { turn in
+        let transcriptTurns = turns(from: segments)
+        var mapper = SpeakerLabelMapper(speakers: transcriptTurns.map(\.speaker))
+        return transcriptTurns.map { turn in
             let label = mapper.label(for: turn.speaker)
             return ([label + ":"] + turn.texts).joined(separator: "\n")
         }
@@ -109,13 +110,30 @@ private struct TranscriptTurn {
 struct SpeakerLabelMapper {
     private var labelsBySpeaker: [TranscriptSpeaker: String] = [:]
     private var labelsByIdentifier: [String: String] = [:]
+    private var defaultLabelsBySpeaker: [TranscriptSpeaker: String] = [:]
+    private var defaultLabelsByIdentifier: [String: String] = [:]
     private var usedLabels = Set<String>()
     private var nextIndex = 0
+
+    init(speakers: [TranscriptSpeaker] = []) {
+        for speaker in speakers {
+            reserveDefaultLabel(for: speaker)
+        }
+    }
 
     mutating func label(for speaker: TranscriptSpeaker) -> String {
         if let label = speaker.label {
             remember(label: label, for: speaker)
             return label
+        }
+        if let identifier = speaker.identifier,
+           let defaultLabel = defaultLabelsByIdentifier[identifier] {
+            remember(label: defaultLabel, for: speaker)
+            return defaultLabel
+        }
+        if let defaultLabel = defaultLabelsBySpeaker[speaker] {
+            remember(label: defaultLabel, for: speaker)
+            return defaultLabel
         }
         if let identifier = speaker.identifier,
            let existing = labelsByIdentifier[identifier] {
@@ -128,6 +146,18 @@ struct SpeakerLabelMapper {
         let label = nextUnusedLabel()
         remember(label: label, for: speaker)
         return label
+    }
+
+    private mutating func reserveDefaultLabel(for speaker: TranscriptSpeaker) {
+        if let identifier = speaker.identifier {
+            guard defaultLabelsByIdentifier[identifier] == nil else { return }
+            let label = nextSequentialLabel()
+            defaultLabelsByIdentifier[identifier] = label
+            defaultLabelsBySpeaker[speaker] = label
+            return
+        }
+        guard defaultLabelsBySpeaker[speaker] == nil else { return }
+        defaultLabelsBySpeaker[speaker] = nextSequentialLabel()
     }
 
     private mutating func remember(label: String, for speaker: TranscriptSpeaker) {
@@ -146,6 +176,12 @@ struct SpeakerLabelMapper {
                 return label
             }
         }
+    }
+
+    private mutating func nextSequentialLabel() -> String {
+        let label = "User \(Self.letter(for: nextIndex))"
+        nextIndex += 1
+        return label
     }
 
     private static func letter(for index: Int) -> String {
