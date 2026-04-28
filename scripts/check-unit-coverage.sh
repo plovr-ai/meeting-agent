@@ -10,5 +10,5 @@ mkdir -p "$MODULE_CACHE_PATH"
 export CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_PATH"
 
 swift test --scratch-path "$SCRATCH_PATH" --enable-code-coverage
-COVERAGE_JSON="$(swift test --scratch-path "$SCRATCH_PATH" --enable-code-coverage --show-codecov-path)"
+COVERAGE_JSON="$(swift test --scratch-path "$SCRATCH_PATH" --show-codecov-path)"
 scripts/check-unit-coverage.swift "$COVERAGE_JSON"
