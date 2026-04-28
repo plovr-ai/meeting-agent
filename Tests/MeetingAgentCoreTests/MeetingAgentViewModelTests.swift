@@ -105,6 +105,31 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requestedSegmentTexts.last, ["unfinished thought"])
     }
 
+    func testStopRecordingAllowsSameRunningTargetToPromptAgain() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(
+            processID: 10,
+            displayName: "zoom.us",
+            bundleIdentifier: "us.zoom.xos",
+            isAudioOutputActive: true
+        )
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+
+        XCTAssertEqual(viewModel.pollForMeetingCandidates(), target)
+        try await viewModel.startRecordingForPendingCandidate()
+
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+        let candidate = viewModel.pollForMeetingCandidates()
+
+        XCTAssertEqual(candidate, target)
+        XCTAssertEqual(viewModel.pendingCandidate, target)
+        XCTAssertEqual(viewModel.statusText, "Meeting detected: zoom.us")
+    }
+
     func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
