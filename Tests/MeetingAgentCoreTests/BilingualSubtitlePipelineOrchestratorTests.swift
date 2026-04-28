@@ -165,6 +165,42 @@ final class BilingualSubtitlePipelineOrchestratorTests: XCTestCase {
         XCTAssertEqual(output.provenance.fallbackReasons["mt"], "Speech recognition error: translation failed")
     }
 
+    func testSkipsTranslationProviderWhenSourceAndTargetLanguagesMatch() async throws {
+        let transcription = FakeAudioTranscriptionProvider(id: "stt", result: .success(TranscriptDocument(segments: [
+            TranscriptSegment(id: "segment-1", startTimeSeconds: 1, endTimeSeconds: 2, text: "hello", language: "en-US", sourceProvider: "stt")
+        ])))
+        let translation = FakeTextTranslationProvider(id: "mt", result: .success(TranslatedTranscript(
+            sourceLocale: "en-US",
+            targetLocale: "en-GB",
+            segments: [
+                BilingualSubtitleSegment(id: "segment-1", sourceText: "hello", targetText: "translated")
+            ],
+            provenance: PipelineProvenance(profileID: "profile")
+        )))
+        let profile = BilingualPipelineProfile(id: "profile", displayName: "Profile", steps: [
+            PipelineStep(capability: .audioTranscription, primary: .provider("stt")),
+            PipelineStep(capability: .textTranslation, primary: .provider("mt"))
+        ])
+        let orchestrator = BilingualSubtitlePipelineOrchestrator(
+            profiles: [profile],
+            audioTranscriptionProviders: [transcription],
+            textTranslationProviders: [translation]
+        )
+
+        let output = try await orchestrator.generate(
+            audio: AudioInput(localeIdentifier: "en-US"),
+            sourceLocale: "en-US",
+            targetLocale: "en-GB",
+            profileID: "profile"
+        )
+
+        XCTAssertEqual(translation.translateCallCount, 0)
+        XCTAssertEqual(output.segments.first?.sourceText, "hello")
+        XCTAssertEqual(output.segments.first?.targetText, "")
+        XCTAssertEqual(output.segments.first?.status, .sourceOnly)
+        XCTAssertEqual(output.provenance.successfulProviders, ["stt"])
+    }
+
     func testThrowsForMissingProfilesCyclesUnsupportedStepsAndBadOrdering() async {
         let cycleProfile = BilingualPipelineProfile(id: "cycle", displayName: "Cycle", steps: [
             PipelineStep(capability: .bilingualSubtitle, primary: .profile("cycle"))
@@ -237,9 +273,10 @@ private struct FakeAudioTranscriptionProvider: AudioTranscriptionProvider {
     }
 }
 
-private struct FakeTextTranslationProvider: TextTranslationProvider {
+private final class FakeTextTranslationProvider: TextTranslationProvider {
     let descriptor: ProviderDescriptor
     let result: Result<TranslatedTranscript, Error>
+    private(set) var translateCallCount = 0
 
     init(id: String, result: Result<TranslatedTranscript, Error>) {
         descriptor = ProviderDescriptor(id: id, displayName: id, capability: .textTranslation, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: ["*"], requiresNetwork: false, requiresAPIKey: false)
@@ -247,7 +284,8 @@ private struct FakeTextTranslationProvider: TextTranslationProvider {
     }
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
-        try result.get()
+        translateCallCount += 1
+        return try result.get()
     }
 }
 

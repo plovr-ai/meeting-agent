@@ -589,6 +589,12 @@ public struct LiveCaptionStore: Equatable {
         turns[index].translationHealth = .live
     }
 
+    public mutating func markTranslationCompleteWithoutText(forTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translatedText = nil
+        turns[index].translationHealth = .live
+    }
+
     public mutating func markTranslationFailed(forTurnID turnID: String, message: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translationHealth = .failed(message)
@@ -615,6 +621,11 @@ public struct LiveCaptionTranslationAdapter {
 
     public func translate(turn: LiveCaptionTurn, in store: inout LiveCaptionStore) async throws {
         guard turn.isFinal else { return }
+        let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+        if options.isSameLanguage {
+            store.markTranslationCompleteWithoutText(forTurnID: turn.id)
+            return
+        }
         let segment = TranscriptSegment(
             id: turn.sourceSegmentID,
             speaker: turn.speaker,
@@ -626,7 +637,7 @@ public struct LiveCaptionTranslationAdapter {
         do {
             let translated = try await provider.translate(
                 transcript: TranscriptDocument(segments: [segment]),
-                options: TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+                options: options
             )
             let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
             store.attachTranslation(translatedText, toTurnID: turn.id)

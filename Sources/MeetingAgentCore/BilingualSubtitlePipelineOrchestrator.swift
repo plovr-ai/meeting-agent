@@ -127,6 +127,16 @@ public final class BilingualSubtitlePipelineOrchestrator {
         targetLocale: String,
         provenance: inout PipelineProvenance
     ) async throws -> TranslatedTranscript {
+        let options = TranslationOptions(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        if options.isSameLanguage {
+            return sourceOnlyTranslation(
+                transcript: transcript,
+                sourceLocale: sourceLocale,
+                targetLocale: targetLocale,
+                provenance: provenance,
+                errorMessage: nil
+            )
+        }
         for reference in [step.primary] + step.fallbacks {
             guard case .provider(let providerID) = reference else { continue }
             guard let provider = textTranslationProviders[providerID] else { continue }
@@ -134,7 +144,7 @@ public final class BilingualSubtitlePipelineOrchestrator {
             do {
                 let result = try await provider.translate(
                     transcript: transcript,
-                    options: TranslationOptions(sourceLocale: sourceLocale, targetLocale: targetLocale)
+                    options: options
                 )
                 provenance.successfulProviders.append(providerID)
                 return result
@@ -143,7 +153,23 @@ public final class BilingualSubtitlePipelineOrchestrator {
             }
         }
 
-        return TranslatedTranscript(
+        return sourceOnlyTranslation(
+            transcript: transcript,
+            sourceLocale: sourceLocale,
+            targetLocale: targetLocale,
+            provenance: provenance,
+            errorMessage: "all translation providers failed"
+        )
+    }
+
+    private func sourceOnlyTranslation(
+        transcript: TranscriptDocument,
+        sourceLocale: String,
+        targetLocale: String,
+        provenance: PipelineProvenance,
+        errorMessage: String?
+    ) -> TranslatedTranscript {
+        TranslatedTranscript(
             sourceLocale: sourceLocale,
             targetLocale: targetLocale,
             segments: transcript.segments.map {
@@ -156,7 +182,7 @@ public final class BilingualSubtitlePipelineOrchestrator {
                     targetText: "",
                     confidence: $0.confidence,
                     status: .sourceOnly,
-                    errorMessage: "all translation providers failed",
+                    errorMessage: errorMessage,
                     providerChain: provenance.successfulProviders
                 )
             },

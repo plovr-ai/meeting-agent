@@ -301,3 +301,19 @@ Await actor-isolated values into local constants before passing them to XCTest a
 When asserting actor state in XCTest, split `let value = await actor.value` from `XCTAssertEqual(value, expected)`.
 
 ---
+
+## [43] Use detected transcript language after source setting removal
+
+**Date**: 2026-04-29
+**Category**: wrong-assumption
+
+### What went wrong
+The first same-language translation skip was written against the old source-locale setting model, but main later removed the Deepgram source language setting and made transcript segments carry detected language codes.
+
+### Correct approach
+Live caption translation skip logic should compare each turn's actual source locale from the transcript segment against the configured main/target language, including bare detected language codes like `ja` against locales like `ja-JP`.
+
+### How to avoid
+When a setting is redefined or removed, audit behavior against the runtime data that now represents that concept instead of the old configuration field.
+
+---
