@@ -11,6 +11,7 @@ public struct RunningProcessDiscovery {
         "company.thebrowser.Browser",
         "com.apple.Safari",
         "com.larksuite.Lark",
+        "com.electron.larkFeishu",
         "com.tencent.meeting"
     ]
 
