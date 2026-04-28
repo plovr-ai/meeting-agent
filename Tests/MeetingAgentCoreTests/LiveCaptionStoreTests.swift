@@ -149,6 +149,58 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.originalText, "first second")
     }
 
+    func testUpsertingDraftUpdatesSameTurn() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let draft = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "first",
+            isFinal: true,
+            chunkState: .draft,
+            translationRevision: 1
+        )
+        let updatedDraft = LiveCaptionTurn(
+            id: draft.id,
+            sourceSegmentID: "segment-2",
+            sourceSegmentIDs: ["segment-1", "segment-2"],
+            originalText: "first second",
+            isFinal: true,
+            chunkState: .draft,
+            translationRevision: 2
+        )
+
+        store.upsert(draft)
+        store.upsert(updatedDraft)
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(store.turns.first?.originalText, "first second")
+        XCTAssertEqual(store.turns.first?.translationRevision, 2)
+    }
+
+    func testFrozenSameSpeakerTurnDoesNotMergeWithLaterDraft() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let frozen = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            originalText: "finished",
+            isFinal: true,
+            chunkState: .frozen,
+            freezeReason: .speechFinal
+        )
+        let nextDraft = LiveCaptionTurn(
+            sourceSegmentID: "segment-2",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            originalText: "new thought",
+            isFinal: true,
+            chunkState: .draft,
+            translationRevision: 1
+        )
+
+        store.upsert(frozen)
+        store.upsert(nextDraft)
+
+        XCTAssertEqual(store.turns.map(\.originalText), ["finished", "new thought"])
+    }
+
     func testAttachTranslationUpdatesSameTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = store.append(TranscriptSegment(id: "segment-1", text: "hello", language: "en-US"))

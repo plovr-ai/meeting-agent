@@ -289,6 +289,22 @@ public struct LiveCaptionStore: Equatable {
         return turn
     }
 
+    @discardableResult
+    public mutating func upsert(_ turn: LiveCaptionTurn) -> LiveCaptionTurn {
+        if let index = turns.firstIndex(where: { $0.id == turn.id }) {
+            let previous = turns[index]
+            var updated = turn
+            if !((previous.translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+               updated.translatedText == nil {
+                updated.translatedText = previous.translatedText
+            }
+            turns[index] = updated
+            return updated
+        }
+        turns.append(turn)
+        return turn
+    }
+
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
         guard turn.isFinal,
               let lastIndex = turns.indices.last,
