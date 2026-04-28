@@ -39,6 +39,9 @@ public final class TranscriptFileWriter {
         var document = try Self.readDocument(from: structuredURL)
         if let index = document.segments.firstIndex(where: { $0.id == segment.id }) {
             document.segments[index] = segment
+            document.segments.removeAll {
+                $0.id != segment.id && Self.shouldReplaceExistingSegment($0, with: segment)
+            }
         } else {
             if document.segments.contains(where: { Self.shouldKeepExistingSegment($0, insteadOf: segment) }) {
                 try replace(with: document.segments)

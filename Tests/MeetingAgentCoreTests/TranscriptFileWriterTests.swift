@@ -393,6 +393,52 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
+    func testExpandingFinalSegmentWithSameIDRemovesNewlyCoveredInterims() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "User A")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-4.96",
+            speaker: speaker,
+            startTimeSeconds: 4.96,
+            endTimeSeconds: 9.44,
+            text: "Hi there. Welcome to Collaboration Simplified. My name is Sherwin Chaffee, and I work at my",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-12.63",
+            speaker: speaker,
+            startTimeSeconds: 12.63,
+            endTimeSeconds: 17.11,
+            text: "Now in this channel, we often build our own autonomous agents, but today,",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-4.96",
+            speaker: speaker,
+            startTimeSeconds: 4.96,
+            endTimeSeconds: 31.230001,
+            text: "Hi there. Welcome to Collaboration Simplified. My name is Sherwin Chaffee, and I work at my Microsoft as a copilot principal technical specialist. Now in this channel, we often build our own autonomous agents, but today, I'm very excited to share an agent that Microsoft has built and that is the interpreter agent. So I I just It works.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-4.96"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
     func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
