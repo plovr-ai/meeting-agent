@@ -190,6 +190,29 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("\" turns\""))
     }
 
+    func testTranslatedTranscriptRowsRenderSourceBeforeTranslation() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        guard let translatedCaseRange = source.range(of: "case .translated(let primaryText, let sourceText):") else {
+            return XCTFail("Translated transcript branch is missing")
+        }
+        guard let originalOnlyRange = source.range(of: "case .originalOnly", range: translatedCaseRange.upperBound..<source.endIndex) else {
+            return XCTFail("Translated transcript branch end is missing")
+        }
+
+        let translatedBranch = source[translatedCaseRange.lowerBound..<originalOnlyRange.lowerBound]
+        guard let sourceTextRange = translatedBranch.range(of: "Text(sourceText)") else {
+            return XCTFail("Translated transcript branch does not render sourceText")
+        }
+        guard let primaryTextRange = translatedBranch.range(of: "Text(primaryText)") else {
+            return XCTFail("Translated transcript branch does not render primaryText")
+        }
+
+        XCTAssertLessThan(sourceTextRange.lowerBound, primaryTextRange.lowerBound)
+    }
+
     func testUnifiedTranscriptPreservesFallbackAndQuietCorrectionControls() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

@@ -1112,12 +1112,12 @@ private struct BilingualTranscriptRow: View {
 
             switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled) {
             case .translated(let primaryText, let sourceText):
-                Text(primaryText)
+                Text(sourceText)
                     .font(CommandCenterTypography.transcript)
                     .lineSpacing(5)
                     .foregroundStyle(CommandCenterPalette.text)
                     .textSelection(.enabled)
-                Text(sourceText)
+                Text(primaryText)
                     .font(CommandCenterTypography.secondaryBody)
                     .lineSpacing(4)
                     .foregroundStyle(CommandCenterPalette.secondaryText)
