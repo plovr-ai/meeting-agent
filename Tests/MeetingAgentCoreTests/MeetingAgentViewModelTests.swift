@@ -657,6 +657,78 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requestedSegmentTexts, [["hello inter"], ["hello interim final"]])
     }
 
+    func testSoftCaptionBoundaryRequestsDraftTranslationButDoesNotFinalizeTranslation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["deepgram-transcribe-stream-0.00": "草稿翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "deepgram-transcribe-stream-0.00",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
+                startTimeSeconds: 0,
+                endTimeSeconds: 9.49,
+                text: "My name is Sherwin Chaffee, and I work at Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: false,
+                timingSource: .precise
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "草稿翻译" }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.displayState, .sealed)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationState, .draft)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.boundaryStrength, .soft)
+    }
+
+    func testSpeechFinalCaptionBoundaryRequestsFinalTranslation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "最终翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
+                text: "Done.",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationState, .final)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.boundaryStrength, .hard)
+    }
+
     func testFinalDeepgramSegmentRemovesCoveredInterimTurnsFromLiveCaptions() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

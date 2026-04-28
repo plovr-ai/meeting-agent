@@ -922,17 +922,16 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func scheduleCaptionTextTranslationIfNeeded() {
         let draftCandidates = liveCaptionStore.turns.filter { turn in
-            guard turn.chunkState == .draft,
-                  turn.translationHealth == .pending,
-                  shouldTranslateDraftCaption(turn),
+            guard turn.translationHealth == .pending,
+                  shouldScheduleDraftTranslation(for: turn),
                   draftTranslationInFlightByTurnID[turn.id] != turn.translationRevision
             else { return false }
             return true
         }
 
         let finalCandidates = liveCaptionStore.turns.filter { turn in
-            guard turn.isFinal,
-                  turn.chunkState == .frozen,
+            guard turn.displayState == .sealed,
+                  turn.boundaryStrength == .hard,
                   turn.translationHealth == .pending
             else { return false }
             let key = finalCaptionTranslationKey(for: turn)
@@ -961,6 +960,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         Task { [weak self, provider, requests] in
             await self?.translateCaptionTurns(requests, using: provider)
         }
+    }
+
+    private func shouldScheduleDraftTranslation(for turn: LiveCaptionTurn) -> Bool {
+        guard turn.translationState != .final else {
+            return false
+        }
+        if turn.displayState == .draft {
+            return shouldTranslateDraftCaption(turn)
+        }
+        if turn.displayState == .sealed, turn.boundaryStrength == .soft {
+            return true
+        }
+        return false
     }
 
     private func shouldTranslateDraftCaption(_ turn: LiveCaptionTurn, now: Date = Date()) -> Bool {
@@ -1015,7 +1027,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         defer { clearTranslationInFlight(request) }
         guard let current = liveCaptionStore.turns.first(where: { $0.id == request.turn.id }),
               current.translationRevision == request.revision,
-              current.chunkState == .draft
+              current.translationState != .final,
+              shouldScheduleDraftTranslation(for: current)
         else {
             return
         }
@@ -1027,10 +1040,15 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func acceptFinalTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
         defer { clearTranslationInFlight(request) }
-        guard liveCaptionStore.turns.contains(where: { $0.id == request.turn.id && $0.chunkState == .frozen }) else {
+        guard liveCaptionStore.turns.contains(where: {
+            $0.id == request.turn.id
+                && $0.displayState == .sealed
+                && $0.boundaryStrength == .hard
+        }) else {
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
+        liveCaptionStore.markTranslationFinal(forTurnID: request.turn.id)
         finalTranslationKeysByTurnID[request.turn.id] = request.key
         liveCaptionTurns = liveCaptionStore.turns
     }

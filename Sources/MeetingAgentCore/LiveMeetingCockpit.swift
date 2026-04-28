@@ -594,6 +594,11 @@ public struct LiveCaptionStore: Equatable {
         turns[index].translationHealth = .failed(message)
     }
 
+    public mutating func markTranslationFinal(forTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translationState = .final
+    }
+
     public mutating func reset(sourceLocale: String, targetLocale: String) {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
