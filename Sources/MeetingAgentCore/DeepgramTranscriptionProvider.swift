@@ -355,17 +355,25 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
     private let writer: TranscriptFileWriter
+    private let sendQueue: DeepgramFrameSendQueue
+    private let failureLock = NSLock()
     private var receiveTask: Task<Void, Never>?
     private var sendFailure: String?
     private var fallbackSegmentIndex = 0
 
     var failureReason: String? {
-        sendFailure
+        failureLock.lock()
+        defer { failureLock.unlock() }
+        return sendFailure
     }
 
     init(session: DeepgramStreamingTranscriptionSession, writer: TranscriptFileWriter) {
         self.session = session
         self.writer = writer
+        self.sendQueue = DeepgramFrameSendQueue(session: session)
+        self.sendQueue.onFailure = { [weak self] error in
+            self?.recordSendFailure(error)
+        }
         self.receiveTask = Task { [weak self, session] in
             for await segment in session.segments {
                 try? self?.write(segment)
@@ -374,18 +382,13 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     }
 
     func append(_ frame: AudioFrame) throws {
-        Task { [session] in
-            do {
-                try await session.send(frame)
-            } catch {
-                self.sendFailure = "Deepgram streaming transcription failed: \(error)"
-            }
-        }
+        sendQueue.append(frame)
     }
 
     func finish() {
         receiveTask?.cancel()
-        Task { [session, writer] in
+        Task { [sendQueue, session, writer] in
+            await sendQueue.finish()
             await session.close()
             try? writer.close()
         }
@@ -415,6 +418,93 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             createdAt: segment.createdAt,
             timingSource: segment.timingSource
         )
+    }
+
+    private func recordSendFailure(_ error: Error) {
+        failureLock.lock()
+        sendFailure = "Deepgram streaming transcription failed: \(error)"
+        failureLock.unlock()
+    }
+}
+
+private final class DeepgramFrameSendQueue {
+    private let session: DeepgramStreamingTranscriptionSession
+    private let lock = NSLock()
+    private var frames: [AudioFrame] = []
+    private var isSending = false
+    private var isFinishing = false
+    var onFailure: ((Error) -> Void)?
+
+    init(session: DeepgramStreamingTranscriptionSession) {
+        self.session = session
+    }
+
+    func append(_ frame: AudioFrame) {
+        var shouldStartSending = false
+        lock.lock()
+        if !isFinishing {
+            frames.append(frame)
+            if !isSending {
+                isSending = true
+                shouldStartSending = true
+            }
+        }
+        lock.unlock()
+
+        if shouldStartSending {
+            Task { await drain() }
+        }
+    }
+
+    func finish() async {
+        markFinishing()
+
+        while true {
+            if isDrained { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private func markFinishing() {
+        lock.lock()
+        isFinishing = true
+        lock.unlock()
+    }
+
+    private var isDrained: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return frames.isEmpty && !isSending
+    }
+
+    private func drain() async {
+        while let frame = nextFrame() {
+            do {
+                try await session.send(frame)
+            } catch {
+                onFailure?(error)
+                clearAfterFailure()
+                return
+            }
+        }
+    }
+
+    private func nextFrame() -> AudioFrame? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !frames.isEmpty else {
+            isSending = false
+            return nil
+        }
+        return frames.removeFirst()
+    }
+
+    private func clearAfterFailure() {
+        lock.lock()
+        frames.removeAll()
+        isSending = false
+        isFinishing = true
+        lock.unlock()
     }
 }
 
