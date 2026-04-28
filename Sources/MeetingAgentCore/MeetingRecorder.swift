@@ -16,6 +16,9 @@ public final class MeetingRecorder {
     private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
+    private var pendingTranscriptionFrames: [AudioFrame] = []
+    private var isStartingTranscriber = false
+    private let pendingTranscriptionFrameLimit = 512
 
     public private(set) var state: MeetingRecorderState = .idle
     public weak var realtimeFrameConsumer: RealtimeFrameConsumer?
@@ -91,6 +94,8 @@ public final class MeetingRecorder {
         updatedRecord.transcriptionStatus = .transcribing
         updatedRecord.transcriptionFailureReason = nil
         activeRecord = updatedRecord
+        pendingTranscriptionFrames = []
+        isStartingTranscriber = false
         try store.save(updatedRecord)
 
         let session = captureSessionFactory()
@@ -117,13 +122,19 @@ public final class MeetingRecorder {
 
         if let transcriptURL = updatedRecord.transcriptURL {
             do {
-                transcriber = try await transcriberFactory(
+                isStartingTranscriber = true
+                let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
                     transcriptURL,
                     session.outputSampleRate,
                     session.outputChannelCount
                 )
+                transcriber = startedTranscriber
+                isStartingTranscriber = false
+                try flushPendingTranscriptionFrames()
             } catch {
+                isStartingTranscriber = false
+                pendingTranscriptionFrames = []
                 try markTranscriptionFailed("Speech recognition unavailable: \(error)")
                 transcriber = nil
             }
@@ -144,12 +155,10 @@ public final class MeetingRecorder {
         )
         for frame in frames {
             try writer?.append(frame)
-            do {
-                try transcriber?.append(frame)
-            } catch {
-                try persistTranscriptionFailure("Speech recognition failed: \(error)")
-                transcriber?.finish()
-                transcriber = nil
+            if transcriber != nil {
+                try appendFrameToTranscriber(frame)
+            } else if isStartingTranscriber {
+                bufferPendingTranscriptionFrame(frame)
             }
         }
         deliverFramesToRealtimeConsumerForTesting(frames)
@@ -207,6 +216,31 @@ public final class MeetingRecorder {
 
     private func persistTranscriptionFailure(_ message: String) throws {
         try markTranscriptionFailed(message)
+    }
+
+    private func flushPendingTranscriptionFrames() throws {
+        let frames = pendingTranscriptionFrames
+        pendingTranscriptionFrames = []
+        for frame in frames {
+            try appendFrameToTranscriber(frame)
+        }
+    }
+
+    private func appendFrameToTranscriber(_ frame: AudioFrame) throws {
+        do {
+            try transcriber?.append(frame)
+        } catch {
+            try persistTranscriptionFailure("Speech recognition failed: \(error)")
+            transcriber?.finish()
+            transcriber = nil
+        }
+    }
+
+    private func bufferPendingTranscriptionFrame(_ frame: AudioFrame) {
+        pendingTranscriptionFrames.append(frame)
+        if pendingTranscriptionFrames.count > pendingTranscriptionFrameLimit {
+            pendingTranscriptionFrames.removeFirst(pendingTranscriptionFrames.count - pendingTranscriptionFrameLimit)
+        }
     }
 
     private func markTranscriptionFailed(_ message: String) throws {

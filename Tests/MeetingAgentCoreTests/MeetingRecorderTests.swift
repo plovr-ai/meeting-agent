@@ -154,6 +154,28 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertTrue(stopped.transcriptionFailureReason?.contains("Speech recognition failed") == true)
     }
 
+    func testDrainFramesBeforeTranscriberReadyFlushesStartupFramesWhenReady() async throws {
+        let fixture = try RecorderFixture()
+        fixture.transcriberFactory.shouldSuspend = true
+        let frame = AudioFrame(pcm: Data([9, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+
+        let startTask = Task {
+            try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        }
+        try await waitFor { fixture.transcriberFactory.requests.count == 1 }
+        fixture.session.frameBuffer.push(frame)
+
+        try fixture.recorder.drainFrames()
+        XCTAssertEqual(fixture.writer.writtenFrames, [frame])
+        XCTAssertEqual(fixture.transcriber.appendedFrames, [])
+
+        fixture.transcriberFactory.resume()
+        try await startTask.value
+
+        XCTAssertEqual(fixture.transcriber.appendedFrames, [frame])
+    }
+
     func testStartRecordingWritesDiagnosticsWhenCaptureStartFails() async throws {
         let fixture = try RecorderFixture()
         fixture.session.startError = ProbeError.coreAudio("start failed")
@@ -300,7 +322,9 @@ private final class FakeRecorderTranscriberFactory {
 
     var requests: [Request] = []
     var error: Error?
+    var shouldSuspend = false
     private let transcriber: FakeAudioFrameTranscriber
+    private var continuation: CheckedContinuation<Void, Never>?
 
     init(transcriber: FakeAudioFrameTranscriber) {
         self.transcriber = transcriber
@@ -317,11 +341,37 @@ private final class FakeRecorderTranscriberFactory {
             sampleRate: sampleRate,
             channelCount: channelCount
         ))
+        if shouldSuspend {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
         if let error {
             throw error
         }
         return transcriber
     }
+
+    func resume() {
+        shouldSuspend = false
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private func waitFor(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: () -> Bool
+) async throws {
+    let interval: UInt64 = 10_000_000
+    let attempts = max(1, Int(timeoutNanoseconds / interval))
+    for _ in 0..<attempts {
+        if condition() {
+            return
+        }
+        try await Task.sleep(nanoseconds: interval)
+    }
+    XCTAssertTrue(condition(), "Timed out waiting for condition")
 }
 
 private func XCTAssertThrowsErrorAsync(

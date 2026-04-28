@@ -730,7 +730,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionTurns = []
             return
         }
-        for segment in document.segments where segment.isFinal {
+        for segment in document.segments {
             _ = liveCaptionStore.append(segment)
         }
         liveCaptionTurns = liveCaptionStore.turns

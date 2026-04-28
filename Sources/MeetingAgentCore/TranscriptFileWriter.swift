@@ -34,6 +34,17 @@ public final class TranscriptFileWriter {
         try replace(with: document.segments)
     }
 
+    public func upsert(_ segment: TranscriptSegment) throws {
+        guard !isClosed else { return }
+        var document = try Self.readDocument(from: structuredURL)
+        if let index = document.segments.firstIndex(where: { $0.id == segment.id }) {
+            document.segments[index] = segment
+        } else {
+            document.segments.append(segment)
+        }
+        try replace(with: document.segments)
+    }
+
     public func close() throws {
         isClosed = true
     }

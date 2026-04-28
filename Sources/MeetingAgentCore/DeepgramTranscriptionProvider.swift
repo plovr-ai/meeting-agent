@@ -231,7 +231,7 @@ public enum DeepgramStreamingResponseMapper {
         providerID: String
     ) -> [TranscriptSegment] {
         guard let response = try? JSONDecoder.meetingAgent.decode(DeepgramStreamingResponse.self, from: data),
-              response.isFinal == true,
+              let isFinal = response.isFinal,
               let alternative = response.channel?.alternatives.first
         else {
             return []
@@ -243,9 +243,11 @@ public enum DeepgramStreamingResponseMapper {
             guard !text.isEmpty else { return [] }
             return [
                 TranscriptSegment(
+                    id: activeSegmentID(providerID: providerID, words: words),
                     text: text,
                     language: localeIdentifier,
                     sourceProvider: providerID,
+                    isFinal: isFinal,
                     confidence: alternative.confidence
                 )
             ]
@@ -259,16 +261,27 @@ public enum DeepgramStreamingResponseMapper {
             let firstWord = run.words.first
             let lastWord = run.words.last
             return TranscriptSegment(
+                id: activeSegmentID(providerID: providerID, words: run.words),
                 speaker: speaker(for: run.speaker),
                 startTimeSeconds: firstWord?.start,
                 endTimeSeconds: lastWord?.end,
                 text: text,
                 language: localeIdentifier,
                 sourceProvider: providerID,
+                isFinal: isFinal,
                 confidence: alternative.confidence,
                 timingSource: firstWord?.start == nil && lastWord?.end == nil ? .unavailable : .precise
             )
         }
+    }
+
+    private static func activeSegmentID(providerID: String, words: [DeepgramStreamingResponse.Word]) -> String {
+        guard let firstWord = words.first,
+              let start = firstWord.start
+        else {
+            return "\(providerID)-stream-active"
+        }
+        return "\(providerID)-stream-\(start)"
     }
 
     private static func speakerRuns(from words: [DeepgramStreamingResponse.Word]) -> [SpeakerRun] {
@@ -344,7 +357,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         self.writer = writer
         self.receiveTask = Task { [session, writer] in
             for await segment in session.segments {
-                try? writer.append(segment)
+                try? writer.upsert(segment)
             }
         }
     }
