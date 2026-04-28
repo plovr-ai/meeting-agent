@@ -86,7 +86,11 @@ public struct LiveCaptionChunker: Equatable {
                     createdAt: segment.createdAt,
                     chunkState: .draft,
                     translationRevision: openChunk.turn.translationRevision + 1,
-                    freezeReason: nil
+                    freezeReason: nil,
+                    displayState: .draft,
+                    translationState: .draft,
+                    boundaryReason: nil,
+                    boundaryStrength: nil
                 )
                 let startTimeSeconds: Double?
                 switch (openChunk.startTimeSeconds, segment.startTimeSeconds) {
@@ -132,7 +136,11 @@ public struct LiveCaptionChunker: Equatable {
                 createdAt: segment.createdAt,
                 chunkState: .draft,
                 translationRevision: openChunk.turn.translationRevision + 1,
-                freezeReason: nil
+                freezeReason: nil,
+                displayState: .draft,
+                translationState: .draft,
+                boundaryReason: nil,
+                boundaryStrength: nil
             )
             return OpenChunk(
                 turn: draft,
@@ -153,7 +161,11 @@ public struct LiveCaptionChunker: Equatable {
             createdAt: segment.createdAt,
             chunkState: .draft,
             translationRevision: 1,
-            freezeReason: nil
+            freezeReason: nil,
+            displayState: .draft,
+            translationState: .draft,
+            boundaryReason: nil,
+            boundaryStrength: nil
         )
         return OpenChunk(
             turn: draft,
@@ -186,7 +198,8 @@ public struct LiveCaptionChunker: Equatable {
     }
 
     private func frozen(_ turn: LiveCaptionTurn, reason: LiveCaptionFreezeReason) -> LiveCaptionTurn {
-        LiveCaptionTurn(
+        let strength = reason.boundaryStrength
+        return LiveCaptionTurn(
             id: turn.id,
             sourceSegmentID: turn.sourceSegmentID,
             sourceSegmentIDs: turn.sourceSegmentIDs,
@@ -201,7 +214,11 @@ public struct LiveCaptionChunker: Equatable {
             createdAt: turn.createdAt,
             chunkState: .frozen,
             translationRevision: turn.translationRevision,
-            freezeReason: reason
+            freezeReason: reason,
+            displayState: .sealed,
+            translationState: strength == .hard ? .final : .draft,
+            boundaryReason: reason,
+            boundaryStrength: strength
         )
     }
 

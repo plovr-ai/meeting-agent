@@ -73,6 +73,46 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.last?.turn.freezeReason, .punctuation)
     }
 
+    func testSoftPunctuationBoundarySealsDisplayButKeepsDraftTranslation() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minPunctuationCharacters: 10)
+        )
+
+        let updates = chunker.append(segment(id: "s1", text: "That sounds good."))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.translationState, .draft)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .punctuation)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .soft)
+    }
+
+    func testSpeechFinalBoundarySealsDisplayAndFinalizesTranslation() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        let updates = chunker.append(segment(id: "s1", text: "Done.", speechFinal: true))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.translationState, .final)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .speechFinal)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .hard)
+    }
+
+    func testSpeakerChangeBoundaryFinalizesPreviousSpeakerTranslation() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = chunker.append(segment(id: "a1", speaker: "a", text: "First thought"))
+
+        let updates = chunker.append(segment(id: "b1", speaker: "b", text: "Second thought"))
+
+        XCTAssertEqual(updates.first?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.first?.turn.translationState, .final)
+        XCTAssertEqual(updates.first?.turn.boundaryReason, .speakerChanged)
+        XCTAssertEqual(updates.first?.turn.boundaryStrength, .hard)
+        XCTAssertEqual(updates.last?.turn.displayState, .draft)
+        XCTAssertEqual(updates.last?.turn.translationState, .draft)
+    }
+
     func testInternalSentenceBoundaryFreezesLongDeepgramChunkBeforeNextSameSpeakerSegment() {
         var chunker = LiveCaptionChunker(
             sourceLocale: "en-US",
