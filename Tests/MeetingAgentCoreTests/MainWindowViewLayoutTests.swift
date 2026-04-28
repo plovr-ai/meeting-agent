@@ -1,6 +1,25 @@
 import XCTest
 
 final class MainWindowViewLayoutTests: XCTestCase {
+    func testAppDefaultWindowSizeUsesVisibleScreenWithWidthCap() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MeetingAgentApp.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("DefaultWindowSizing.mainWindowSize"))
+        XCTAssertTrue(source.contains("NSScreen.main?.visibleFrame.size"))
+        XCTAssertTrue(source.contains("min(screenSize.width, 1_400)"))
+        XCTAssertTrue(source.contains(".defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)"))
+    }
+
+    func testMeetingsSidebarUsesWiderDefaultWidth() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
+    }
+
     func testRecordingAndRetryButtonsShareActionRow() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
