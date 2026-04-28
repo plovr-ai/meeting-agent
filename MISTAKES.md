@@ -125,3 +125,19 @@ When replacing a UI shell, map every old visible control to a new visible contro
 For UI restyles, review both callback wiring and rendered control labels against the previous screen.
 
 ---
+
+## [25] Avoid sorting-only tests for preferred-target behavior
+
+**Date**: 2026-04-28
+**Category**: test-mistake
+
+### What went wrong
+The first Feishu discovery regression test expected Feishu to sort before Notes, but that passed alphabetically even when Feishu was not in the preferred bundle set.
+
+### Correct approach
+Test preferred-target behavior through automatic selection or candidate detection where non-preferred active apps are filtered out.
+
+### How to avoid
+When testing priority classification, choose assertions that fail without the classification, not assertions that can pass due to unrelated ordering.
+
+---
