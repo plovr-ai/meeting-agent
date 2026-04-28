@@ -390,7 +390,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         ])
 
         viewModel.drainRecordingFrames()
-        try await Task.sleep(nanoseconds: 80_000_000)
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.translatedText == "第一句"
+                && viewModel.liveCaptionTurns.first?.translationHealth == .live
+        }
 
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
@@ -418,7 +421,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .pending)
 
-        try await Task.sleep(nanoseconds: 80_000_000)
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.translatedText == "第一句 第二句"
+                && viewModel.liveCaptionTurns.first?.translationHealth == .live
+        }
 
         XCTAssertEqual(provider.requests.map(\.segmentIDs), [["segment-1"], ["segment-2"]])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句 第二句")
@@ -1501,6 +1507,23 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedMeeting?.id, second.record.id)
         viewModel.selectMeeting(first.record.id)
         XCTAssertEqual(viewModel.selectedMeeting?.id, first.record.id)
+    }
+
+    private func waitFor(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: () -> Bool
+    ) async throws {
+        let interval: UInt64 = 10_000_000
+        let attempts = max(1, Int(timeoutNanoseconds / interval))
+        for _ in 0..<attempts {
+            if condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: interval)
+        }
+        XCTAssertTrue(condition(), "Timed out waiting for condition", file: file, line: line)
     }
 }
 
