@@ -721,21 +721,21 @@ private struct TranscriptPaneView: View {
 
     private var metadata: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Current Pipeline").commandCenterEyebrow()
+            HStack(spacing: 6) {
+                Text("Current Pipeline").commandCenterEyebrow()
+                Image(systemName: "exclamationmark.circle")
+                    .font(CommandCenterTypography.eyebrow)
+                    .foregroundStyle(CommandCenterPalette.warning)
+                    .help(pipelineDebugHelpText)
+            }
+
             HStack(spacing: 8) {
                 CommandCenterChip(title: transcriptionStatusText, tint: transcriptionTint, filled: true)
-                CommandCenterChip(title: "Actual STT Source: \(actualTranscriptionSourceText)", tint: CommandCenterPalette.secondaryText)
                 CommandCenterChip(title: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
                 if let endedAt = meeting.endedAt {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
                 }
-            }
-
-            HStack(spacing: 8) {
                 CommandCenterChip(title: pipelineDisplayName, tint: CommandCenterPalette.primary)
-                CommandCenterChip(title: "Transcription Link: \(transcriptionLinkText)", tint: CommandCenterPalette.cyan)
-                CommandCenterChip(title: "Transcription Model: \(transcriptionModelText)")
-                CommandCenterChip(title: "Preflight: \(preflightText)", tint: preflightTint)
             }
         }
     }
@@ -785,8 +785,13 @@ private struct TranscriptPaneView: View {
         }
     }
 
-    private var preflightTint: Color {
-        preflightText == "Primary chain ready" ? CommandCenterPalette.primary : CommandCenterPalette.danger
+    private var pipelineDebugHelpText: String {
+        [
+            "Actual STT Source: \(actualTranscriptionSourceText)",
+            "Transcription Link: \(transcriptionLinkText)",
+            "Transcription Model: \(transcriptionModelText)",
+            "Preflight: \(preflightText)"
+        ].joined(separator: "\n")
     }
 }
 

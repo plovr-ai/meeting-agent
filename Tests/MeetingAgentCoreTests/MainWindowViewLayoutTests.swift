@@ -57,6 +57,27 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
     }
 
+    func testCurrentPipelineMovesDebugDetailsBehindHoverIcon() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let metadataRange = source.range(of: "private var metadata: some View") else {
+            return XCTFail("Pipeline metadata section is missing")
+        }
+        guard let actionsRange = source.range(of: "private var recordingActions: some View", range: metadataRange.upperBound..<source.endIndex) else {
+            return XCTFail("Recording actions section is missing")
+        }
+
+        let metadataSource = source[metadataRange.lowerBound..<actionsRange.lowerBound]
+        XCTAssertTrue(metadataSource.contains("Image(systemName: \"exclamationmark.circle\")"))
+        XCTAssertTrue(metadataSource.contains(".help(pipelineDebugHelpText)"))
+        XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: transcriptionStatusText"))
+        XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: pipelineDisplayName"))
+        XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Actual STT Source:"))
+        XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Transcription Link:"))
+        XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Transcription Model:"))
+        XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Preflight:"))
+    }
+
     func testRecordingAndRetryButtonsShareActionRow() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
