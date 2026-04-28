@@ -510,6 +510,44 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requestedSegmentTexts.last, ["This is the first part \(longSecondPart)"])
     }
 
+    func testCaptionTranslationRetriesWhenProviderBecomesAvailableAfterInitialDrain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "We should confirm the owner.",
+                language: "en-US",
+                speechFinal: true
+            )
+        ])
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "我们应该确认负责人。"])
+        var providerIsAvailable = false
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in providerIsAvailable ? provider : nil },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        viewModel.drainRecordingFrames()
+        XCTAssertTrue(provider.requests.isEmpty)
+        XCTAssertNil(viewModel.liveCaptionTurns.first?.translatedText)
+
+        providerIsAvailable = true
+        viewModel.drainRecordingFrames()
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.translatedText == "我们应该确认负责人。"
+        }
+        XCTAssertEqual(provider.requests.count, 1)
+    }
+
     func testOlderDraftTranslationDoesNotOverwriteNewerDraft() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

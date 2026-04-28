@@ -118,7 +118,10 @@ public struct LiveCaptionChunker: Equatable {
     private func freezeReason(for chunk: OpenChunk, latestSegment: TranscriptSegment) -> LiveCaptionFreezeReason? {
         if latestSegment.speechFinal { return .speechFinal }
         if chunk.turn.originalText.count >= policy.maxCharacters { return .maxLength }
-        if durationSeconds(for: chunk) >= policy.maxDurationSeconds { return .maxDuration }
+        if durationSeconds(for: chunk) >= policy.maxDurationSeconds,
+           hasStrongPunctuation(chunk.turn.originalText) {
+            return .maxDuration
+        }
         if chunk.turn.originalText.count >= policy.minPunctuationCharacters,
            hasStrongPunctuation(chunk.turn.originalText) {
             return .punctuation

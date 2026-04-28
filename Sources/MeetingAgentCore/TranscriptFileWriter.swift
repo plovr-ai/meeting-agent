@@ -40,6 +40,11 @@ public final class TranscriptFileWriter {
         if let index = document.segments.firstIndex(where: { $0.id == segment.id }) {
             document.segments[index] = segment
         } else {
+            if document.segments.contains(where: { Self.shouldKeepExistingSegment($0, insteadOf: segment) }) {
+                try replace(with: document.segments)
+                return
+            }
+            document.segments.removeAll { Self.shouldReplaceExistingSegment($0, with: segment) }
             document.segments.append(segment)
         }
         try replace(with: document.segments)
@@ -170,6 +175,72 @@ public final class TranscriptFileWriter {
     private func writeDocument(_ document: TranscriptDocument) throws {
         let data = try JSONEncoder.meetingAgent.encode(document)
         try data.write(to: structuredURL, options: .atomic)
+    }
+
+    private static func shouldKeepExistingSegment(_ existing: TranscriptSegment, insteadOf incoming: TranscriptSegment) -> Bool {
+        existing.isFinal
+            && !incoming.isFinal
+            && describesSameStreamingUtterance(existing, incoming)
+    }
+
+    private static func shouldReplaceExistingSegment(_ existing: TranscriptSegment, with incoming: TranscriptSegment) -> Bool {
+        guard describesSameStreamingUtterance(existing, incoming) else { return false }
+        if incoming.isFinal && !existing.isFinal {
+            return true
+        }
+        if !incoming.isFinal && !existing.isFinal {
+            return true
+        }
+        return false
+    }
+
+    private static func describesSameStreamingUtterance(_ first: TranscriptSegment, _ second: TranscriptSegment) -> Bool {
+        guard first.sourceProvider == second.sourceProvider,
+              speakersAreCompatible(first.speaker, second.speaker),
+              segmentsOverlap(first, second),
+              normalizedTextsOverlap(first.text, second.text)
+        else {
+            return false
+        }
+        return true
+    }
+
+    private static func speakersAreCompatible(_ first: TranscriptSpeaker, _ second: TranscriptSpeaker) -> Bool {
+        guard let firstID = first.identifier,
+              let secondID = second.identifier
+        else {
+            return true
+        }
+        return firstID == secondID
+    }
+
+    private static func segmentsOverlap(_ first: TranscriptSegment, _ second: TranscriptSegment) -> Bool {
+        guard let firstStart = first.startTimeSeconds,
+              let firstEnd = first.endTimeSeconds,
+              let secondStart = second.startTimeSeconds,
+              let secondEnd = second.endTimeSeconds
+        else {
+            return false
+        }
+        let overlap = min(firstEnd, secondEnd) - max(firstStart, secondStart)
+        guard overlap > 0 else { return false }
+        let shorterDuration = min(firstEnd - firstStart, secondEnd - secondStart)
+        return shorterDuration <= 0 || overlap / shorterDuration >= 0.5
+    }
+
+    private static func normalizedTextsOverlap(_ first: String, _ second: String) -> Bool {
+        let first = normalizedTranscriptComparisonText(first)
+        let second = normalizedTranscriptComparisonText(second)
+        guard !first.isEmpty, !second.isEmpty else { return false }
+        return first.contains(second) || second.contains(first)
+    }
+
+    private static func normalizedTranscriptComparisonText(_ text: String) -> String {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {

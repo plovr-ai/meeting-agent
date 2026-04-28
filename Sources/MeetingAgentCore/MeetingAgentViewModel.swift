@@ -882,35 +882,44 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func scheduleCaptionTextTranslationIfNeeded() {
-        let draftRequests = liveCaptionStore.turns.compactMap { turn -> CaptionTranslationRequest? in
+        let draftCandidates = liveCaptionStore.turns.filter { turn in
             guard turn.isFinal,
                   turn.chunkState == .draft,
                   turn.translationHealth == .pending,
                   shouldTranslateDraftCaption(turn),
                   draftTranslationInFlightByTurnID[turn.id] != turn.translationRevision
-            else { return nil }
+            else { return false }
+            return true
+        }
+
+        let finalCandidates = liveCaptionStore.turns.filter { turn in
+            guard turn.isFinal,
+                  turn.chunkState == .frozen,
+                  turn.translationHealth == .pending
+            else { return false }
+            let key = finalCaptionTranslationKey(for: turn)
+            return finalTranslationKeysByTurnID[turn.id] != key
+                && !finalTranslationInFlightTurnIDs.contains(turn.id)
+        }
+
+        guard !draftCandidates.isEmpty || !finalCandidates.isEmpty else { return }
+        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
+
+        let draftRequests = draftCandidates.map { turn -> CaptionTranslationRequest in
             let key = draftCaptionTranslationKey(for: turn)
             draftTranslationInFlightByTurnID[turn.id] = turn.translationRevision
             draftTranslationAttemptDatesByTurnID[turn.id] = Date()
             return CaptionTranslationRequest(turn: turn, key: key, isDraft: true, revision: turn.translationRevision)
         }
 
-        let finalRequests = liveCaptionStore.turns.compactMap { turn -> CaptionTranslationRequest? in
-            guard turn.isFinal,
-                  turn.chunkState == .frozen,
-                  turn.translationHealth == .pending
-            else { return nil }
+        let finalRequests = finalCandidates.map { turn -> CaptionTranslationRequest in
             let key = finalCaptionTranslationKey(for: turn)
-            guard finalTranslationKeysByTurnID[turn.id] != key,
-                  !finalTranslationInFlightTurnIDs.contains(turn.id)
-            else { return nil }
             finalTranslationInFlightTurnIDs.insert(turn.id)
             return CaptionTranslationRequest(turn: turn, key: key, isDraft: false, revision: turn.translationRevision)
         }
 
         let requests = draftRequests + finalRequests
         guard !requests.isEmpty else { return }
-        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
         Task { [weak self, provider, requests] in
             await self?.translateCaptionTurns(requests, using: provider)
         }

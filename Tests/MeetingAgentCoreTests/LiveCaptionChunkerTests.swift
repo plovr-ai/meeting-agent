@@ -42,7 +42,7 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.last?.turn.freezeReason, .maxLength)
     }
 
-    func testMaxDurationFreezesTimedDraft() {
+    func testMaxDurationDoesNotFreezeMidSentenceDraft() {
         var chunker = LiveCaptionChunker(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
@@ -56,8 +56,8 @@ final class LiveCaptionChunkerTests: XCTestCase {
             end: 3
         ))
 
-        XCTAssertEqual(updates.last?.turn.chunkState, .frozen)
-        XCTAssertEqual(updates.last?.turn.freezeReason, .maxDuration)
+        XCTAssertEqual(updates.single?.turn.chunkState, .draft)
+        XCTAssertNil(updates.single?.turn.freezeReason)
     }
 
     func testPunctuationFreezesWhenMinimumLengthReached() {
