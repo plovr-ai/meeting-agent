@@ -238,6 +238,22 @@ When using upsert for streaming interim data, test both interim-to-final replace
 
 ---
 
+## [57] Avoid public API expansion for injectable defaults
+
+**Date**: 2026-04-28
+**Category**: api-misuse
+
+### What went wrong
+The first summary provider injection made the default provider factory public only because Swift public initializer default arguments cannot reference private helpers.
+
+### Correct approach
+Use an optional injectable closure defaulting to `nil`, then assign the private default factory inside the initializer body.
+
+### How to avoid
+When adding test injection to a public initializer, keep helper factories private unless callers genuinely need them.
+
+---
+
 ## [48] Apply preferred-target test lessons before writing new tests
 
 **Date**: 2026-04-28
