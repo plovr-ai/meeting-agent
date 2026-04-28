@@ -135,6 +135,20 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 
+    func testAppendingAlreadyRepresentedSegmentToMergedTurnDoesNotDuplicateText() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")
+        _ = store.append(TranscriptSegment(id: "segment-1", speaker: speaker, text: "first", language: "en-US", isFinal: true))
+        _ = store.append(TranscriptSegment(id: "segment-2", speaker: speaker, text: "second", language: "en-US", isFinal: true))
+
+        let existing = store.append(TranscriptSegment(id: "segment-1", speaker: speaker, text: "first", language: "en-US", isFinal: true))
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(existing.originalText, "first second")
+        XCTAssertEqual(existing.sourceSegmentIDs, ["segment-1", "segment-2"])
+        XCTAssertEqual(store.turns.first?.originalText, "first second")
+    }
+
     func testAttachTranslationUpdatesSameTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = store.append(TranscriptSegment(id: "segment-1", text: "hello", language: "en-US"))

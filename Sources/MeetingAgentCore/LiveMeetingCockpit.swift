@@ -238,6 +238,10 @@ public struct LiveCaptionStore: Equatable {
             translationHealth: segment.isFinal ? .pending : .idle,
             createdAt: segment.createdAt
         )
+        if let representedIndex = turns.firstIndex(where: { $0.sourceSegmentIDs.contains(segment.id) }),
+           turns[representedIndex].sourceSegmentIDs.count > 1 {
+            return turns[representedIndex]
+        }
         if let index = turns.firstIndex(where: { $0.sourceSegmentID == segment.id }) {
             let previousTurn = turns[index]
             var updated = turn
