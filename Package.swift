@@ -16,7 +16,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "MeetingAgentApp",
-            dependencies: ["MeetingAgentCore"]
+            dependencies: ["MeetingAgentCore"],
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "MeetingAgentCoreTests",
