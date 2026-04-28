@@ -40,6 +40,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var showSettings = false"))
         XCTAssertTrue(source.contains("SettingsView("))
+        XCTAssertFalse(source.contains("TextField("))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))
@@ -69,6 +70,16 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertLessThan(spacerRange.lowerBound, settingsRange.lowerBound)
         XCTAssertTrue(source.contains("showSettings = true"))
+    }
+
+    func testSidebarTitleUsesCommandCenterStylingInsteadOfSystemNavigationTitle() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("Text(\"Meeting Agent\")"))
+        XCTAssertTrue(source.contains(".commandCenterEyebrow()"))
+        XCTAssertFalse(source.contains(".navigationTitle(\"Meeting Agent\")"))
     }
 
     func testWindowToolbarUsesCommandCenterThemeBackground() throws {

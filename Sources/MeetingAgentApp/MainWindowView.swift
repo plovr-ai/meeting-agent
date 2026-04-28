@@ -9,6 +9,20 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
+                HStack {
+                    Text("Meeting Agent")
+                        .commandCenterEyebrow()
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 16)
+                .background(CommandCenterPalette.surface)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(CommandCenterPalette.border)
+                        .frame(height: 1)
+                }
+
                 List(selection: Binding(
                     get: { showSettings ? nil : viewModel.selectedMeetingID },
                     set: { id in
@@ -54,7 +68,6 @@ struct MainWindowView: View {
                 .background(showSettings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             }
             .background(CommandCenterPalette.surface)
-            .navigationTitle("Meeting Agent")
         } detail: {
             if showSettings {
                 SettingsView(
