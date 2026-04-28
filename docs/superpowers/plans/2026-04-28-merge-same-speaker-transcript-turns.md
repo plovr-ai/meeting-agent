@@ -188,15 +188,19 @@ Add `sourceSegmentIDs` to `LiveCaptionTurn`, defaulting to `[sourceSegmentID]`, 
 
 When `LiveCaptionStore` merges same-speaker turns, append the new turn's `sourceSegmentIDs` into the existing turn so consumers know how many final source segments the display turn represents.
 
-- [ ] **Step 3: Add append-translation behavior**
+- [ ] **Step 3: Keep refresh idempotent**
+
+Before duplicate-segment update and merge logic, return the existing merged turn when an incoming segment ID is already present in a multi-segment turn's `sourceSegmentIDs`. This prevents repeated transcript refreshes from duplicating already represented source text.
+
+- [ ] **Step 4: Add append-translation behavior**
 
 Add `LiveCaptionStore.appendTranslation(_:toTurnID:)` to join multiple realtime target text finals into one merged turn without changing `attachTranslation(_:toTurnID:)`, which still replaces a turn's translation for one-shot translation providers.
 
-- [ ] **Step 4: Update realtime attachment counts**
+- [ ] **Step 5: Update realtime attachment counts**
 
 In `MeetingAgentViewModel`, track `realtimeTranslationAttachmentCountsByCaptionID`. In `attachRealtimeTranslationsToLiveCaptions`, choose the first final caption where attached translation count is less than `sourceSegmentIDs.count`, append the translation, increment the count, and mark the realtime translation turn attached.
 
-- [ ] **Step 5: Run targeted tests**
+- [ ] **Step 6: Run targeted tests**
 
 Run:
 
