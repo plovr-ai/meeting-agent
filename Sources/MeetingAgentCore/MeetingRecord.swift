@@ -8,6 +8,53 @@ public enum TranscriptionStatus: String, Codable, Equatable {
     case retryRequested
 }
 
+public struct MeetingAttendee: Codable, Identifiable, Equatable {
+    public var id: UUID
+    public var name: String
+    public var role: String?
+
+    public init(id: UUID = UUID(), name: String, role: String? = nil) {
+        self.id = id
+        self.name = name
+        self.role = role
+    }
+}
+
+public struct MeetingAgendaTopic: Codable, Identifiable, Equatable {
+    public var id: UUID
+    public var title: String
+
+    public init(id: UUID = UUID(), title: String) {
+        self.id = id
+        self.title = title
+    }
+}
+
+public struct MeetingAgendaUpdate: Equatable {
+    public var name: String
+    public var attendees: [MeetingAttendee]
+    public var agendaTopics: [MeetingAgendaTopic]
+    public var scheduledStartAt: Date?
+    public var scheduledEndAt: Date?
+    public var meetingGoal: MeetingGoal?
+
+    public init(
+        name: String,
+        attendees: [MeetingAttendee],
+        agendaTopics: [MeetingAgendaTopic],
+        scheduledStartAt: Date?,
+        scheduledEndAt: Date?,
+        meetingGoal: MeetingGoal?
+    ) {
+        self.name = name
+        self.attendees = attendees
+        self.agendaTopics = agendaTopics
+        self.scheduledStartAt = scheduledStartAt
+        self.scheduledEndAt = scheduledEndAt
+        self.meetingGoal = meetingGoal
+    }
+}
+
 public struct MeetingRecord: Codable, Identifiable, Equatable {
     public let id: UUID
     public var name: String
@@ -27,6 +74,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
     public var meetingGoal: MeetingGoal?
+    public var attendees: [MeetingAttendee]
+    public var agendaTopics: [MeetingAgendaTopic]
+    public var scheduledStartAt: Date?
+    public var scheduledEndAt: Date?
 
     public init(
         id: UUID,
@@ -46,7 +97,11 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         speechProvider: SpeechProvider = .whisper,
         transcriptionProviderID: String? = nil,
         speechLocaleIdentifier: String = "en-US",
-        meetingGoal: MeetingGoal? = nil
+        meetingGoal: MeetingGoal? = nil,
+        attendees: [MeetingAttendee] = [],
+        agendaTopics: [MeetingAgendaTopic] = [],
+        scheduledStartAt: Date? = nil,
+        scheduledEndAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -69,6 +124,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         ) ?? speechProvider.rawValue
         self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
         self.meetingGoal = meetingGoal
+        self.attendees = attendees
+        self.agendaTopics = agendaTopics
+        self.scheduledStartAt = scheduledStartAt
+        self.scheduledEndAt = scheduledEndAt
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -90,6 +149,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case transcriptionProviderID
         case speechLocaleIdentifier
         case meetingGoal
+        case attendees
+        case agendaTopics
+        case scheduledStartAt
+        case scheduledEndAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -113,6 +176,10 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
             ?? speechProvider.rawValue
         speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
         meetingGoal = try container.decodeIfPresent(MeetingGoal.self, forKey: .meetingGoal)
+        attendees = try container.decodeIfPresent([MeetingAttendee].self, forKey: .attendees) ?? []
+        agendaTopics = try container.decodeIfPresent([MeetingAgendaTopic].self, forKey: .agendaTopics) ?? []
+        scheduledStartAt = try container.decodeIfPresent(Date.self, forKey: .scheduledStartAt)
+        scheduledEndAt = try container.decodeIfPresent(Date.self, forKey: .scheduledEndAt)
     }
 }
 

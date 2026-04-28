@@ -12,15 +12,49 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)"))
     }
 
-    func testMainWindowUsesAgendaFeedInsteadOfNavigationSplitView() throws {
+    func testAgendaSidebarUsesWiderDefaultWidth() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertFalse(source.contains("NavigationSplitView"))
-        XCTAssertTrue(source.contains("AgendaShellView("))
-        XCTAssertTrue(source.contains("AgendaFeedView("))
-        XCTAssertTrue(source.contains("AgendaMeetingCard("))
+        XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
+    }
+
+    func testMainWindowRoutesThroughAgendaFirstSidebarSections() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("enum MainWindowDestination"))
+        XCTAssertTrue(source.contains("case today"))
+        XCTAssertTrue(source.contains("case recordings"))
+        XCTAssertTrue(source.contains("TodayAgendaView("))
+        XCTAssertTrue(source.contains("Button(\"Today\")"))
+        XCTAssertTrue(source.contains("Button(\"Recordings\")"))
+        XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
+        XCTAssertFalse(source.contains("Text(\"Meetings\")"))
+    }
+
+    func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("struct TodayAgendaView"))
+        XCTAssertTrue(source.contains("AgendaRowView"))
+        XCTAssertTrue(source.contains("AgendaEditorView"))
+        XCTAssertTrue(source.contains("Open Workspace"))
+        XCTAssertTrue(source.contains("Start Recording"))
+        XCTAssertTrue(source.contains("Open Transcript"))
+        XCTAssertTrue(source.contains("Create Meeting"))
+        XCTAssertTrue(source.contains("Button(\"Save\")"))
+        XCTAssertTrue(source.contains("Button(\"Cancel\")"))
+        XCTAssertTrue(source.contains("Save / Discard / Cancel"))
+    }
+
+    func testLiveWorkspaceShowsAgendaContextStrip() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("AgendaContextStrip("))
+        XCTAssertTrue(source.contains("meeting.attendees"))
+        XCTAssertTrue(source.contains("meeting.agendaTopics"))
+        XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
     }
 
     func testRecordingAndRetryButtonsShareActionRow() throws {
@@ -60,46 +94,36 @@ final class MainWindowViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("@State private var destination: MainWindowDestination = .agenda"))
+        XCTAssertTrue(source.contains("@State private var destination: MainWindowDestination = .today"))
         XCTAssertTrue(source.contains("SettingsView("))
-        XCTAssertFalse(source.contains("TextField("))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))
     }
 
-    func testAgendaFeedShowsTodayAndRecentHistoryWithoutStaticYesterdaySection() throws {
+    func testRecordingsRowsUseListSelectionTags() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("Text(\"Today\")"))
-        XCTAssertTrue(source.contains("Text(\"Recent\")"))
-        XCTAssertTrue(source.contains("recentHistoryDays = 7"))
-        XCTAssertTrue(source.contains("recentHistoryStart"))
-        XCTAssertFalse(source.contains("Text(\"Yesterday\")"))
+        XCTAssertTrue(source.contains("List(selection: Binding("))
+        XCTAssertTrue(source.contains(".tag(Optional(meeting.id))"))
+        XCTAssertFalse(source.contains(".onTapGesture {\n                            viewModel.selectMeeting(meeting.id)"))
     }
 
-    func testAgendaCardsExposeMeetingMetadata() throws {
+    func testSettingsEntryIsFixedAtBottomOfSidebar() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("statusText(for: meeting)"))
-        XCTAssertTrue(source.contains("durationText(for: meeting)"))
-        XCTAssertTrue(source.contains("artifactText(for: meeting)"))
-        XCTAssertTrue(source.contains("meeting.speechLocaleIdentifier"))
-        XCTAssertTrue(source.contains("meeting.startedAt.formatted(date: .abbreviated, time: .shortened)"))
-    }
+        guard let spacerRange = source.range(of: "Spacer()") else {
+            return XCTFail("Sidebar spacer is missing")
+        }
+        guard let settingsRange = source.range(of: "Button {") else {
+            return XCTFail("Settings bottom button is missing")
+        }
 
-    func testSettingsEntryRemainsFixedInAgendaShell() throws {
-        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
-        let source = try String(contentsOf: sourceURL)
-
-        XCTAssertTrue(source.contains("AgendaShellView("))
-        XCTAssertTrue(source.contains("Label(\"Agenda\", systemImage: \"calendar\")"))
-        XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
+        XCTAssertLessThan(spacerRange.lowerBound, settingsRange.lowerBound)
         XCTAssertTrue(source.contains("destination = .settings"))
     }
 
@@ -122,17 +146,6 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".toolbarBackground(.visible, for: .windowToolbar)"))
         XCTAssertTrue(source.contains(".toolbarColorScheme(.dark, for: .windowToolbar)"))
         XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.text)"))
-    }
-
-    func testSidebarSectionHeaderUsesThemeTextColor() throws {
-        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
-        let source = try String(contentsOf: sourceURL)
-
-        XCTAssertFalse(source.contains("Section(\"Meetings\")"))
-        XCTAssertTrue(source.contains("AgendaMeetingCard("))
-        XCTAssertTrue(source.contains("Text(\"Today\")"))
-        XCTAssertTrue(source.contains(".foregroundStyle(CommandCenterPalette.secondaryText)"))
     }
 
     func testMainWindowRemovesUnimplementedLiveTranslationControls() throws {
@@ -188,29 +201,6 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
         XCTAssertFalse(source.contains("Text(turn.isFinal ? \"final\" : \"partial\")"))
         XCTAssertFalse(source.contains("\" turns\""))
-    }
-
-    func testTranslatedTranscriptRowsRenderSourceBeforeTranslation() throws {
-        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
-        let source = try String(contentsOf: sourceURL)
-
-        guard let translatedCaseRange = source.range(of: "case .translated(let primaryText, let sourceText):") else {
-            return XCTFail("Translated transcript branch is missing")
-        }
-        guard let originalOnlyRange = source.range(of: "case .originalOnly", range: translatedCaseRange.upperBound..<source.endIndex) else {
-            return XCTFail("Translated transcript branch end is missing")
-        }
-
-        let translatedBranch = source[translatedCaseRange.lowerBound..<originalOnlyRange.lowerBound]
-        guard let sourceTextRange = translatedBranch.range(of: "Text(sourceText)") else {
-            return XCTFail("Translated transcript branch does not render sourceText")
-        }
-        guard let primaryTextRange = translatedBranch.range(of: "Text(primaryText)") else {
-            return XCTFail("Translated transcript branch does not render primaryText")
-        }
-
-        XCTAssertLessThan(sourceTextRange.lowerBound, primaryTextRange.lowerBound)
     }
 
     func testUnifiedTranscriptPreservesFallbackAndQuietCorrectionControls() throws {
@@ -273,5 +263,12 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("setMeetingGoal(buildGoal())"))
         XCTAssertFalse(source.contains("meetingGoal: viewModel.meetingGoal"))
         XCTAssertFalse(source.contains("draftGoal: meetingGoal"))
+    }
+
+    private func appSource(named fileName: String) throws -> String {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp")
+            .appendingPathComponent(fileName)
+        return try String(contentsOf: sourceURL)
     }
 }

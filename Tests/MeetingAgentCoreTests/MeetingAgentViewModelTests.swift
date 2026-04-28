@@ -1514,6 +1514,97 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedMeeting?.id, first.record.id)
     }
 
+    func testSaveAgendaNormalizesAndPersistsEditableMetadata() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Draft", startedAt: Date(timeIntervalSince1970: 100)).record
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        try viewModel.saveAgenda(
+            for: stored.id,
+            update: MeetingAgendaUpdate(
+                name: "  APAC\nlaunch sync  ",
+                attendees: [
+                    MeetingAttendee(name: "  Li\nWei  ", role: "  Shanghai GM  "),
+                    MeetingAttendee(name: "   ", role: "Ignored")
+                ],
+                agendaTopics: [
+                    MeetingAgendaTopic(title: "  Launch\nrisks "),
+                    MeetingAgendaTopic(title: "")
+                ],
+                scheduledStartAt: Date(timeIntervalSince1970: 500),
+                scheduledEndAt: Date(timeIntervalSince1970: 800),
+                meetingGoal: MeetingGoal(
+                    title: " Align on rollout ",
+                    objectives: [],
+                    requiredQuestions: [],
+                    expectedDecisions: [],
+                    keyTerms: []
+                )
+            )
+        )
+
+        let saved = try XCTUnwrap(viewModel.selectedMeeting)
+        let loaded = try XCTUnwrap(try store.loadMeetings().first)
+        XCTAssertEqual(saved.name, "APAC launch sync")
+        XCTAssertEqual(saved.attendees.map(\.name), ["Li Wei"])
+        XCTAssertEqual(saved.attendees.map(\.role), ["Shanghai GM"])
+        XCTAssertEqual(saved.agendaTopics.map(\.title), ["Launch risks"])
+        XCTAssertEqual(saved.scheduledStartAt, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(saved.scheduledEndAt, Date(timeIntervalSince1970: 800))
+        XCTAssertEqual(saved.meetingGoal?.title, "Align on rollout")
+        XCTAssertEqual(loaded, saved)
+    }
+
+    func testCreateAgendaMeetingPersistsLocalEditableAgendaItem() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        let scheduledStartAt = Date(timeIntervalSince1970: 1_777_000_000)
+
+        let created = try viewModel.createAgendaMeeting(
+            name: "  APAC\nlaunch sync  ",
+            scheduledStartAt: scheduledStartAt
+        )
+
+        XCTAssertEqual(created.name, "APAC launch sync")
+        XCTAssertEqual(created.scheduledStartAt, scheduledStartAt)
+        XCTAssertEqual(viewModel.meetings.map(\.id), [created.id])
+        XCTAssertEqual(viewModel.selectedMeetingID, created.id)
+        XCTAssertEqual(try store.loadMeetings().first?.id, created.id)
+    }
+
+    func testStartRecordingForExistingAgendaRecordKeepsMeetingIdentity() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var stored = try fixture.store.createMeeting(
+            id: UUID(uuidString: "34343434-3434-3434-3434-343434343434")!,
+            name: "APAC launch sync",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        stored.attendees = [MeetingAttendee(name: "Li Wei")]
+        try fixture.store.save(stored)
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try viewModel.loadMeetings()
+
+        try await viewModel.startRecording(for: target, meetingID: stored.id)
+
+        XCTAssertEqual(viewModel.meetings.count, 1)
+        XCTAssertEqual(viewModel.selectedMeeting?.id, stored.id)
+        XCTAssertEqual(viewModel.activeMeetingID, stored.id)
+        XCTAssertEqual(viewModel.selectedMeeting?.attendees.first?.name, "Li Wei")
+        XCTAssertEqual(fixture.session.startedTargets, [target])
+        XCTAssertEqual(try fixture.store.loadMeetings().count, 1)
+    }
+
     private func waitFor(
         timeoutNanoseconds: UInt64 = 1_000_000_000,
         file: StaticString = #filePath,

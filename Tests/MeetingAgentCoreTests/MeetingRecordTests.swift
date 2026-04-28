@@ -30,7 +30,22 @@ final class MeetingRecordTests: XCTestCase {
                 requiredQuestions: ["Have we confirmed the deadline?"],
                 expectedDecisions: [],
                 keyTerms: [MeetingKeyTerm(value: "launch")]
-            )
+            ),
+            attendees: [
+                MeetingAttendee(
+                    id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
+                    name: "Li Wei",
+                    role: "Shanghai GM"
+                )
+            ],
+            agendaTopics: [
+                MeetingAgendaTopic(
+                    id: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!,
+                    title: "Launch risks"
+                )
+            ],
+            scheduledStartAt: Date(timeIntervalSince1970: 1_776_999_600),
+            scheduledEndAt: Date(timeIntervalSince1970: 1_777_000_500)
         )
 
         let data = try JSONEncoder.meetingAgent.encode(record)
@@ -147,5 +162,26 @@ final class MeetingRecordTests: XCTestCase {
         let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
 
         XCTAssertNil(decoded.meetingGoal)
+    }
+
+    func testDecodesLegacyMetadataWithoutAgendaFields() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.attendees, [])
+        XCTAssertEqual(decoded.agendaTopics, [])
+        XCTAssertNil(decoded.scheduledStartAt)
+        XCTAssertNil(decoded.scheduledEndAt)
     }
 }

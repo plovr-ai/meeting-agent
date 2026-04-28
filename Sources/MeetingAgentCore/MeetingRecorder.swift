@@ -71,6 +71,21 @@ public final class MeetingRecorder {
         return stored.record
     }
 
+    public func prepareRecord(
+        _ record: MeetingRecord,
+        for target: AudioCaptureTarget
+    ) throws -> MeetingRecord {
+        guard case .idle = state else {
+            throw ProbeError.invalidArguments("A meeting recording is already active")
+        }
+
+        activeRecord = record
+        diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
+        state = .prepared(record.id)
+        try store.save(record)
+        return record
+    }
+
     public func startRecording(
         target: AudioCaptureTarget,
         record: MeetingRecord,

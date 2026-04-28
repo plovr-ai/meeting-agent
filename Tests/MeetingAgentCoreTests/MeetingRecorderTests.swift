@@ -94,6 +94,27 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(fixture.recorder.state, .idle)
     }
 
+    func testPrepareRecordCanReuseExistingAgendaRecord() throws {
+        let fixture = try RecorderFixture()
+        var record = try fixture.store.createMeeting(
+            id: UUID(uuidString: "12121212-1212-1212-1212-121212121212")!,
+            name: "APAC launch sync",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        record.scheduledStartAt = Date(timeIntervalSince1970: 500)
+        record.attendees = [MeetingAttendee(name: "Li Wei", role: "Shanghai GM")]
+        try fixture.store.save(record)
+
+        let prepared = try fixture.recorder.prepareRecord(record, for: fixture.target)
+
+        XCTAssertEqual(prepared.id, record.id)
+        XCTAssertEqual(prepared.name, "APAC launch sync")
+        XCTAssertEqual(prepared.scheduledStartAt, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(prepared.attendees.first?.name, "Li Wei")
+        XCTAssertEqual(fixture.recorder.state, .prepared(record.id))
+        XCTAssertEqual(try fixture.store.loadMeetings().count, 1)
+    }
+
     func testStartRecordingPersistsHostedTranscriptionProviderID() async throws {
         let fixture = try RecorderFixture()
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
@@ -207,6 +228,7 @@ private final class CapturingRealtimeFrameConsumer: RealtimeFrameConsumer {
 
 private struct RecorderFixture {
     let storeRoot: URL
+    let store: MeetingStore
     let session: FakeRecorderCaptureSession
     let writer: FakeAudioFrameWriter
     let writerFactory: FakeAudioFrameWriterFactory
@@ -223,13 +245,15 @@ private struct RecorderFixture {
         let transcriber = FakeAudioFrameTranscriber()
         let transcriberFactory = FakeRecorderTranscriberFactory(transcriber: transcriber)
         self.storeRoot = storeRoot
+        let store = MeetingStore(baseDirectory: storeRoot)
+        self.store = store
         self.session = session
         self.writer = writer
         self.writerFactory = writerFactory
         self.transcriber = transcriber
         self.transcriberFactory = transcriberFactory
         recorder = MeetingRecorder(
-            store: MeetingStore(baseDirectory: storeRoot),
+            store: store,
             captureSessionFactory: { session },
             wavWriterFactory: writerFactory.makeWriter,
             transcriberFactory: transcriberFactory.startTranscriber

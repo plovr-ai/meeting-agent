@@ -28,6 +28,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         translation: .idle,
         analysis: .idle
     )
+    @Published public private(set) var activeMeetingID: UUID?
     @Published public private(set) var primaryChainPreflightResult = PrimaryChainPreflightResult(
         status: .unavailable,
         messages: ["Primary chain is not checked"]
@@ -123,6 +124,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         resetLiveCaptionStore()
         pendingCandidate = nil
         activeTarget = candidate
+        activeMeetingID = record.id
         statusText = "Recording \(record.name)"
     }
 
@@ -185,8 +187,32 @@ public final class MeetingAgentViewModel: ObservableObject {
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
         persistMeetingGoalForSelectedMeeting()
+        try await startRecordingPreparedRecord(record, target: candidate, localeIdentifier: localeIdentifier)
+    }
+
+    public func startRecording(
+        for candidate: AudioCaptureTarget,
+        meetingID: UUID,
+        localeIdentifier: String? = nil
+    ) async throws {
+        guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else {
+            throw ProbeError.invalidArguments("Meeting not found")
+        }
+
+        let record = try recorder.prepareRecord(meetings[index], for: candidate)
+        selectedMeetingID = record.id
+        meetingGoal = record.meetingGoal
+        try await startRecordingPreparedRecord(record, target: candidate, localeIdentifier: localeIdentifier)
+    }
+
+    private func startRecordingPreparedRecord(
+        _ record: MeetingRecord,
+        target candidate: AudioCaptureTarget,
+        localeIdentifier: String?
+    ) async throws {
         resetLiveCaptionStore()
         activeTarget = candidate
+        activeMeetingID = record.id
         pendingCandidate = nil
         let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
         var recordingConfiguration = speechConfiguration
@@ -203,6 +229,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 meetings[index] = stopped
             }
             activeTarget = nil
+            activeMeetingID = nil
             throw error
         }
         statusText = "Recording \(record.name)"
@@ -246,6 +273,56 @@ public final class MeetingAgentViewModel: ObservableObject {
         configureMeetingProgressCoordinator()
     }
 
+    public func saveAgenda(for meetingID: UUID, update: MeetingAgendaUpdate) throws {
+        guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else {
+            throw ProbeError.invalidArguments("Meeting not found")
+        }
+
+        var record = meetings[index]
+        let normalizedName = Self.normalizedSingleLine(update.name)
+        if !normalizedName.isEmpty {
+            record.name = normalizedName
+        }
+        record.attendees = update.attendees.compactMap(Self.normalizedAttendee)
+        record.agendaTopics = update.agendaTopics.compactMap(Self.normalizedAgendaTopic)
+        record.scheduledStartAt = update.scheduledStartAt
+        record.scheduledEndAt = update.scheduledEndAt
+        record.meetingGoal = Self.normalizedMeetingGoal(update.meetingGoal)
+
+        try store.save(record)
+        meetings[index] = record
+        if selectedMeetingID == meetingID {
+            meetingGoal = record.meetingGoal
+            resetMeetingProgressState()
+            restoreMeetingProgressStateForSelectedMeeting()
+            configureMeetingProgressCoordinator()
+        }
+        statusText = "Agenda saved"
+    }
+
+    public func createAgendaMeeting(
+        name: String = "New Meeting",
+        scheduledStartAt: Date = Date(),
+        scheduledEndAt: Date? = nil
+    ) throws -> MeetingRecord {
+        let normalizedName = Self.normalizedSingleLine(name)
+        let stored = try store.createMeeting(
+            name: normalizedName.isEmpty ? "New Meeting" : normalizedName,
+            startedAt: scheduledStartAt
+        )
+        var record = stored.record
+        record.scheduledStartAt = scheduledStartAt
+        record.scheduledEndAt = scheduledEndAt
+        try store.save(record)
+        meetings.insert(record, at: 0)
+        selectedMeetingID = record.id
+        meetingGoal = record.meetingGoal
+        resetMeetingProgressState()
+        configureMeetingProgressCoordinator()
+        statusText = "Agenda created"
+        return record
+    }
+
     public func refreshMeetingProgress() async {
         guard let meetingProgressCoordinator else {
             meetingProgressState = nil
@@ -281,6 +358,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         Task { await stopRealtimeTranslation() }
         activeTarget = nil
+        activeMeetingID = nil
         statusText = "Idle"
     }
 
@@ -298,6 +376,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         await stopRealtimeTranslation()
         activeTarget = nil
+        activeMeetingID = nil
 
         guard let stoppedID else {
             statusText = "Idle"
@@ -574,6 +653,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         statusText = "Target process ended: \(activeTarget.displayName)"
         self.activeTarget = nil
+        activeMeetingID = nil
         return true
     }
 
@@ -605,6 +685,32 @@ public final class MeetingAgentViewModel: ObservableObject {
     private static func normalizedSpeechLocaleIdentifier(_ localeIdentifier: String) -> String {
         let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "en-US" : trimmed
+    }
+
+    private static func normalizedSingleLine(_ value: String) -> String {
+        value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func normalizedAttendee(_ attendee: MeetingAttendee) -> MeetingAttendee? {
+        let name = normalizedSingleLine(attendee.name)
+        guard !name.isEmpty else { return nil }
+        let role = attendee.role.map(normalizedSingleLine).flatMap { $0.isEmpty ? nil : $0 }
+        return MeetingAttendee(id: attendee.id, name: name, role: role)
+    }
+
+    private static func normalizedAgendaTopic(_ topic: MeetingAgendaTopic) -> MeetingAgendaTopic? {
+        let title = normalizedSingleLine(topic.title)
+        guard !title.isEmpty else { return nil }
+        return MeetingAgendaTopic(id: topic.id, title: title)
+    }
+
+    private static func normalizedMeetingGoal(_ goal: MeetingGoal?) -> MeetingGoal? {
+        guard var goal else { return nil }
+        goal.title = normalizedSingleLine(goal.title)
+        return goal.title.isEmpty ? nil : goal
     }
 
     private static func derivedBilingualPipelineProfileID(
