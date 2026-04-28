@@ -23,6 +23,7 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("openAIRealtimeAPIKeyBinding"))
         XCTAssertTrue(source.contains("usesOpenRouter"))
         XCTAssertTrue(source.contains("Picker(\"Hosted Translation Model\""))
+        XCTAssertTrue(source.contains("Picker(\"Hosted Summary Model\""))
         XCTAssertFalse(source.contains("Picker(\"Translation Mode\""))
         XCTAssertFalse(source.contains("Picker(\"Local Translation Provider\""))
         XCTAssertFalse(source.contains("Picker(\"Hosted Translation Provider\""))

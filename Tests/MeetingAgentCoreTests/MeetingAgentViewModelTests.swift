@@ -1179,6 +1179,50 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Summary generated")
     }
 
+    func testGenerateSummaryUsesConfiguredSummaryModelIndependentlyFromTranslationModel() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(
+            name: "Launch Review",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000)
+        )
+        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US")
+        ])
+        try transcriptWriter.close()
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            translationExecutionMode: .hosted,
+            hostedTranslationProviderID: "openrouter-translation",
+            hostedTranslationModelID: "google/gemini-2.5-flash",
+            hostedSummaryModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "test-key"
+        )
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechConfiguration: configuration,
+            summaryProviderFactory: { configuration in
+                CapturingSummaryProvider(providerName: "openrouter:\(configuration.hostedSummaryModelID)")
+            },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+
+        try await viewModel.generateSummary(
+            for: stored.record.id,
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
+        )
+
+        let summary = try MeetingSummaryWriter.read(from: stored.record.summaryJSONURL!)
+        XCTAssertEqual(summary.status, .succeeded)
+        XCTAssertEqual(summary.provider, "openrouter:openai/gpt-4.1-mini")
+    }
+
     func testRetryTranscriptionClearsDownstreamSummaryArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1948,6 +1992,28 @@ private final class DelayedViewModelFakeTextTranslationProvider: TextTranslation
             ],
             provenance: PipelineProvenance(profileID: "delayed-view-model-translation")
         ))
+    }
+}
+
+private struct CapturingSummaryProvider: MeetingSummaryProvider {
+    let providerName: String
+
+    func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
+        MeetingSummary(
+            overview: "The team aligned on launch scope.",
+            keyTopics: ["Launch"],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: input.language,
+            sourceSegmentIDs: input.segments.map(\.id),
+            generatedAt: input.generatedAt,
+            provider: providerName,
+            status: .succeeded,
+            failureReason: nil
+        )
     }
 }
 

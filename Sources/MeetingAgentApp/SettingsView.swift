@@ -99,6 +99,12 @@ struct SettingsView: View {
                                 Text(model.displayName).tag(model.id)
                             }
                         }
+
+                        Picker("Hosted Summary Model", selection: $draft.hostedSummaryModelID) {
+                            ForEach(BilingualPipelineFactory.hostedSummaryModelOptions) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
+                        }
                     }
                 }
 
