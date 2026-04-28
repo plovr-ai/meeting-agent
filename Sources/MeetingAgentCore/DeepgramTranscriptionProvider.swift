@@ -347,6 +347,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let writer: TranscriptFileWriter
     private var receiveTask: Task<Void, Never>?
     private var sendFailure: String?
+    private var fallbackSegmentIndex = 0
 
     var failureReason: String? {
         sendFailure
@@ -355,9 +356,9 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     init(session: DeepgramStreamingTranscriptionSession, writer: TranscriptFileWriter) {
         self.session = session
         self.writer = writer
-        self.receiveTask = Task { [session, writer] in
+        self.receiveTask = Task { [weak self, session] in
             for await segment in session.segments {
-                try? writer.upsert(segment)
+                try? self?.write(segment)
             }
         }
     }
@@ -378,6 +379,32 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             await session.close()
             try? writer.close()
         }
+    }
+
+    private func write(_ segment: TranscriptSegment) throws {
+        let segment = stableFallbackSegment(segment)
+        try writer.upsert(segment)
+        if segment.isFinal, segment.id.hasSuffix("-stream-active-\(fallbackSegmentIndex)") {
+            fallbackSegmentIndex += 1
+        }
+    }
+
+    private func stableFallbackSegment(_ segment: TranscriptSegment) -> TranscriptSegment {
+        let fallbackID = "\(segment.sourceProvider)-stream-active"
+        guard segment.id == fallbackID else { return segment }
+        return TranscriptSegment(
+            id: "\(fallbackID)-\(fallbackSegmentIndex)",
+            speaker: segment.speaker,
+            startTimeSeconds: segment.startTimeSeconds,
+            endTimeSeconds: segment.endTimeSeconds,
+            text: segment.text,
+            language: segment.language,
+            sourceProvider: segment.sourceProvider,
+            isFinal: segment.isFinal,
+            confidence: segment.confidence,
+            createdAt: segment.createdAt,
+            timingSource: segment.timingSource
+        )
     }
 }
 
