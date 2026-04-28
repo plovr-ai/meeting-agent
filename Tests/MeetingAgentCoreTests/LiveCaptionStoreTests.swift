@@ -2,6 +2,30 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class LiveCaptionStoreTests: XCTestCase {
+    func testLiveCaptionTurnDecodesLegacyChunkDefaults() throws {
+        let data = Data("""
+        {
+          "id": "segment-1",
+          "sourceSegmentID": "segment-1",
+          "speaker": {},
+          "originalText": "hello",
+          "sourceLocale": "en-US",
+          "targetLocale": "zh-CN",
+          "isFinal": true,
+          "captionHealth": { "state": "live" },
+          "translationHealth": { "state": "pending" },
+          "createdAt": "2026-04-28T00:00:00Z"
+        }
+        """.utf8)
+
+        let turn = try JSONDecoder.meetingAgent.decode(LiveCaptionTurn.self, from: data)
+
+        XCTAssertEqual(turn.sourceSegmentIDs, ["segment-1"])
+        XCTAssertEqual(turn.chunkState, .frozen)
+        XCTAssertEqual(turn.translationRevision, 0)
+        XCTAssertNil(turn.freezeReason)
+    }
+
     func testAppendFinalSegmentCreatesStableTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let segment = TranscriptSegment(

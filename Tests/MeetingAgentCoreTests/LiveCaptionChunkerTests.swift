@@ -83,13 +83,62 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.single?.turn.freezeReason, .manualStop)
     }
 
+    func testAppendingBlankTextDoesNotAddExtraJoinerWhitespace() {
+        var firstBlankChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = firstBlankChunker.append(segment(id: "s1", text: " "))
+        let firstBlankUpdates = firstBlankChunker.append(segment(id: "s2", text: "second"))
+
+        XCTAssertEqual(firstBlankUpdates.single?.turn.originalText, "second")
+
+        var secondBlankChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = secondBlankChunker.append(segment(id: "s1", text: "first"))
+        let secondBlankUpdates = secondBlankChunker.append(segment(id: "s2", text: " "))
+
+        XCTAssertEqual(secondBlankUpdates.single?.turn.originalText, "first")
+    }
+
+    func testMissingSegmentLanguageFallsBackToChunkerSourceLocale() {
+        var chunker = LiveCaptionChunker(sourceLocale: "ja-JP", targetLocale: "en-US")
+
+        let firstUpdates = chunker.append(segment(id: "s1", text: "first", language: nil))
+        let secondUpdates = chunker.append(segment(id: "s2", text: "second", language: nil))
+
+        XCTAssertEqual(firstUpdates.single?.turn.sourceLocale, "ja-JP")
+        XCTAssertEqual(secondUpdates.single?.turn.sourceLocale, "ja-JP")
+    }
+
+    func testChunkingTypesSupportEquality() {
+        XCTAssertEqual(
+            LiveCaptionChunkingPolicy(maxCharacters: 10, maxDurationSeconds: 2, minPunctuationCharacters: 5),
+            LiveCaptionChunkingPolicy(maxCharacters: 10, maxDurationSeconds: 2, minPunctuationCharacters: 5)
+        )
+
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "s1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            originalText: "hello",
+            isFinal: true
+        )
+        XCTAssertEqual(LiveCaptionChunkUpdate(turn: turn), LiveCaptionChunkUpdate(turn: turn))
+
+        var first = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        var second = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let createdAt = Date(timeIntervalSince1970: 100)
+        _ = first.append(segment(id: "s1", text: "Still open", createdAt: createdAt))
+        _ = second.append(segment(id: "s1", text: "Still open", createdAt: createdAt))
+
+        XCTAssertEqual(first, second)
+    }
+
     private func segment(
         id: String,
         speaker: String = "speaker-1",
         text: String,
         start: Double? = nil,
         end: Double? = nil,
-        speechFinal: Bool = false
+        speechFinal: Bool = false,
+        createdAt: Date = Date(),
+        language: String? = "en-US"
     ) -> TranscriptSegment {
         TranscriptSegment(
             id: id,
@@ -97,9 +146,10 @@ final class LiveCaptionChunkerTests: XCTestCase {
             startTimeSeconds: start,
             endTimeSeconds: end,
             text: text,
-            language: "en-US",
+            language: language,
             sourceProvider: "deepgram-transcribe",
             speechFinal: speechFinal,
+            createdAt: createdAt,
             timingSource: start == nil && end == nil ? .unavailable : .precise
         )
     }
