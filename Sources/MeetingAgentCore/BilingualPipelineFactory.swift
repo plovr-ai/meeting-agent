@@ -24,6 +24,11 @@ public enum BilingualPipelineFactory {
         ModelOption(id: "openai/gpt-4.1-mini", displayName: "GPT-4.1 Mini")
     ]
 
+    public static let hostedSummaryModelOptions: [ModelOption] = [
+        ModelOption(id: "openai/gpt-4.1-mini", displayName: "GPT-4.1 Mini"),
+        ModelOption(id: "google/gemini-2.5-flash", displayName: "Gemini 2.5 Flash")
+    ]
+
     public static let builtInProviderDescriptors: [ProviderDescriptor] = [
         ProviderDescriptor(id: "whisper-local", displayName: "Whisper Local", capability: .audioTranscription, executionMode: .local, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: false, requiresAPIKey: false),
         ProviderDescriptor(id: "macos-speech-local", displayName: "macOS Speech", capability: .audioTranscription, executionMode: .local, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: false, requiresAPIKey: false),
