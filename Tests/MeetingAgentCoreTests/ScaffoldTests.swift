@@ -19,6 +19,10 @@ final class ScaffoldTests: XCTestCase {
         XCTAssertTrue(script.contains("Contents/MacOS"))
         XCTAssertTrue(script.contains("Contents/Resources"))
         XCTAssertTrue(script.contains("Sources/MeetingAgentApp/Resources/Info.plist"))
+        XCTAssertTrue(script.contains("DefaultSpeechTranscriptionCredentials.json"))
+        XCTAssertTrue(script.contains("DEEPGRAM_API_KEY"))
+        XCTAssertTrue(script.contains("openrouter_api_key"))
+        XCTAssertTrue(script.contains("Embedded default credentials for:"))
         XCTAssertTrue(script.contains("PkgInfo"))
     }
 
@@ -33,6 +37,7 @@ final class ScaffoldTests: XCTestCase {
         XCTAssertTrue(plist.contains("<string>APPL</string>"))
         XCTAssertTrue(plist.contains("<key>LSMinimumSystemVersion</key>"))
         XCTAssertTrue(plist.contains("<string>14.2</string>"))
+        XCTAssertTrue(plist.contains("<key>NSAudioCaptureUsageDescription</key>"))
         XCTAssertTrue(plist.contains("<key>NSMicrophoneUsageDescription</key>"))
         XCTAssertTrue(plist.contains("<key>NSSpeechRecognitionUsageDescription</key>"))
         XCTAssertTrue(plist.contains("<key>NSUserNotificationUsageDescription</key>"))

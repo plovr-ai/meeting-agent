@@ -257,18 +257,24 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 public final class SpeechTranscriptionConfigurationStore {
     private let userDefaults: UserDefaults
     private let key: String
+    private let packagedDefaultsURL: URL?
 
     public init(
         userDefaults: UserDefaults = .standard,
-        key: String = "SpeechTranscriptionConfiguration"
+        key: String = "SpeechTranscriptionConfiguration",
+        packagedDefaultsURL: URL? = Bundle.main.url(
+            forResource: "DefaultSpeechTranscriptionCredentials",
+            withExtension: "json"
+        )
     ) {
         self.userDefaults = userDefaults
         self.key = key
+        self.packagedDefaultsURL = packagedDefaultsURL
     }
 
     public func load() throws -> SpeechTranscriptionConfiguration {
         guard let data = userDefaults.data(forKey: key) else {
-            return .default
+            return try configurationWithPackagedDefaults()
         }
         return try JSONDecoder.meetingAgent.decode(SpeechTranscriptionConfiguration.self, from: data)
     }
@@ -276,5 +282,37 @@ public final class SpeechTranscriptionConfigurationStore {
     public func save(_ configuration: SpeechTranscriptionConfiguration) throws {
         let data = try JSONEncoder.meetingAgent.encode(configuration)
         userDefaults.set(data, forKey: key)
+    }
+
+    private func configurationWithPackagedDefaults() throws -> SpeechTranscriptionConfiguration {
+        var configuration = SpeechTranscriptionConfiguration.default
+        guard let packagedDefaultsURL else {
+            return configuration
+        }
+        let data = try Data(contentsOf: packagedDefaultsURL)
+        let defaults = try JSONDecoder.meetingAgent.decode(PackagedSpeechConfigurationDefaults.self, from: data)
+        configuration.openRouterAPIKey = defaults.openRouterAPIKey
+        configuration.deepgramAPIKey = defaults.deepgramAPIKey
+        return configuration
+    }
+}
+
+private struct PackagedSpeechConfigurationDefaults: Decodable {
+    let openRouterAPIKey: String?
+    let deepgramAPIKey: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        openRouterAPIKey = SpeechTranscriptionConfiguration.normalized(
+            try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey)
+        )
+        deepgramAPIKey = SpeechTranscriptionConfiguration.normalized(
+            try container.decodeIfPresent(String.self, forKey: .deepgramAPIKey)
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case openRouterAPIKey
+        case deepgramAPIKey
     }
 }

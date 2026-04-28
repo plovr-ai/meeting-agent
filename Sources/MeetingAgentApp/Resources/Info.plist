@@ -24,6 +24,8 @@
     <string>14.2</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Meeting Agent needs system audio recording access to capture meeting audio from meeting apps for transcription and summaries.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Meeting Agent needs microphone access to capture meeting audio for transcription and summaries.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

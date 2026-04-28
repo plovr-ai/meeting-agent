@@ -177,6 +177,62 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(loaded.deepgramAPIKey, "deepgram-secret")
     }
 
+    func testConfigurationStoreAppliesPackagedDefaultAPIKeysWhenNoUserSettingsExist() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let defaultsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("packaged-defaults-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: defaultsURL) }
+        try """
+        {
+          "openRouterAPIKey": " packaged-openrouter-key ",
+          "deepgramAPIKey": " packaged-deepgram-key "
+        }
+        """.write(to: defaultsURL, atomically: true, encoding: .utf8)
+        let store = SpeechTranscriptionConfigurationStore(
+            userDefaults: userDefaults,
+            packagedDefaultsURL: defaultsURL
+        )
+
+        let loaded = try store.load()
+
+        XCTAssertEqual(loaded.openRouterAPIKey, "packaged-openrouter-key")
+        XCTAssertEqual(loaded.deepgramAPIKey, "packaged-deepgram-key")
+    }
+
+    func testConfigurationStoreDoesNotOverridePersistedUserAPIKeysWithPackagedDefaults() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let defaultsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("packaged-defaults-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: defaultsURL) }
+        try """
+        {
+          "openRouterAPIKey": "packaged-openrouter-key",
+          "deepgramAPIKey": "packaged-deepgram-key"
+        }
+        """.write(to: defaultsURL, atomically: true, encoding: .utf8)
+        let store = SpeechTranscriptionConfigurationStore(
+            userDefaults: userDefaults,
+            packagedDefaultsURL: defaultsURL
+        )
+        try store.save(SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            openRouterAPIKey: "user-openrouter-key",
+            deepgramAPIKey: "user-deepgram-key"
+        ))
+
+        let loaded = try store.load()
+
+        XCTAssertEqual(loaded.openRouterAPIKey, "user-openrouter-key")
+        XCTAssertEqual(loaded.deepgramAPIKey, "user-deepgram-key")
+    }
+
     func testConfigurationDecodesWhenRealtimeAPIKeyIsAbsent() throws {
         let json = """
         {
