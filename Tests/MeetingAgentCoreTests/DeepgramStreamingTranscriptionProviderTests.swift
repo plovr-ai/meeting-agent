@@ -210,9 +210,60 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active"])
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
         XCTAssertEqual(document.segments.map(\.text), ["hello world"])
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
+    func testStreamingProviderAppendsSeparateFinalSegmentsWithoutWordTimings() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-no-words-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let session = FakeDeepgramStreamingSession()
+        let client = FakeDeepgramStreamingClient(session: session)
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 48_000,
+            channelCount: 1
+        ))
+
+        session.yieldJSON("""
+        {
+          "is_final": true,
+          "channel": {
+            "alternatives": [
+              { "transcript": "first final", "confidence": 0.9, "words": [] }
+            ]
+          }
+        }
+        """)
+        session.yieldJSON("""
+        {
+          "is_final": true,
+          "channel": {
+            "alternatives": [
+              { "transcript": "second final", "confidence": 0.9, "words": [] }
+            ]
+          }
+        }
+        """)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        transcriber.finish()
+
+        let document = try TranscriptFileWriter.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.segments.map(\.text), ["first final", "second final"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true, true])
     }
 
     func testStreamingResponseKeepsStableIDWhenInterimWordEndTimeChanges() throws {
