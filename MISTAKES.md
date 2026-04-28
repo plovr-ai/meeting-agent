@@ -189,3 +189,19 @@ Await the provider call using local immutable inputs, then mutate the actor-isol
 When a helper both awaits and mutates actor-owned state, split it into an async value-producing step and a synchronous actor mutation step.
 
 ---
+
+## [35] Update scheduler predicates when preserving visible fallback state
+
+**Date**: 2026-04-28
+**Category**: logic-error
+
+### What went wrong
+The first stable caption translation fix preserved the old translated text during same-speaker merging, but the translation scheduler still required pending turns to have empty translated text before requesting the updated full-turn translation.
+
+### Correct approach
+Use the semantic translation key and in-flight state to decide whether a pending turn needs translation; do not use visible fallback text emptiness as the scheduling gate.
+
+### How to avoid
+When preserving old UI state during async refreshes, audit every downstream predicate that previously treated empty state as the only signal for pending work.
+
+---
