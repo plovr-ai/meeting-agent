@@ -5,6 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 EXECUTABLE_NAME="MeetingAgentApp"
 APP_BUNDLE="$REPO_ROOT/dist/MeetingAgent.app"
+ARCHIVE_PATH="$REPO_ROOT/dist/MeetingAgent.zip"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
@@ -22,6 +23,7 @@ cd "$REPO_ROOT"
 swift build -c release --product MeetingAgentApp
 
 rm -rf "$APP_BUNDLE"
+rm -f "$ARCHIVE_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$RELEASE_EXECUTABLE" "$MACOS_DIR/$EXECUTABLE_NAME"
@@ -106,4 +108,11 @@ if command -v codesign >/dev/null 2>&1; then
     codesign --force --sign - "$APP_BUNDLE"
 fi
 
+if command -v xattr >/dev/null 2>&1; then
+    xattr -cr "$APP_BUNDLE"
+fi
+
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"
+
 echo "Packaged $APP_BUNDLE"
+echo "Created distributable archive $ARCHIVE_PATH"

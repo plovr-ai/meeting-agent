@@ -16,6 +16,7 @@ final class ScaffoldTests: XCTestCase {
 
         XCTAssertTrue(script.contains("swift build -c release --product MeetingAgentApp"))
         XCTAssertTrue(script.contains("dist/MeetingAgent.app"))
+        XCTAssertTrue(script.contains("dist/MeetingAgent.zip"))
         XCTAssertTrue(script.contains("Contents/MacOS"))
         XCTAssertTrue(script.contains("Contents/Resources"))
         XCTAssertTrue(script.contains("Sources/MeetingAgentApp/Resources/Info.plist"))
@@ -24,6 +25,8 @@ final class ScaffoldTests: XCTestCase {
         XCTAssertTrue(script.contains("openrouter_api_key"))
         XCTAssertTrue(script.contains("Embedded default credentials for:"))
         XCTAssertTrue(script.contains("PkgInfo"))
+        XCTAssertTrue(script.contains("ditto -c -k --sequesterRsrc --keepParent"))
+        XCTAssertTrue(script.contains("xattr -cr"))
     }
 
     func testAppInfoPlistContainsBundleMetadataAndPermissions() throws {
