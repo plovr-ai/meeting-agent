@@ -264,8 +264,10 @@ public struct LiveCaptionStore: Equatable {
             targetLocale: targetLocale,
             isFinal: segment.isFinal,
             captionHealth: .live,
-            translationHealth: segment.isFinal ? .pending : .idle,
-            createdAt: segment.createdAt
+            translationHealth: .pending,
+            createdAt: segment.createdAt,
+            chunkState: segment.isFinal ? .frozen : .draft,
+            translationRevision: 1
         )
         if let representedIndex = turns.firstIndex(where: { $0.sourceSegmentIDs.contains(segment.id) }),
            turns[representedIndex].sourceSegmentIDs.count > 1 {
@@ -277,6 +279,9 @@ public struct LiveCaptionStore: Equatable {
             if previousTurn.originalText == turn.originalText {
                 updated.translatedText = previousTurn.translatedText
                 updated.translationHealth = previousTurn.translationHealth
+                updated.translationRevision = previousTurn.translationRevision
+            } else {
+                updated.translationRevision = previousTurn.translationRevision + 1
             }
             turns[index] = updated
             return updated
@@ -303,6 +308,10 @@ public struct LiveCaptionStore: Equatable {
         }
         turns.append(turn)
         return turn
+    }
+
+    public mutating func removeNonFinalTurnsNotIn(segmentIDs: Set<String>) {
+        turns.removeAll { !$0.isFinal && !segmentIDs.contains($0.sourceSegmentID) }
     }
 
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {

@@ -202,6 +202,53 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
+    func testUpsertFinalSegmentReplacesCoveredDeepgramInterimsEvenWhenTextDrifts() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-4.97",
+            speaker: speaker,
+            startTimeSeconds: 4.97,
+            endTimeSeconds: 7.85,
+            text: "You I think you selected a female. What was",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-13.1",
+            speaker: speaker,
+            startTimeSeconds: 13.1,
+            endTimeSeconds: 17.18,
+            text: "just just go to settings Yes. And just have it use your own voice. Absolutely.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            speaker: speaker,
+            startTimeSeconds: 0,
+            endTimeSeconds: 27.52,
+            text: "Like, you're really speaking in Spanish. It's incredible. Danny So Danny. You I think you selected a female voice. Maybe yeah. That's what I'm hearing. I'm hearing the female voice. So just just go to settings Yes. And just have it use your own voice. Absolutely.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-0.0"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
     func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")

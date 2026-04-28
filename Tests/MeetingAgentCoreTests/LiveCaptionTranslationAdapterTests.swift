@@ -29,7 +29,7 @@ final class LiveCaptionTranslationAdapterTests: XCTestCase {
         XCTAssertNil(store.turns.first?.translatedText)
     }
 
-    func testPartialCaptionSegmentDoesNotCallTranslationProvider() async throws {
+    func testPartialCaptionSegmentDoesNotCallTranslationProviderDirectly() async throws {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let turn = store.append(TranscriptSegment(id: "segment-1", text: "hel", language: "en-US", isFinal: false))
         let provider = FakeTextTranslationProvider(translations: ["segment-1": "你"])
@@ -39,7 +39,7 @@ final class LiveCaptionTranslationAdapterTests: XCTestCase {
 
         XCTAssertEqual(provider.translateCallCount, 0)
         XCTAssertNil(store.turns.first?.translatedText)
-        XCTAssertEqual(store.turns.first?.translationHealth, .idle)
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 }
 

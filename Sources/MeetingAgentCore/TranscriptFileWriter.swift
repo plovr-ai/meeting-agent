@@ -184,6 +184,11 @@ public final class TranscriptFileWriter {
     }
 
     private static func shouldReplaceExistingSegment(_ existing: TranscriptSegment, with incoming: TranscriptSegment) -> Bool {
+        if incoming.isFinal,
+           !existing.isFinal,
+           finalSegmentCoversInterim(incoming, existing) {
+            return true
+        }
         guard describesSameStreamingUtterance(existing, incoming) else { return false }
         if incoming.isFinal && !existing.isFinal {
             return true
@@ -203,6 +208,21 @@ public final class TranscriptFileWriter {
             return false
         }
         return true
+    }
+
+    private static func finalSegmentCoversInterim(_ final: TranscriptSegment, _ interim: TranscriptSegment) -> Bool {
+        guard final.sourceProvider == interim.sourceProvider,
+              speakersAreCompatible(final.speaker, interim.speaker),
+              let finalStart = final.startTimeSeconds,
+              let finalEnd = final.endTimeSeconds,
+              let interimStart = interim.startTimeSeconds,
+              let interimEnd = interim.endTimeSeconds
+        else {
+            return false
+        }
+        let tolerance = 0.25
+        return finalStart <= interimStart + tolerance
+            && finalEnd + tolerance >= interimEnd
     }
 
     private static func speakersAreCompatible(_ first: TranscriptSpeaker, _ second: TranscriptSpeaker) -> Bool {

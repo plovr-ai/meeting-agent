@@ -324,7 +324,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Confirm launch owner.")
         XCTAssertEqual(viewModel.liveCaptionTurns.last?.originalText, "partial")
         XCTAssertEqual(viewModel.liveCaptionTurns.last?.isFinal, false)
-        XCTAssertEqual(viewModel.liveCaptionTurns.last?.translationHealth, .idle)
+        XCTAssertEqual(viewModel.liveCaptionTurns.last?.translationHealth, .pending)
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.targetLocale, "zh-CN")
         XCTAssertEqual(translationFactoryCallCount, 1)
     }
@@ -576,6 +576,113 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.freezeReason, .speechFinal)
+    }
+
+    func testInterimDeepgramSegmentDisplaysWithDraftTranslationBeforeFinalArrives() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["dg-active": "临时翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-active",
+                text: "hello inter",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "临时翻译" }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello inter")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, false)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .draft)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+        XCTAssertEqual(provider.requestedSegmentTexts, [["hello inter"]])
+
+        provider.translations = ["dg-active": "最终翻译"]
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-active",
+                text: "hello interim final",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        viewModel.drainRecordingFrames()
+
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
+        XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello interim final")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
+        XCTAssertEqual(provider.requestedSegmentTexts, [["hello inter"], ["hello interim final"]])
+    }
+
+    func testFinalDeepgramSegmentRemovesCoveredInterimTurnsFromLiveCaptions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["deepgram-transcribe-stream-0.0": "最终翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "deepgram-transcribe-stream-4.97",
+                speaker: speaker,
+                startTimeSeconds: 4.97,
+                endTimeSeconds: 7.85,
+                text: "You I think you selected a female. What was",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: false,
+                timingSource: .precise
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.id), ["deepgram-transcribe-stream-4.97"])
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "deepgram-transcribe-stream-0.0",
+                speaker: speaker,
+                startTimeSeconds: 0,
+                endTimeSeconds: 27.52,
+                text: "Like, you're really speaking in Spanish. You I think you selected a female voice. Maybe yeah.",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: true,
+                timingSource: .precise
+            )
+        ])
+        viewModel.drainRecordingFrames()
+
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.id), ["deepgram-transcribe-stream-0.0"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.isFinal), [true])
     }
 
     func testCaptionTranslationRetriesWhenProviderBecomesAvailableAfterInitialDrain() async throws {

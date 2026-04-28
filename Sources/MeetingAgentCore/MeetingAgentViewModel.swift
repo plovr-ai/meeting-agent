@@ -858,6 +858,11 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionTurns = []
             return
         }
+        let currentSegmentIDs = Set(document.segments.map(\.id))
+        liveCaptionStore.removeNonFinalTurnsNotIn(segmentIDs: currentSegmentIDs)
+        processedLiveCaptionSegmentSignaturesByID = processedLiveCaptionSegmentSignaturesByID.filter {
+            currentSegmentIDs.contains($0.key)
+        }
         for segment in document.segments where segment.isFinal {
             let signatureSpeakerID: String
             if let speakerID = segment.speakerID {
@@ -902,8 +907,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func scheduleCaptionTextTranslationIfNeeded() {
         let draftCandidates = liveCaptionStore.turns.filter { turn in
-            guard turn.isFinal,
-                  turn.chunkState == .draft,
+            guard turn.chunkState == .draft,
                   turn.translationHealth == .pending,
                   shouldTranslateDraftCaption(turn),
                   draftTranslationInFlightByTurnID[turn.id] != turn.translationRevision

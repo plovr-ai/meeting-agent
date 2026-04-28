@@ -393,10 +393,14 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     }
 
     private func write(_ segment: TranscriptSegment) throws {
-        guard segment.isFinal else { return }
         let segment = stableFallbackSegment(segment)
+        guard segment.isFinal else {
+            try writer.upsert(segment)
+            return
+        }
         finalSegmentBuffer.append(segment)
         try writeFinalSegmentBuffer(markSpeechFinal: segment.speechFinal)
+        advanceFallbackSegmentIndexIfNeeded(for: segment)
         if segment.speechFinal {
             finalSegmentBuffer.removeAll()
         }
@@ -467,7 +471,6 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         let fallbackID = "\(segment.sourceProvider)-stream-active"
         guard segment.id == fallbackID else { return segment }
         let stableID = "\(fallbackID)-\(fallbackSegmentIndex)"
-        fallbackSegmentIndex += 1
         return TranscriptSegment(
             id: stableID,
             speaker: segment.speaker,
@@ -482,6 +485,12 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             createdAt: segment.createdAt,
             timingSource: segment.timingSource
         )
+    }
+
+    private func advanceFallbackSegmentIndexIfNeeded(for segment: TranscriptSegment) {
+        let fallbackID = "\(segment.sourceProvider)-stream-active-\(fallbackSegmentIndex)"
+        guard segment.id == fallbackID else { return }
+        fallbackSegmentIndex += 1
     }
 }
 

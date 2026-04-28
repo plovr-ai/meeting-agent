@@ -161,7 +161,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(segments.first?.isFinal, false)
     }
 
-    func testStreamingProviderIgnoresInterimSegmentsAndCommitsFinalOnFinish() async throws {
+    func testStreamingProviderPublishesInterimSegmentThenReplacesItWithFinal() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-interim-\(UUID().uuidString)")
             .appendingPathExtension("txt")
@@ -192,6 +192,15 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
           }
         }
         """)
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        var document = try TranscriptFileWriter.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
+        XCTAssertEqual(document.segments.map(\.text), ["hello"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [false])
+
         session.yieldJSON("""
         {
           "is_final": true,
@@ -206,7 +215,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        let document = try TranscriptFileWriter.readDocument(
+        document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
