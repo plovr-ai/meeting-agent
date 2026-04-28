@@ -48,10 +48,10 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
     func testURLSessionStreamingSessionSendsReceivesAndClosesSocket() async throws {
         let task = FakeDeepgramWebSocketTask()
         let session = URLSessionDeepgramStreamingSession(task: task, localeIdentifier: "en-US")
-        var received: [TranscriptSegment] = []
+        let received = TranscriptSegmentCollector()
         let receiveTask = Task {
             for await segment in session.segments {
-                received.append(segment)
+                await received.append(segment)
             }
         }
         try await Task.sleep(nanoseconds: 10_000_000)
@@ -73,7 +73,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         await session.close()
         await receiveTask.value
 
-        XCTAssertEqual(received.map(\.text), ["hello"])
+        let receivedTexts = await received.values().map(\.text)
+        XCTAssertEqual(receivedTexts, ["hello"])
         XCTAssertEqual(task.sentMessages.count, 2)
         if case .data(let data) = task.sentMessages.first {
             XCTAssertEqual(data, Data([1, 2, 3]))
@@ -188,6 +189,18 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.text), ["Hello team.", "Yes."])
         XCTAssertEqual(document.segments.map(\.startTimeSeconds), [0.0, 0.9])
         XCTAssertEqual(document.segments.map(\.endTimeSeconds), [0.8, 1.1])
+    }
+}
+
+private actor TranscriptSegmentCollector {
+    private var segments: [TranscriptSegment] = []
+
+    func append(_ segment: TranscriptSegment) {
+        segments.append(segment)
+    }
+
+    func values() -> [TranscriptSegment] {
+        segments
     }
 }
 
