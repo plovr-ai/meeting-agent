@@ -57,6 +57,27 @@ final class RunningProcessDiscoveryTests: XCTestCase {
         XCTAssertEqual(targets.map(\.displayName), ["Microsoft Edge", "Notes"])
     }
 
+    func testAutomaticallySelectsFeishuAsMeetingApp() {
+        let targets = [
+            AudioCaptureTarget(
+                processID: 200,
+                displayName: "Notes",
+                bundleIdentifier: "com.apple.Notes",
+                isAudioOutputActive: true
+            ),
+            AudioCaptureTarget(
+                processID: 201,
+                displayName: "Feishu",
+                bundleIdentifier: "com.electron.larkFeishu",
+                isAudioOutputActive: true
+            )
+        ]
+
+        let selected = RunningProcessDiscovery.automaticTarget(from: targets)
+
+        XCTAssertEqual(selected?.processID, 201)
+    }
+
     func testAutomaticallySelectsFirstPreferredTarget() {
         let targets = [
             AudioCaptureTarget(processID: 200, displayName: "Notes", bundleIdentifier: "com.apple.Notes"),

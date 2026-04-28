@@ -67,6 +67,20 @@ final class MeetingProcessMonitorTests: XCTestCase {
         XCTAssertEqual(active, [activeChrome])
     }
 
+    func testDetectsFeishuWhenAudioOutputIsActive() {
+        let feishu = AudioCaptureTarget(
+            processID: 321,
+            displayName: "Feishu",
+            bundleIdentifier: "com.electron.larkFeishu",
+            isAudioOutputActive: true
+        )
+        let monitor = MeetingProcessMonitor()
+
+        let candidates = monitor.detectNewCandidates(in: [feishu], isRecording: false)
+
+        XCTAssertEqual(candidates, [feishu])
+    }
+
     func testDetectsRunningProcessIDFromTargets() {
         let monitor = MeetingProcessMonitor()
         let zoom = AudioCaptureTarget(processID: 123, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
