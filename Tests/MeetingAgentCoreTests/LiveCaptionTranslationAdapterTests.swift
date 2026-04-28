@@ -28,11 +28,25 @@ final class LiveCaptionTranslationAdapterTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationHealth, .failed("translation error 2"))
         XCTAssertNil(store.turns.first?.translatedText)
     }
+
+    func testPartialCaptionSegmentDoesNotCallTranslationProvider() async throws {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let turn = store.append(TranscriptSegment(id: "segment-1", text: "hel", language: "en-US", isFinal: false))
+        let provider = FakeTextTranslationProvider(translations: ["segment-1": "你"])
+        let adapter = LiveCaptionTranslationAdapter(provider: provider)
+
+        try await adapter.translate(turn: turn, in: &store)
+
+        XCTAssertEqual(provider.translateCallCount, 0)
+        XCTAssertNil(store.turns.first?.translatedText)
+        XCTAssertEqual(store.turns.first?.translationHealth, .idle)
+    }
 }
 
-private struct FakeTextTranslationProvider: TextTranslationProvider {
+private final class FakeTextTranslationProvider: TextTranslationProvider {
     var translations: [String: String]
     var error: Error?
+    private(set) var translateCallCount = 0
 
     init(translations: [String: String] = [:], error: Error? = nil) {
         self.translations = translations
@@ -53,6 +67,7 @@ private struct FakeTextTranslationProvider: TextTranslationProvider {
     }
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        translateCallCount += 1
         if let error {
             throw error
         }

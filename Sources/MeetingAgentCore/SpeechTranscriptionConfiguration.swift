@@ -12,7 +12,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let defaultHostedTranscriptionProviderID = "openrouter-transcribe"
     public static let defaultHostedTranslationProviderID = "openrouter-translation"
     public static let defaultHostedTranscriptionModelID = "google/gemini-2.5-flash"
-    public static let defaultHostedTranslationModelID = "openai/gpt-4.1-mini"
+    public static let defaultHostedTranslationModelID = "google/gemini-2.5-flash"
     public static let defaultDeepgramTranscriptionProviderID = "deepgram-transcribe"
     public static let defaultDeepgramModelID = "nova-3"
     public static let defaultOpenAIRealtimeTranscriptionProviderID = "openai-realtime-transcribe"

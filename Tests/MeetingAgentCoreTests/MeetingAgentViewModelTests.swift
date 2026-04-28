@@ -286,6 +286,66 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.targetLocale, "zh-CN")
     }
 
+    func testDrainRecordingFramesTranslatesFinalCaptionsWithConfiguredOpenRouterModel() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "Alex 是上线负责人。"])
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        var requestedModels: [String] = []
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                transcriptionExecutionMode: .hosted,
+                translationExecutionMode: .hosted,
+                hostedTranscriptionProviderID: "deepgram-transcribe",
+                hostedTranslationProviderID: "openrouter-translation",
+                hostedTranslationModelID: "google/gemini-2.5-flash",
+                openRouterAPIKey: "settings-openrouter-key",
+                deepgramAPIKey: "settings-deepgram-key"
+            ),
+            captionTranslationProviderFactory: { configuration in
+                requestedModels.append(configuration.hostedTranslationModelID)
+                return provider
+            },
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+                text: "Alex is the launch owner.",
+                language: "en-US",
+                isFinal: true
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(requestedModels, ["google/gemini-2.5-flash"])
+        XCTAssertEqual(provider.requests.count, 1)
+        XCTAssertEqual(provider.requests.first?.sourceLocale, "en-US")
+        XCTAssertEqual(provider.requests.first?.targetLocale, "zh-CN")
+        XCTAssertEqual(provider.requests.first?.segmentIDs, ["segment-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "Alex 是上线负责人。")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+        XCTAssertEqual(viewModel.meetingProgressHealth.translation, .live)
+
+        viewModel.drainRecordingFrames()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(requestedModels, ["google/gemini-2.5-flash"])
+        XCTAssertEqual(provider.requests.count, 1)
+    }
+
     func testRefreshMeetingProgressAnalyzesLiveCaptionsAndWritesProgressArtifact() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
@@ -1451,6 +1511,55 @@ private final class ViewModelFakeTranscriberFactory {
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(localeIdentifier: configuration.localeIdentifier))
         return transcriber
+    }
+}
+
+private final class ViewModelFakeTextTranslationProvider: TextTranslationProvider {
+    struct Request: Equatable {
+        let sourceLocale: String
+        let targetLocale: String
+        let segmentIDs: [String]
+    }
+
+    var requests: [Request] = []
+    private let translations: [String: String]
+
+    init(translations: [String: String]) {
+        self.translations = translations
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "fake-view-model-translation",
+        displayName: "Fake View Model Translation",
+        capability: .textTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        requests.append(Request(
+            sourceLocale: options.sourceLocale,
+            targetLocale: options.targetLocale,
+            segmentIDs: transcript.segments.map(\.id)
+        ))
+        return TranslatedTranscript(
+            sourceLocale: options.sourceLocale,
+            targetLocale: options.targetLocale,
+            segments: transcript.segments.map { segment in
+                BilingualSubtitleSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    sourceText: segment.text,
+                    targetText: translations[segment.id] ?? "",
+                    status: .complete,
+                    providerChain: [descriptor.id]
+                )
+            },
+            provenance: PipelineProvenance(profileID: "fake-view-model-translation")
+        )
     }
 }
 

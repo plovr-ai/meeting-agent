@@ -99,6 +99,12 @@ struct SettingsView: View {
                 if usesOpenRouter {
                     SettingsCommandCenterPanel("OpenRouter") {
                         SecureField("OpenRouter API Key", text: openRouterAPIKeyBinding)
+
+                        Picker("Hosted Translation Model", selection: $draft.hostedTranslationModelID) {
+                            ForEach(BilingualPipelineFactory.hostedTranslationModelOptions) { model in
+                                Text(model.displayName).tag(model.id)
+                            }
+                        }
                     }
                 }
 
@@ -153,6 +159,9 @@ struct SettingsView: View {
         }
         .onChange(of: draft.hostedTranscriptionProviderID) { _, _ in
             ensureHostedTranscriptionModel()
+        }
+        .onChange(of: draft.hostedTranslationProviderID) { _, _ in
+            ensureHostedTranslationModel()
         }
     }
 
@@ -236,6 +245,14 @@ struct SettingsView: View {
         }
         draft.hostedTranscriptionModelID = BilingualPipelineFactory.hostedTranscriptionModelOptions.first?.id
             ?? SpeechTranscriptionConfiguration.defaultHostedTranscriptionModelID
+    }
+
+    private func ensureHostedTranslationModel() {
+        if BilingualPipelineFactory.hostedTranslationModelOptions.contains(where: { $0.id == draft.hostedTranslationModelID }) {
+            return
+        }
+        draft.hostedTranslationModelID = BilingualPipelineFactory.hostedTranslationModelOptions.first?.id
+            ?? SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
     }
 
     private var configurationStatusText: String {

@@ -20,8 +20,8 @@ public enum BilingualPipelineFactory {
     ]
 
     public static let hostedTranslationModelOptions: [ModelOption] = [
-        ModelOption(id: "openai/gpt-4.1-mini", displayName: "GPT-4.1 Mini"),
-        ModelOption(id: "google/gemini-2.5-flash", displayName: "Gemini 2.5 Flash")
+        ModelOption(id: "google/gemini-2.5-flash", displayName: "Gemini 2.5 Flash"),
+        ModelOption(id: "openai/gpt-4.1-mini", displayName: "GPT-4.1 Mini")
     ]
 
     public static let builtInProviderDescriptors: [ProviderDescriptor] = [
