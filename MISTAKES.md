@@ -173,3 +173,19 @@ Merged display turns need to track every represented source segment ID and rejec
 When changing append-only state into grouped state, add an idempotent replay test that appends the same source item again after grouping.
 
 ---
+
+## [33] Do not pass actor-isolated state inout across await
+
+**Date**: 2026-04-28
+**Category**: api-misuse
+
+### What went wrong
+The first view-model translation implementation tried to pass the main-actor-isolated live caption store as `inout` to an async adapter call, which Swift rejects because the actor-isolated property could be accessed across a suspension point.
+
+### Correct approach
+Await the provider call using local immutable inputs, then mutate the actor-isolated store after the await returns on the actor.
+
+### How to avoid
+When a helper both awaits and mutates actor-owned state, split it into an async value-producing step and a synchronous actor mutation step.
+
+---
