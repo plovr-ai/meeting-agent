@@ -202,6 +202,114 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
+    func testUpsertFinalSegmentReplacesPartiallyOverlappingInterimWithSameUtteranceText() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            speaker: speaker,
+            startTimeSeconds: 0,
+            endTimeSeconds: 10,
+            text: "this is a partially overlapping streaming utterance",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-5.0",
+            speaker: speaker,
+            startTimeSeconds: 5,
+            endTimeSeconds: 15,
+            text: "this is a partially overlapping streaming utterance",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-5.0"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
+    func testUpsertInterimSegmentReplacesPartiallyOverlappingInterimWithSameUtteranceText() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            speaker: speaker,
+            startTimeSeconds: 0,
+            endTimeSeconds: 10,
+            text: "this is a partially overlapping streaming utterance",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-5.0",
+            speaker: speaker,
+            startTimeSeconds: 5,
+            endTimeSeconds: 15,
+            text: "this is a partially overlapping streaming utterance",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-5.0"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [false])
+    }
+
+    func testUpsertInterimSegmentDoesNotDuplicateCoveredFinalWhenInterimArrivesAfterFinal() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "User A")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            speaker: speaker,
+            startTimeSeconds: 0,
+            endTimeSeconds: 4.1800003,
+            text: "Hear your voice, but it really uses your intonation. Your voice.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.08",
+            speaker: speaker,
+            startTimeSeconds: 0.08,
+            endTimeSeconds: 4.08,
+            text: "Hear your voice, but it really uses your intonation, your voice.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-0.0"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
     func testUpsertFinalSegmentReplacesCoveredDeepgramInterimsEvenWhenTextDrifts() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
@@ -246,6 +354,42 @@ final class TranscriptFileWriterTests: XCTestCase {
 
         let document = try TranscriptFileWriter.readDocument(from: jsonURL)
         XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-0.0"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+    }
+
+    func testUpsertFinalSegmentReplacesCoveredDeepgramInterimWhenSpeakerDrifts() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-8.92",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "User A"),
+            startTimeSeconds: 8.92,
+            endTimeSeconds: 12.12,
+            text: "and I actually couldn't believe that something like this existed because",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-9.0",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-1", label: "User B"),
+            startTimeSeconds: 9,
+            endTimeSeconds: 21.670002,
+            text: "and I actually couldn't believe that something like this existed because it reminded me of the United Nations meetings that I used to watch where there was an interpreter, and this was a human interpreter, but now that's being replaced with AI",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-9.0"])
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 

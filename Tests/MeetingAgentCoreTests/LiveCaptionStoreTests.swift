@@ -76,6 +76,20 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 
+    func testUpdatingDraftSegmentKeepsPreviousDraftTranslationWhileRetranslating() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = store.append(TranscriptSegment(id: "segment-1", text: "old draft", language: "en-US", isFinal: false))
+        store.attachTranslation("旧草稿翻译", toTurnID: "segment-1")
+
+        let updated = store.append(TranscriptSegment(id: "segment-1", text: "old draft with more text", language: "en-US", isFinal: false))
+
+        XCTAssertEqual(updated.originalText, "old draft with more text")
+        XCTAssertEqual(updated.translatedText, "旧草稿翻译")
+        XCTAssertEqual(updated.translationHealth, .pending)
+        XCTAssertEqual(store.turns.first?.translatedText, "旧草稿翻译")
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
+    }
+
     func testAppendingFinalSegmentFromSameSpeakerMergesIntoLatestTurn() {
         var store = LiveCaptionStore(sourceLocale: "zh-CN", targetLocale: "en-US")
         let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")

@@ -178,7 +178,12 @@ public final class TranscriptFileWriter {
     }
 
     private static func shouldKeepExistingSegment(_ existing: TranscriptSegment, insteadOf incoming: TranscriptSegment) -> Bool {
-        existing.isFinal
+        if existing.isFinal,
+           !incoming.isFinal,
+           finalSegmentCoversInterim(existing, incoming) {
+            return true
+        }
+        return existing.isFinal
             && !incoming.isFinal
             && describesSameStreamingUtterance(existing, incoming)
     }
@@ -212,7 +217,6 @@ public final class TranscriptFileWriter {
 
     private static func finalSegmentCoversInterim(_ final: TranscriptSegment, _ interim: TranscriptSegment) -> Bool {
         guard final.sourceProvider == interim.sourceProvider,
-              speakersAreCompatible(final.speaker, interim.speaker),
               let finalStart = final.startTimeSeconds,
               let finalEnd = final.endTimeSeconds,
               let interimStart = interim.startTimeSeconds,
@@ -221,8 +225,11 @@ public final class TranscriptFileWriter {
             return false
         }
         let tolerance = 0.25
-        return finalStart <= interimStart + tolerance
+        let coversTiming = finalStart <= interimStart + tolerance
             && finalEnd + tolerance >= interimEnd
+        guard coversTiming else { return false }
+        return speakersAreCompatible(final.speaker, interim.speaker)
+            || normalizedTextsOverlap(final.text, interim.text)
     }
 
     private static func speakersAreCompatible(_ first: TranscriptSpeaker, _ second: TranscriptSpeaker) -> Bool {

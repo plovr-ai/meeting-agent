@@ -281,6 +281,12 @@ public struct LiveCaptionStore: Equatable {
                 updated.translationHealth = previousTurn.translationHealth
                 updated.translationRevision = previousTurn.translationRevision
             } else {
+                if previousTurn.chunkState == .draft,
+                   turn.chunkState == .draft,
+                   let translatedText = previousTurn.translatedText,
+                   !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    updated.translatedText = translatedText
+                }
                 updated.translationRevision = previousTurn.translationRevision + 1
             }
             turns[index] = updated
