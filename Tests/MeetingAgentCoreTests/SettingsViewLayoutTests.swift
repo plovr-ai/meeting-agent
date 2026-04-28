@@ -6,8 +6,9 @@ final class SettingsViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/SettingsView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("Picker(\"Source Locale\""))
-        XCTAssertTrue(source.contains("Picker(\"Target Locale\""))
+        XCTAssertFalse(source.contains("Picker(\"Source Locale\""))
+        XCTAssertTrue(source.contains("Picker(\"Main Language\""))
+        XCTAssertFalse(source.contains("Picker(\"Target Locale\""))
         XCTAssertTrue(source.contains("Picker(\"Transcription Mode\""))
         XCTAssertTrue(source.contains("Picker(\"Local Transcription Provider\""))
         XCTAssertTrue(source.contains("Picker(\"Hosted Transcription Provider\""))

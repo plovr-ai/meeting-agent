@@ -37,13 +37,7 @@ struct SettingsView: View {
                 CommandCenterPageHeader(title: "Settings", subtitle: "Speech, transcription chain, and provider credentials")
 
                 SettingsCommandCenterPanel("Speech") {
-                    Picker("Source Locale", selection: $draft.localeIdentifier) {
-                        ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
-                            Text(localeIdentifier).tag(localeIdentifier)
-                        }
-                    }
-
-                    Picker("Target Locale", selection: $draft.targetLocaleIdentifier) {
+                    Picker("Main Language", selection: $draft.targetLocaleIdentifier) {
                         ForEach(localeIdentifiers, id: \.self) { localeIdentifier in
                             Text(localeIdentifier).tag(localeIdentifier)
                         }

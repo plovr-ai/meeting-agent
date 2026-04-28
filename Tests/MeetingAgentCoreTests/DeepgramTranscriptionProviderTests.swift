@@ -56,7 +56,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "audio/wav")
             XCTAssertEqual(request.httpBodyStreamData(), Data([0, 1, 2]))
             XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
-            XCTAssertEqual(request.url?.query?.contains("language=en-US"), true)
+            XCTAssertEqual(request.url?.query?.contains("language="), false)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -72,8 +72,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
 
         let data = try await client.transcribe(
             configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
-            wavURL: wavURL,
-            language: "en-US"
+            wavURL: wavURL
         )
 
         XCTAssertEqual(String(data: data, encoding: .utf8), #"{"ok":true}"#)
@@ -85,8 +84,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         do {
             _ = try await client.transcribe(
                 configuration: DeepgramTranscriptionConfiguration(apiKey: nil, model: "nova-3"),
-                wavURL: URL(fileURLWithPath: "/tmp/missing.wav"),
-                language: "en-US"
+                wavURL: URL(fileURLWithPath: "/tmp/missing.wav")
             )
             XCTFail("Expected unavailable configuration")
         } catch {
@@ -104,8 +102,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         do {
             _ = try await client.transcribe(
                 configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
-                wavURL: wavURL,
-                language: "en-US"
+                wavURL: wavURL
             )
             XCTFail("Expected invalid response")
         } catch {
@@ -129,8 +126,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         do {
             _ = try await client.transcribe(
                 configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
-                wavURL: wavURL,
-                language: "en-US"
+                wavURL: wavURL
             )
             XCTFail("Expected HTTP status error")
         } catch {
@@ -175,11 +171,11 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
 
         XCTAssertEqual(client.requests.first?.apiKey, "key")
         XCTAssertEqual(client.requests.first?.model, "nova-3")
-        XCTAssertEqual(client.requests.first?.language, "en-US")
         XCTAssertEqual(client.requests.first?.wavURL, wavURL)
         XCTAssertEqual(output.segments.first?.id, "utt-1")
         XCTAssertEqual(output.segments.first?.text, "hello team")
         XCTAssertEqual(output.segments.first?.speakerID, "deepgram-speaker-2")
+        XCTAssertNil(output.segments.first?.language)
         XCTAssertNil(output.segments.first?.speakerLabel)
         XCTAssertEqual(output.segments.first?.sourceProvider, "deepgram-transcribe")
     }
@@ -348,7 +344,6 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
     func testStreamingMapperHandlesNonFinalAndTranscriptFallback() {
         let nonFinal = DeepgramStreamingResponseMapper.segments(
             from: Data(#"{"is_final":false}"#.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram"
         )
         let fallback = DeepgramStreamingResponseMapper.segments(
@@ -362,7 +357,6 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram"
         )
         let blank = DeepgramStreamingResponseMapper.segments(
@@ -376,7 +370,6 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram"
         )
 
@@ -391,6 +384,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             from: Data("""
             {
               "is_final": true,
+              "metadata": { "detected_language": "ja" },
               "channel": {
                 "alternatives": [
                   {
@@ -405,12 +399,12 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram"
         )
 
         XCTAssertEqual(output.count, 1)
         XCTAssertEqual(output.first?.text, "hello team.")
+        XCTAssertEqual(output.first?.language, "ja")
         XCTAssertNil(output.first?.speakerID)
         XCTAssertEqual(output.first?.timingSource, .unavailable)
     }
@@ -457,7 +451,6 @@ private final class RecordingDeepgramClient: DeepgramTranscriptionClient {
     struct Request: Equatable {
         let apiKey: String
         let model: String
-        let language: String
         let wavURL: URL
     }
 
@@ -470,13 +463,11 @@ private final class RecordingDeepgramClient: DeepgramTranscriptionClient {
 
     func transcribe(
         configuration: DeepgramTranscriptionConfiguration,
-        wavURL: URL,
-        language: String
+        wavURL: URL
     ) async throws -> Data {
         requests.append(Request(
             apiKey: configuration.apiKey,
             model: configuration.model,
-            language: language,
             wavURL: wavURL
         ))
         return Data(response.utf8)
@@ -487,8 +478,7 @@ private final class RecordingDeepgramStreamingClient: DeepgramStreamingTranscrip
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int,
-        localeIdentifier: String
+        channelCount: Int
     ) async throws -> DeepgramStreamingTranscriptionSession {
         RecordingDeepgramStreamingSession()
     }

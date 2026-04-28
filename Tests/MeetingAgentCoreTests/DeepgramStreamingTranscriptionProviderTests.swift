@@ -13,8 +13,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let session = try await client.connect(
             configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
             sampleRate: 16_000.4,
-            channelCount: 0,
-            localeIdentifier: "zh-CN"
+            channelCount: 0
         )
 
         XCTAssertTrue(session is URLSessionDeepgramStreamingSession)
@@ -23,7 +22,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capturedRequest?.url), resolvingAgainstBaseURL: false))
         let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         XCTAssertEqual(query["model"], "nova-3")
-        XCTAssertEqual(query["language"], "zh-CN")
+        XCTAssertNil(query["language"])
         XCTAssertEqual(query["sample_rate"], "16000")
         XCTAssertEqual(query["channels"], "1")
         XCTAssertEqual(query["interim_results"], "true")
@@ -37,8 +36,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             _ = try await client.connect(
                 configuration: DeepgramTranscriptionConfiguration(apiKey: nil, model: "nova-3"),
                 sampleRate: 16_000,
-                channelCount: 1,
-                localeIdentifier: "en-US"
+                channelCount: 1
             )
             XCTFail("Expected unavailable configuration")
         } catch {
@@ -48,7 +46,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
 
     func testURLSessionStreamingSessionSendsReceivesAndClosesSocket() async throws {
         let task = FakeDeepgramWebSocketTask()
-        let session = URLSessionDeepgramStreamingSession(task: task, localeIdentifier: "en-US")
+        let session = URLSessionDeepgramStreamingSession(task: task)
         let received = TranscriptSegmentCollector()
         let receiveTask = Task {
             for await segment in session.segments {
@@ -131,7 +129,6 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(client.requests.first?.model, "nova-3")
         XCTAssertEqual(client.requests.first?.sampleRate, 48_000)
         XCTAssertEqual(client.requests.first?.channelCount, 1)
-        XCTAssertEqual(client.requests.first?.localeIdentifier, "en-US")
         XCTAssertEqual(session.sentFrames, [frame])
         let document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
@@ -385,7 +382,6 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
               }
             }
             """.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram-transcribe"
         )
 
@@ -453,7 +449,6 @@ private final class FakeDeepgramStreamingClient: DeepgramStreamingTranscriptionC
         let model: String
         let sampleRate: Double
         let channelCount: Int
-        let localeIdentifier: String
     }
 
     private(set) var requests: [Request] = []
@@ -466,15 +461,13 @@ private final class FakeDeepgramStreamingClient: DeepgramStreamingTranscriptionC
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int,
-        localeIdentifier: String
+        channelCount: Int
     ) async throws -> DeepgramStreamingTranscriptionSession {
         requests.append(Request(
             apiKey: configuration.apiKey,
             model: configuration.model,
             sampleRate: sampleRate,
-            channelCount: channelCount,
-            localeIdentifier: localeIdentifier
+            channelCount: channelCount
         ))
         return session
     }
@@ -508,7 +501,6 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
     func yieldJSON(_ json: String) {
         for segment in DeepgramStreamingResponseMapper.segments(
             from: Data(json.utf8),
-            localeIdentifier: "en-US",
             providerID: "deepgram-transcribe"
         ) {
             continuation?.yield(segment)

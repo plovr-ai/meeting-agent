@@ -40,8 +40,7 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
 public protocol DeepgramTranscriptionClient {
     func transcribe(
         configuration: DeepgramTranscriptionConfiguration,
-        wavURL: URL,
-        language: String
+        wavURL: URL
     ) async throws -> Data
 }
 
@@ -49,8 +48,7 @@ public protocol DeepgramStreamingTranscriptionClient {
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int,
-        localeIdentifier: String
+        channelCount: Int
     ) async throws -> DeepgramStreamingTranscriptionSession
 }
 
@@ -74,8 +72,7 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
 
     public func transcribe(
         configuration: DeepgramTranscriptionConfiguration,
-        wavURL: URL,
-        language: String
+        wavURL: URL
     ) async throws -> Data {
         guard case .available(let apiKey, let model) = configuration else {
             throw DeepgramTranscriptionError.unavailable("Deepgram configuration is unavailable")
@@ -83,7 +80,6 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
         var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "model", value: model),
-            URLQueryItem(name: "language", value: language),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "diarize", value: "true"),
@@ -125,8 +121,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
     public func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int,
-        localeIdentifier: String
+        channelCount: Int
     ) async throws -> DeepgramStreamingTranscriptionSession {
         guard case .available(let apiKey, let model) = configuration else {
             throw DeepgramTranscriptionError.unavailable("Deepgram configuration is unavailable")
@@ -136,7 +131,6 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         }
         components.queryItems = [
             URLQueryItem(name: "model", value: model),
-            URLQueryItem(name: "language", value: localeIdentifier),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate.rounded()))),
             URLQueryItem(name: "channels", value: String(max(1, channelCount))),
@@ -153,7 +147,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         let task = webSocketFactory(request)
-        let session = URLSessionDeepgramStreamingSession(task: task, localeIdentifier: localeIdentifier)
+        let session = URLSessionDeepgramStreamingSession(task: task)
         task.resume()
         return session
     }
@@ -170,12 +164,10 @@ extension URLSessionWebSocketTask: DeepgramWebSocketTask {}
 
 final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private let task: DeepgramWebSocketTask
-    private let localeIdentifier: String
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
 
-    init(task: DeepgramWebSocketTask, localeIdentifier: String) {
+    init(task: DeepgramWebSocketTask) {
         self.task = task
-        self.localeIdentifier = localeIdentifier
     }
 
     var segments: AsyncStream<TranscriptSegment> {
@@ -217,7 +209,6 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     private func yieldSegments(from data: Data) {
         for segment in DeepgramStreamingResponseMapper.segments(
             from: data,
-            localeIdentifier: localeIdentifier,
             providerID: "deepgram-transcribe"
         ) {
             continuation?.yield(segment)
@@ -228,7 +219,6 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
 public enum DeepgramStreamingResponseMapper {
     public static func segments(
         from data: Data,
-        localeIdentifier: String,
         providerID: String
     ) -> [TranscriptSegment] {
         guard let response = try? JSONDecoder.meetingAgent.decode(DeepgramStreamingResponse.self, from: data),
@@ -246,7 +236,7 @@ public enum DeepgramStreamingResponseMapper {
                 TranscriptSegment(
                     id: activeSegmentID(providerID: providerID, words: words),
                     text: text,
-                    language: localeIdentifier,
+                    language: response.metadata?.detectedLanguage,
                     sourceProvider: providerID,
                     isFinal: isFinal,
                     speechFinal: response.speechFinal == true,
@@ -268,7 +258,7 @@ public enum DeepgramStreamingResponseMapper {
                 startTimeSeconds: firstWord?.start,
                 endTimeSeconds: lastWord?.end,
                 text: text,
-                language: localeIdentifier,
+                language: response.metadata?.detectedLanguage,
                 sourceProvider: providerID,
                 isFinal: isFinal,
                 confidence: alternative.confidence,
@@ -355,8 +345,7 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
         let session = try await client.connect(
             configuration: configuration,
             sampleRate: context.sampleRate,
-            channelCount: context.channelCount,
-            localeIdentifier: context.localeIdentifier
+            channelCount: context.channelCount
         )
         let writer = try TranscriptFileWriter(url: context.transcriptURL)
         return DeepgramStreamingTranscriber(session: session, writer: writer)
@@ -469,16 +458,14 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
         }
         let data = try await client.transcribe(
             configuration: configuration,
-            wavURL: wavURL,
-            language: options.sourceLocale
+            wavURL: wavURL
         )
         let response = try JSONDecoder.meetingAgent.decode(DeepgramResponse.self, from: data)
-        return TranscriptDocument(segments: Self.segments(from: response, sourceLocale: options.sourceLocale, providerID: descriptor.id))
+        return TranscriptDocument(segments: Self.segments(from: response, providerID: descriptor.id))
     }
 
     private static func segments(
         from response: DeepgramResponse,
-        sourceLocale: String,
         providerID: String
     ) -> [TranscriptSegment] {
         let utteranceSegments = response.results?.utterances?.compactMap { utterance -> TranscriptSegment? in
@@ -491,7 +478,7 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
                 startTimeSeconds: utterance.start,
                 endTimeSeconds: utterance.end,
                 text: text,
-                language: sourceLocale,
+                language: response.metadata?.detectedLanguage,
                 sourceProvider: providerID,
                 confidence: utterance.confidence,
                 timingSource: utterance.start == nil && utterance.end == nil ? .unavailable : .precise
@@ -507,7 +494,7 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
             guard !text.isEmpty else { return nil }
             return TranscriptSegment(
                 text: text,
-                language: sourceLocale,
+                language: response.metadata?.detectedLanguage,
                 sourceProvider: providerID,
                 confidence: alternative.confidence
             )
@@ -542,7 +529,16 @@ public enum DeepgramTranscriptionError: Error, CustomStringConvertible {
 }
 
 private struct DeepgramResponse: Decodable {
+    let metadata: Metadata?
     let results: Results?
+
+    struct Metadata: Decodable {
+        let detectedLanguage: String?
+
+        enum CodingKeys: String, CodingKey {
+            case detectedLanguage = "detected_language"
+        }
+    }
 
     struct Results: Decodable {
         let channels: [Channel]?
@@ -571,12 +567,22 @@ private struct DeepgramResponse: Decodable {
 public struct DeepgramStreamingResponse: Decodable {
     let isFinal: Bool?
     let speechFinal: Bool?
+    let metadata: Metadata?
     let channel: Channel?
 
     enum CodingKeys: String, CodingKey {
         case isFinal = "is_final"
         case speechFinal = "speech_final"
+        case metadata
         case channel
+    }
+
+    struct Metadata: Decodable {
+        let detectedLanguage: String?
+
+        enum CodingKeys: String, CodingKey {
+            case detectedLanguage = "detected_language"
+        }
     }
 
     struct Channel: Decodable {
