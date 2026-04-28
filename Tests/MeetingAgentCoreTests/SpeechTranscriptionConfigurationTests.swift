@@ -12,6 +12,8 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
         XCTAssertEqual(configuration.hostedTranscriptionProviderID, "deepgram-transcribe")
         XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
+        XCTAssertEqual(configuration.hostedTranslationModelID, "google/gemini-2.5-flash")
+        XCTAssertEqual(BilingualPipelineFactory.hostedTranslationModelOptions.first?.id, "google/gemini-2.5-flash")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
     }
 

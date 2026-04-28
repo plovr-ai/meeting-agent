@@ -44,6 +44,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private var attachedRealtimeTranslationTurnIDs = Set<String>()
     private var realtimeTranslationAttachmentCountsByCaptionID: [String: Int] = [:]
+    private var captionTranslationKeysByTurnID: [String: String] = [:]
+    private var captionTranslationInFlightTurnIDs = Set<String>()
+    private let captionTranslationProviderFactory: (SpeechTranscriptionConfiguration) -> TextTranslationProvider?
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -60,6 +63,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(
             playbackSink: LocalAudioPlaybackSink()
         ),
+        captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
@@ -68,6 +72,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
         self.realtimeTranslationController = realtimeTranslationController
+        self.captionTranslationProviderFactory = captionTranslationProviderFactory
         self.processTargetsProvider = processTargetsProvider
         self.recorder.realtimeFrameConsumer = realtimeTranslationController
         if let speechConfiguration {
@@ -667,6 +672,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
         attachedRealtimeTranslationTurnIDs.removeAll()
         realtimeTranslationAttachmentCountsByCaptionID.removeAll()
+        captionTranslationKeysByTurnID.removeAll()
+        captionTranslationInFlightTurnIDs.removeAll()
         liveCaptionTurns = []
         meetingProgressHealth.caption = .idle
         meetingProgressHealth.translation = .idle
@@ -729,6 +736,65 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
         attachRealtimeTranslationsToLiveCaptions()
+        scheduleCaptionTextTranslationIfNeeded()
+    }
+
+    private func scheduleCaptionTextTranslationIfNeeded() {
+        let candidates = liveCaptionStore.turns.filter { turn in
+            guard turn.isFinal,
+                  turn.translationHealth == .pending,
+                  (turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            else {
+                return false
+            }
+            let key = captionTranslationKey(for: turn)
+            return captionTranslationKeysByTurnID[turn.id] != key
+                && !captionTranslationInFlightTurnIDs.contains(turn.id)
+        }
+        guard !candidates.isEmpty else { return }
+        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
+        for candidate in candidates {
+            captionTranslationInFlightTurnIDs.insert(candidate.id)
+        }
+        Task { [weak self, provider, candidates] in
+            await self?.translateCaptionTurns(candidates, using: provider)
+        }
+    }
+
+    private func translateCaptionTurns(_ turns: [LiveCaptionTurn], using provider: TextTranslationProvider) async {
+        for turn in turns {
+            defer {
+                captionTranslationInFlightTurnIDs.remove(turn.id)
+            }
+            let key = captionTranslationKey(for: turn)
+            let segment = TranscriptSegment(
+                id: turn.sourceSegmentID,
+                speaker: turn.speaker,
+                text: turn.originalText,
+                language: turn.sourceLocale,
+                isFinal: turn.isFinal,
+                createdAt: turn.createdAt
+            )
+            do {
+                let translated = try await provider.translate(
+                    transcript: TranscriptDocument(segments: [segment]),
+                    options: TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+                )
+                let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
+                liveCaptionStore.attachTranslation(translatedText, toTurnID: turn.id)
+                captionTranslationKeysByTurnID[turn.id] = key
+                liveCaptionTurns = liveCaptionStore.turns
+            } catch {
+                let nsError = error as NSError
+                liveCaptionStore.markTranslationFailed(forTurnID: turn.id, message: "\(nsError.domain) error \(nsError.code)")
+                liveCaptionTurns = liveCaptionStore.turns
+            }
+        }
+        updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func captionTranslationKey(for turn: LiveCaptionTurn) -> String {
+        "\(turn.sourceSegmentIDs.joined(separator: ","))|\(turn.sourceLocale)|\(turn.targetLocale)|\(turn.originalText)"
     }
 
     private func attachRealtimeTranslationsToLiveCaptions() {
@@ -773,6 +839,20 @@ public final class MeetingAgentViewModel: ObservableObject {
         case .idle:
             meetingProgressHealth.translation = .idle
         }
+    }
+
+    public nonisolated static func openRouterCaptionTranslationProvider(
+        for configuration: SpeechTranscriptionConfiguration
+    ) -> TextTranslationProvider? {
+        guard configuration.translationExecutionMode == .hosted,
+              configuration.hostedTranslationProviderID == SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID,
+              let apiKey = SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
+                ?? SpeechTranscriptionConfiguration.normalized(ProcessInfo.processInfo.environment["MEETING_AGENT_OPENROUTER_API_KEY"]),
+              let model = SpeechTranscriptionConfiguration.normalized(configuration.hostedTranslationModelID)
+        else {
+            return nil
+        }
+        return OpenRouterTextTranslationProvider(configuration: OpenRouterChatConfiguration(apiKey: apiKey, model: model))
     }
 
     private func configureMeetingProgressCoordinator() {

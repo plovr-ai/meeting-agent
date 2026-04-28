@@ -35,6 +35,10 @@ final class OpenRouterBilingualProviderTests: XCTestCase {
         XCTAssertEqual(output.segments.first?.sourceText, "hello")
         XCTAssertEqual(output.segments.first?.targetText, "你好")
         XCTAssertEqual(output.segments.first?.providerChain, ["openrouter-translation"])
+        let systemPrompt = try XCTUnwrap(client.requests.first?.messages.first?.content)
+        XCTAssertTrue(systemPrompt.contains("natural localized meeting language"))
+        XCTAssertTrue(systemPrompt.contains("Preserve speaker intent"))
+        XCTAssertTrue(systemPrompt.contains("Preserve IDs exactly"))
     }
 
     func testTranslationProviderMarksMissingAndBlankTranslationsAsSourceOnly() async throws {

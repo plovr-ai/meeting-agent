@@ -128,7 +128,7 @@ public struct OpenRouterTextTranslationProvider: TextTranslationProvider {
         return [
             OpenRouterChatMessage(
                 role: "system",
-                content: "Translate meeting transcript segments. Return only JSON with segments: [{id, targetText}]. Preserve IDs exactly."
+                content: "Translate meeting transcript segments into natural localized meeting language. Preserve speaker intent, decisions, names, numbers, and business terms. Return only JSON with segments: [{id, targetText}]. Preserve IDs exactly."
             ),
             OpenRouterChatMessage(
                 role: "user",

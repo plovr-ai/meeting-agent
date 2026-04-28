@@ -330,6 +330,7 @@ public struct LiveCaptionTranslationAdapter {
     }
 
     public func translate(turn: LiveCaptionTurn, in store: inout LiveCaptionStore) async throws {
+        guard turn.isFinal else { return }
         let segment = TranscriptSegment(
             id: turn.sourceSegmentID,
             speaker: turn.speaker,
