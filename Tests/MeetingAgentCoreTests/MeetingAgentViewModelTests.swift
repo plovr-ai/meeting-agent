@@ -259,6 +259,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
     func testDrainRecordingFramesRefreshesLiveCaptionTurnsFromStructuredTranscript() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        var translationFactoryCallCount = 0
         let viewModel = MeetingAgentViewModel(
             store: fixture.store,
             recorder: fixture.recorder,
@@ -269,6 +270,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
+            captionTranslationProviderFactory: { _ in
+                translationFactoryCallCount += 1
+                return nil
+            },
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -281,9 +286,13 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         viewModel.drainRecordingFrames()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["segment-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["segment-1", "partial"])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Confirm launch owner.")
+        XCTAssertEqual(viewModel.liveCaptionTurns.last?.originalText, "partial")
+        XCTAssertEqual(viewModel.liveCaptionTurns.last?.isFinal, false)
+        XCTAssertEqual(viewModel.liveCaptionTurns.last?.translationHealth, .idle)
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.targetLocale, "zh-CN")
+        XCTAssertEqual(translationFactoryCallCount, 1)
     }
 
     func testDrainRecordingFramesTranslatesFinalCaptionsWithConfiguredOpenRouterModel() async throws {

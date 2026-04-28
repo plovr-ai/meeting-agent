@@ -92,6 +92,28 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(TranscriptFileWriter.renderedTranscript(textURL: url, structuredURL: jsonURL), "User A:\nstructured text")
     }
 
+    func testUpsertReplacesExistingSegmentWithSameID() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+
+        try writer.upsert(TranscriptSegment(id: "active", text: "hello", isFinal: false))
+        try writer.upsert(TranscriptSegment(id: "active", text: "hello world", isFinal: true))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), ["active"])
+        XCTAssertEqual(document.segments.map(\.text), ["hello world"])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+        XCTAssertEqual(
+            try String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+            "User A:\nhello world"
+        )
+    }
+
     func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
