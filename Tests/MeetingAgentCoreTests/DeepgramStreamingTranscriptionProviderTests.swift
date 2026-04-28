@@ -214,7 +214,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
-    func testStreamingProviderBuffersFinalPiecesUntilSpeechFinal() async throws {
+    func testStreamingProviderPublishesGrowingFinalBufferBeforeSpeechFinal() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-buffer-\(UUID().uuidString)")
             .appendingPathExtension("txt")
@@ -262,7 +262,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         var document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments, [])
+        XCTAssertEqual(document.segments.map(\.text), ["my credit card number is two two"])
+        XCTAssertEqual(document.segments.map(\.speechFinal), [false])
 
         session.yieldJSON("""
         {
@@ -292,6 +293,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.text), ["my credit card number is two two two three three three."])
+        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-0.0"])
         XCTAssertEqual(document.segments.map(\.speakerID), ["deepgram-speaker-0"])
         XCTAssertEqual(document.segments.map(\.speechFinal), [true])
     }

@@ -510,6 +510,74 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requestedSegmentTexts.last, ["This is the first part \(longSecondPart)"])
     }
 
+    func testProvisionalDeepgramSegmentUpdatesSameDraftTurnBeforeSpeechFinal() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["dg-utterance": "第一版"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-utterance",
+                text: "Now what we can do is select",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第一版" }
+
+        let longerText = "Now what we can do is select German and hear what it sounds like in another automated voice while the interpreter keeps the meeting moving"
+        provider.translations = ["dg-utterance": "第二版"]
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-utterance",
+                text: longerText,
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第二版" }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .draft)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, longerText)
+        XCTAssertEqual(provider.requestedSegmentTexts.last, [longerText])
+
+        provider.translations = ["dg-utterance": "最终版"]
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-utterance",
+                text: longerText,
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.chunkState == .frozen
+                && viewModel.liveCaptionTurns.first?.translatedText == "最终版"
+        }
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.freezeReason, .speechFinal)
+    }
+
     func testCaptionTranslationRetriesWhenProviderBecomesAvailableAfterInitialDrain() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1340,6 +1408,16 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.speechConfiguration.openRouterAPIKey, "openrouter-key")
         XCTAssertEqual(viewModel.primaryChainPreflightResult.status, .available)
         XCTAssertEqual(viewModel.primaryChainPreflightSummary, "Primary chain ready")
+    }
+
+    func testOpenRouterCaptionTranslationProviderUsesPersistedHostedTranslationCredentials() {
+        var configuration = SpeechTranscriptionConfiguration.default
+        configuration.translationExecutionMode = .hosted
+        configuration.hostedTranslationProviderID = SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID
+        configuration.hostedTranslationModelID = "openai/gpt-4.1-mini"
+        configuration.openRouterAPIKey = "openrouter-key"
+
+        XCTAssertNotNil(MeetingAgentViewModel.openRouterCaptionTranslationProvider(for: configuration))
     }
 
     func testSaveSpeechConfigurationDerivesPipelineProfileFromStepModes() throws {

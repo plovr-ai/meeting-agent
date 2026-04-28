@@ -48,7 +48,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let realtimeTranslationController: RealtimeTranslationController
     private var liveCaptionStore = LiveCaptionStore()
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
-    private var processedLiveCaptionSegmentIDs = Set<String>()
+    private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private var attachedRealtimeTranslationTurnIDs = Set<String>()
@@ -798,7 +798,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             sourceLocale: speechConfiguration.localeIdentifier,
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
-        processedLiveCaptionSegmentIDs.removeAll()
+        processedLiveCaptionSegmentSignaturesByID.removeAll()
         attachedRealtimeTranslationTurnIDs.removeAll()
         realtimeTranslationAttachmentCountsByCaptionID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
@@ -858,8 +858,27 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionTurns = []
             return
         }
-        for segment in document.segments where segment.isFinal && !processedLiveCaptionSegmentIDs.contains(segment.id) {
-            processedLiveCaptionSegmentIDs.insert(segment.id)
+        for segment in document.segments where segment.isFinal {
+            let signatureSpeakerID: String
+            if let speakerID = segment.speakerID {
+                signatureSpeakerID = speakerID
+            } else {
+                signatureSpeakerID = ""
+            }
+            let signatureSpeakerLabel: String
+            if let speakerLabel = segment.speakerLabel {
+                signatureSpeakerLabel = speakerLabel
+            } else {
+                signatureSpeakerLabel = ""
+            }
+            let signature = [
+                segment.text,
+                segment.speechFinal ? "speechFinal" : "open",
+                signatureSpeakerID,
+                signatureSpeakerLabel
+            ].joined(separator: "\u{1F}")
+            guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
+            processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
             for update in liveCaptionChunker.append(segment) {
                 liveCaptionStore.upsert(update.turn)
             }

@@ -396,18 +396,23 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         guard segment.isFinal else { return }
         let segment = stableFallbackSegment(segment)
         finalSegmentBuffer.append(segment)
+        try writeFinalSegmentBuffer(markSpeechFinal: segment.speechFinal)
         if segment.speechFinal {
-            try flushFinalSegmentBuffer(markSpeechFinal: true)
+            finalSegmentBuffer.removeAll()
         }
     }
 
     private func flushFinalSegmentBuffer(markSpeechFinal: Bool) throws {
         guard !finalSegmentBuffer.isEmpty else { return }
+        try writeFinalSegmentBuffer(markSpeechFinal: markSpeechFinal)
+        finalSegmentBuffer.removeAll()
+    }
+
+    private func writeFinalSegmentBuffer(markSpeechFinal: Bool) throws {
         let committedSegments = committedUtteranceSegments(
             from: finalSegmentBuffer,
             markSpeechFinal: markSpeechFinal
         )
-        finalSegmentBuffer.removeAll()
         for segment in committedSegments {
             try writer.upsert(segment)
         }

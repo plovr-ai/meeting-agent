@@ -70,6 +70,53 @@ public struct LiveCaptionChunker: Equatable {
 
     private func mergedChunk(appending segment: TranscriptSegment) -> OpenChunk {
         if let openChunk {
+            if openChunk.turn.sourceSegmentIDs == [segment.id] {
+                let draft = LiveCaptionTurn(
+                    id: openChunk.turn.id,
+                    sourceSegmentID: segment.id,
+                    sourceSegmentIDs: [segment.id],
+                    speaker: segment.speaker,
+                    originalText: segment.text,
+                    translatedText: openChunk.turn.translatedText,
+                    sourceLocale: segment.language ?? sourceLocale,
+                    targetLocale: targetLocale,
+                    isFinal: true,
+                    captionHealth: .live,
+                    translationHealth: .pending,
+                    createdAt: segment.createdAt,
+                    chunkState: .draft,
+                    translationRevision: openChunk.turn.translationRevision + 1,
+                    freezeReason: nil
+                )
+                let startTimeSeconds: Double?
+                switch (openChunk.startTimeSeconds, segment.startTimeSeconds) {
+                case let (first?, second?):
+                    startTimeSeconds = min(first, second)
+                case let (first?, nil):
+                    startTimeSeconds = first
+                case let (nil, second?):
+                    startTimeSeconds = second
+                case (nil, nil):
+                    startTimeSeconds = nil
+                }
+                let endTimeSeconds: Double?
+                switch (openChunk.endTimeSeconds, segment.endTimeSeconds) {
+                case let (first?, second?):
+                    endTimeSeconds = max(first, second)
+                case let (first?, nil):
+                    endTimeSeconds = first
+                case let (nil, second?):
+                    endTimeSeconds = second
+                case (nil, nil):
+                    endTimeSeconds = nil
+                }
+                return OpenChunk(
+                    turn: draft,
+                    startTimeSeconds: startTimeSeconds,
+                    endTimeSeconds: endTimeSeconds
+                )
+            }
+
             let draft = LiveCaptionTurn(
                 id: openChunk.turn.id,
                 sourceSegmentID: segment.id,
@@ -168,7 +215,10 @@ public struct LiveCaptionChunker: Equatable {
 
     private func hasStrongPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return [".", "!", "?", "。", "！", "？"].contains { trimmed.hasSuffix($0) }
+        for suffix in [".", "!", "?", "。", "！", "？"] where trimmed.hasSuffix(suffix) {
+            return true
+        }
+        return false
     }
 
     private struct OpenChunk: Equatable {

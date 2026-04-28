@@ -97,6 +97,44 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(secondBlankUpdates.single?.turn.originalText, "first")
     }
 
+    func testUpdatingSameSegmentIDReplacesOpenDraftText() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select",
+            start: 2,
+            end: 3
+        ))
+
+        let draftUpdates = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select German and hear what it sounds like",
+            start: 1,
+            end: 4,
+            language: nil
+        ))
+
+        XCTAssertEqual(draftUpdates.single?.turn.sourceSegmentIDs, ["dg-utterance"])
+        XCTAssertEqual(draftUpdates.single?.turn.sourceLocale, "en-US")
+        XCTAssertEqual(
+            draftUpdates.single?.turn.originalText,
+            "Now what we can do is select German and hear what it sounds like"
+        )
+
+        let finalUpdates = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select German and hear what it sounds like",
+            speechFinal: true
+        ))
+
+        XCTAssertEqual(finalUpdates.map(\.turn.originalText), [
+            "Now what we can do is select German and hear what it sounds like",
+            "Now what we can do is select German and hear what it sounds like"
+        ])
+        XCTAssertEqual(finalUpdates.last?.turn.chunkState, .frozen)
+        XCTAssertEqual(finalUpdates.last?.turn.freezeReason, .speechFinal)
+    }
+
     func testMissingSegmentLanguageFallsBackToChunkerSourceLocale() {
         var chunker = LiveCaptionChunker(sourceLocale: "ja-JP", targetLocale: "en-US")
 
