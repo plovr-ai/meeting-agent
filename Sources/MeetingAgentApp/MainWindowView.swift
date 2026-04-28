@@ -70,6 +70,7 @@ struct MainWindowView: View {
                 .background(showSettings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             }
             .background(CommandCenterPalette.surface)
+            .frame(minWidth: 260, idealWidth: 300)
         } detail: {
             if showSettings {
                 SettingsView(
