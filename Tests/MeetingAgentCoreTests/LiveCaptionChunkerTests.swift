@@ -73,6 +73,31 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.last?.turn.freezeReason, .punctuation)
     }
 
+    func testInternalSentenceBoundaryFreezesLongDeepgramChunkBeforeNextSameSpeakerSegment() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minPunctuationCharacters: 80)
+        )
+
+        let firstUpdates = chunker.append(segment(
+            id: "deepgram-transcribe-stream-0.00",
+            text: "My name is Sherwin Chaffee, and I work at Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents",
+            start: 0,
+            end: 9.49
+        ))
+        let secondUpdates = chunker.append(segment(
+            id: "deepgram-transcribe-stream-9.49",
+            text: "But today, I'm very excited to share an agent that Microsoft has built",
+            start: 9.49,
+            end: 14.28
+        ))
+
+        XCTAssertEqual(firstUpdates.last?.turn.chunkState, .frozen)
+        XCTAssertEqual(firstUpdates.last?.turn.freezeReason, .punctuation)
+        XCTAssertEqual(secondUpdates.single?.turn.originalText, "But today, I'm very excited to share an agent that Microsoft has built")
+    }
+
     func testManualFlushFreezesOpenDraft() {
         var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = chunker.append(segment(id: "s1", text: "Still open"))

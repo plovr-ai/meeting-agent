@@ -215,7 +215,7 @@ public struct LiveCaptionChunker: Equatable {
 
     private func hasStrongPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        for suffix in [".", "!", "?", "。", "！", "？"] where trimmed.hasSuffix(suffix) {
+        for marker in [".", "!", "?", "。", "！", "？"] where trimmed.contains(marker) {
             return true
         }
         return false
