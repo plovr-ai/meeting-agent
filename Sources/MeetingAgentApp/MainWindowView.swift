@@ -868,18 +868,8 @@ private struct BilingualTranscriptRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
-                Text(turn.speaker.label ?? turn.speaker.identifier ?? "Speaker")
-                    .commandCenterMono()
+                speakerLabel
                 Spacer()
-                if let editSpeaker {
-                    Button {
-                        editSpeaker()
-                    } label: {
-                        Image(systemName: "person.crop.circle.badge.pencil")
-                    }
-                    .buttonStyle(CommandCenterIconButtonStyle())
-                    .help("Edit speaker")
-                }
                 if let editText {
                     Button {
                         editText()
@@ -927,6 +917,35 @@ private struct BilingualTranscriptRow: View {
                     .commandCenterMono()
                     .foregroundStyle(CommandCenterPalette.warning)
             }
+        }
+    }
+
+    private var speakerDisplayName: String {
+        turn.speaker.label ?? turn.speaker.identifier ?? "Speaker"
+    }
+
+    @ViewBuilder
+    private var speakerLabel: some View {
+        if let editSpeaker {
+            Menu {
+                Button("Edit name") {
+                    editSpeaker()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(speakerDisplayName)
+                        .commandCenterMono()
+                    Image(systemName: "chevron.down")
+                        .font(CommandCenterTypography.caption)
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .help("Edit speaker name")
+        } else {
+            Text(speakerDisplayName)
+                .commandCenterMono()
         }
     }
 }
