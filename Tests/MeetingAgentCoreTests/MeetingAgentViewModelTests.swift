@@ -71,6 +71,40 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRecording)
     }
 
+    func testStoppingRecordingFreezesOpenDraftCaptionForFinalTranslation() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 42, displayName: "Meet", bundleIdentifier: nil)
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "最终翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [target] }
+        )
+
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.selectedMeeting)
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "unfinished thought", language: "en-US")
+        ])
+
+        viewModel.drainRecordingFrames()
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .draft)
+
+        viewModel.stopRecording()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .frozen)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.freezeReason, .manualStop)
+        try await waitFor {
+            provider.requests.count == 2
+                && viewModel.liveCaptionTurns.first?.translatedText == "最终翻译"
+                && viewModel.liveCaptionTurns.first?.translationHealth == .live
+        }
+        XCTAssertEqual(provider.requestedSegmentTexts.last, ["unfinished thought"])
+    }
+
     func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

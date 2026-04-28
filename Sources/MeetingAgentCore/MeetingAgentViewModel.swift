@@ -371,6 +371,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
         }
+        freezeOpenLiveCaptionChunk(reason: .manualStop)
         Task { await stopRealtimeTranslation() }
         activeTarget = nil
         activeMeetingID = nil
@@ -669,6 +670,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
         }
+        freezeOpenLiveCaptionChunk(reason: .manualStop)
         statusText = "Target process ended: \(activeTarget.displayName)"
         self.activeTarget = nil
         activeMeetingID = nil
@@ -868,6 +870,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
         attachRealtimeTranslationsToLiveCaptions()
+        scheduleCaptionTextTranslationIfNeeded()
+    }
+
+    private func freezeOpenLiveCaptionChunk(reason: LiveCaptionFreezeReason) {
+        for update in liveCaptionChunker.flushOpenChunk(reason: reason) {
+            liveCaptionStore.upsert(update.turn)
+        }
+        liveCaptionTurns = liveCaptionStore.turns
         scheduleCaptionTextTranslationIfNeeded()
     }
 
