@@ -237,3 +237,19 @@ Use a stateful fallback ID in the streaming transcriber: keep one active fallbac
 When using upsert for streaming interim data, test both interim-to-final replacement and multiple final utterances that lack provider timing IDs.
 
 ---
+
+## [48] Apply preferred-target test lessons before writing new tests
+
+**Date**: 2026-04-28
+**Category**: test-mistake
+
+### What went wrong
+The first Feishu display-name sorting regression test used an ordering assertion that was too close to the existing preferred-target test mistake pattern, so manual review had to tighten it after implementation.
+
+### Correct approach
+When `MISTAKES.md` contains a relevant prior lesson, apply it before writing the new test rather than relying on review to catch the repeated pattern.
+
+### How to avoid
+Before adding tests in an area mentioned by `MISTAKES.md`, choose assertions that would fail without the intended behavior and document why.
+
+---
