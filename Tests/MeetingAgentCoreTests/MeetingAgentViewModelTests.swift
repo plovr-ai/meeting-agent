@@ -346,6 +346,85 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requests.count, 1)
     }
 
+    func testExpandingTranslatedCaptionKeepsVisibleTranslationUntilFullTurnTranslationCompletes() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "Alex")
+        let provider = ViewModelFakeTextTranslationProvider(
+            translations: [
+                "segment-1": "第一句",
+                "segment-2": "第一句 第二句"
+            ],
+            delayNanoseconds: 50_000_000
+        )
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                transcriptionExecutionMode: .hosted,
+                translationExecutionMode: .hosted,
+                hostedTranscriptionProviderID: "deepgram-transcribe",
+                hostedTranslationProviderID: "openrouter-translation",
+                openRouterAPIKey: "settings-openrouter-key",
+                deepgramAPIKey: "settings-deepgram-key"
+            ),
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: speaker,
+                text: "first",
+                language: "en-US",
+                isFinal: true
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: speaker,
+                text: "first",
+                language: "en-US",
+                isFinal: true
+            ),
+            TranscriptSegment(
+                id: "segment-2",
+                speaker: speaker,
+                text: "second",
+                language: "en-US",
+                isFinal: true
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first second")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .pending)
+
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(provider.requests.map(\.segmentIDs), [["segment-1"], ["segment-2"]])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句 第二句")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
+    }
+
     func testRefreshMeetingProgressAnalyzesLiveCaptionsAndWritesProgressArtifact() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
@@ -1523,9 +1602,11 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
 
     var requests: [Request] = []
     private let translations: [String: String]
+    private let delayNanoseconds: UInt64
 
-    init(translations: [String: String]) {
+    init(translations: [String: String], delayNanoseconds: UInt64 = 0) {
         self.translations = translations
+        self.delayNanoseconds = delayNanoseconds
     }
 
     let descriptor = ProviderDescriptor(
@@ -1545,6 +1626,9 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
             targetLocale: options.targetLocale,
             segmentIDs: transcript.segments.map(\.id)
         ))
+        if delayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: delayNanoseconds)
+        }
         return TranslatedTranscript(
             sourceLocale: options.sourceLocale,
             targetLocale: options.targetLocale,

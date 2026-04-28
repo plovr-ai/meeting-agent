@@ -108,7 +108,7 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.map(\.originalText), ["我们先看一下", "我有一个问题"])
     }
 
-    func testMergingSameSpeakerClearsStaleTranslation() {
+    func testMergingSameSpeakerPreservesTranslationWhileRetranslating() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User 1")
         _ = store.append(TranscriptSegment(
@@ -129,9 +129,9 @@ final class LiveCaptionStoreTests: XCTestCase {
         ))
 
         XCTAssertEqual(merged.originalText, "first second")
-        XCTAssertNil(merged.translatedText)
+        XCTAssertEqual(merged.translatedText, "第一句")
         XCTAssertEqual(merged.translationHealth, .pending)
-        XCTAssertNil(store.turns.first?.translatedText)
+        XCTAssertEqual(store.turns.first?.translatedText, "第一句")
         XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 

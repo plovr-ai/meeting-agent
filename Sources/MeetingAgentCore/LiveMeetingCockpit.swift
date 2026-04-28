@@ -280,7 +280,6 @@ public struct LiveCaptionStore: Equatable {
         merged.targetLocale = turn.targetLocale
         merged.isFinal = turn.isFinal
         merged.captionHealth = turn.captionHealth
-        merged.translatedText = nil
         merged.translationHealth = .pending
         merged.createdAt = turn.createdAt
         return merged
