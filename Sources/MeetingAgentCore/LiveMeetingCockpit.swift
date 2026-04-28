@@ -140,6 +140,47 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     }
 }
 
+public enum LiveCaptionDisplayState: Equatable {
+    case originalOnly(String)
+    case translated(primaryText: String, sourceText: String)
+    case pending(sourceText: String)
+    case failed(sourceText: String, message: String)
+
+    public init(turn: LiveCaptionTurn, secondLanguageEnabled: Bool) {
+        let originalText = turn.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translatedText = turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard secondLanguageEnabled else {
+            self = .originalOnly(originalText)
+            return
+        }
+        if !translatedText.isEmpty {
+            self = .translated(primaryText: translatedText, sourceText: originalText)
+            return
+        }
+        switch turn.translationHealth {
+        case .failed(let message), .degraded(let message):
+            self = .failed(sourceText: originalText, message: message)
+        case .pending:
+            self = .pending(sourceText: originalText)
+        case .idle, .live:
+            self = .originalOnly(originalText)
+        }
+    }
+
+    public static func isSecondLanguageEnabled(
+        sourceLocale: String,
+        targetLocale: String,
+        hasTranslatedText: Bool
+    ) -> Bool {
+        if hasTranslatedText {
+            return true
+        }
+        let source = sourceLocale.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let target = targetLocale.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !source.isEmpty && !target.isEmpty && source != target
+    }
+}
+
 public struct LiveCaptionStore: Equatable {
     public private(set) var turns: [LiveCaptionTurn] = []
     public private(set) var sourceLocale: String

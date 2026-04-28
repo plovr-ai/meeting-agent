@@ -34,10 +34,10 @@ struct MainWindowView: View {
                         ForEach(viewModel.meetings) { meeting in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(meeting.name)
-                                    .font(.headline)
+                                    .font(CommandCenterTypography.title)
                                     .foregroundStyle(CommandCenterPalette.text)
                                 Text(meeting.startedAt, style: .date)
-                                    .font(.caption)
+                                    .font(CommandCenterTypography.caption)
                                     .foregroundStyle(CommandCenterPalette.secondaryText)
                             }
                             .padding(.vertical, 4)
@@ -49,6 +49,8 @@ struct MainWindowView: View {
                     }
                 }
                 .scrollContentBackground(.hidden)
+                .background(CommandCenterPalette.surface)
+                .environment(\.colorScheme, .dark)
                 .foregroundStyle(CommandCenterPalette.text)
 
                 Spacer()
@@ -242,6 +244,8 @@ private struct MeetingDetailView: View {
                     actualTranscriptionSourceText: actualTranscriptionSourceText(for: meeting),
                     statusText: statusText,
                     isRecording: isRecording,
+                    sourceLocale: speechConfiguration.localeIdentifier,
+                    targetLocale: speechConfiguration.targetLocaleIdentifier,
                     liveCaptionTurns: liveCaptionTurns,
                     transcriptText: transcriptText(for: meeting),
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
@@ -393,6 +397,8 @@ private struct MeetingCommandCenterView: View {
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
+    let sourceLocale: String
+    let targetLocale: String
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
@@ -418,6 +424,8 @@ private struct MeetingCommandCenterView: View {
                 actualTranscriptionSourceText: actualTranscriptionSourceText,
                 statusText: statusText,
                 isRecording: isRecording,
+                sourceLocale: sourceLocale,
+                targetLocale: targetLocale,
                 liveCaptionTurns: liveCaptionTurns,
                 transcriptText: transcriptText,
                 transcriptionStatusText: transcriptionStatusText,
@@ -456,6 +464,8 @@ private struct TranscriptPaneView: View {
     let actualTranscriptionSourceText: String
     let statusText: String
     let isRecording: Bool
+    let sourceLocale: String
+    let targetLocale: String
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
@@ -467,20 +477,49 @@ private struct TranscriptPaneView: View {
     @State private var speakerLabelDraft = ""
     @State private var transcriptEditTarget: LiveCaptionTurn?
     @State private var transcriptTextDraft = ""
+    @State private var autoFollowsLatest = true
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    metadata
-                    recordingActions
-                    failureReason
-                    liveCaptions
-                    transcript
+            ScrollViewReader { proxy in
+                CommandCenterScrollView(content: {
+                    VStack(alignment: .leading, spacing: 22) {
+                        metadata
+                        recordingActions
+                        failureReason
+                        UnifiedTranscriptView(
+                            turns: liveCaptionTurns,
+                            transcriptText: transcriptText,
+                            isRecording: isRecording,
+                            sourceLocale: sourceLocale,
+                            targetLocale: targetLocale,
+                            autoFollowsLatest: autoFollowsLatest,
+                            returnToLatest: {
+                                returnToLatest(proxy: proxy)
+                            },
+                            pauseFollowing: {
+                                autoFollowsLatest = false
+                            },
+                            editSpeaker: { turn in
+                                speakerLabelDraft = turn.speaker.label ?? turn.speaker.identifier ?? ""
+                                speakerEditTarget = turn
+                            },
+                            editText: { turn in
+                                transcriptTextDraft = turn.originalText
+                                transcriptEditTarget = turn
+                            }
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(28)
+                })
+                .onChange(of: liveCaptionTurns.last?.id) { _, latestID in
+                    guard autoFollowsLatest, let latestID else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(latestID, anchor: .bottom)
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(28)
             }
         }
         .background(CommandCenterPalette.window)
@@ -512,6 +551,14 @@ private struct TranscriptPaneView: View {
         }
     }
 
+    private func returnToLatest(proxy: ScrollViewProxy) {
+        autoFollowsLatest = true
+        guard let latestID = liveCaptionTurns.last?.id else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            proxy.scrollTo(latestID, anchor: .bottom)
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 14) {
             HStack(spacing: 8) {
@@ -519,7 +566,7 @@ private struct TranscriptPaneView: View {
                     .fill(isRecording ? CommandCenterPalette.danger : CommandCenterPalette.mutedText)
                     .frame(width: 9, height: 9)
                 Text(isRecording ? "LIVE" : "READY")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .font(CommandCenterTypography.eyebrow)
                     .tracking(2)
             }
             .foregroundStyle(CommandCenterPalette.text)
@@ -532,8 +579,7 @@ private struct TranscriptPaneView: View {
                 .overlay(CommandCenterPalette.border)
 
             Text(meeting.name)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(CommandCenterPalette.text)
+                .commandCenterTitle()
                 .lineLimit(1)
 
             Spacer()
@@ -590,60 +636,8 @@ private struct TranscriptPaneView: View {
     private var failureReason: some View {
         if let failureReason = meeting.transcriptionFailureReason {
             Text(failureReason)
-                .font(.caption)
-                .foregroundStyle(CommandCenterPalette.danger)
+                .commandCenterCaption(CommandCenterPalette.danger)
                 .textSelection(.enabled)
-        }
-    }
-
-    private var transcript: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Transcript").commandCenterEyebrow()
-            Text(transcriptText)
-                .font(.system(size: 17))
-                .lineSpacing(6)
-                .foregroundStyle(CommandCenterPalette.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-    }
-
-    private var liveCaptions: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Live Captions").commandCenterEyebrow()
-                    Spacer()
-                    CommandCenterChip(
-                        title: liveCaptionTurns.isEmpty ? "Waiting for speech" : "\(liveCaptionTurns.count) turns",
-                        tint: liveCaptionTurns.isEmpty ? CommandCenterPalette.secondaryText : CommandCenterPalette.primary
-                    )
-                }
-
-                if liveCaptionTurns.isEmpty {
-                    Text(isRecording ? "Listening..." : "Recorded captions will appear here.")
-                        .foregroundStyle(CommandCenterPalette.secondaryText)
-                } else {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(liveCaptionTurns.suffix(8)) { turn in
-                            CaptionTurnView(
-                                turn: turn,
-                                editSpeaker: turn.speaker.identifier == nil ? nil : {
-                                    speakerLabelDraft = turn.speaker.label ?? turn.speaker.identifier ?? ""
-                                    speakerEditTarget = turn
-                                },
-                                editText: {
-                                    transcriptTextDraft = turn.originalText
-                                    transcriptEditTarget = turn
-                                }
-                            )
-                            if turn.id != liveCaptionTurns.suffix(8).last?.id {
-                                Divider().overlay(CommandCenterPalette.border)
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -684,14 +678,14 @@ private struct InsightPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
+            CommandCenterScrollView(background: CommandCenterPalette.surface, content: {
                 VStack(alignment: .leading, spacing: 16) {
                     phaseSummary
                     exports
                     summaryPanel
                 }
                 .padding(22)
-            }
+            })
         }
         .background(CommandCenterPalette.surface)
     }
@@ -767,7 +761,7 @@ private struct InsightPaneView: View {
                 if let summary {
                     if summary.status == .failed {
                         Text(summary.failureReason ?? "Summary generation failed.")
-                            .foregroundStyle(CommandCenterPalette.danger)
+                            .commandCenterCaption(CommandCenterPalette.danger)
                             .textSelection(.enabled)
                     } else {
                         SummaryListView(title: "Decisions", items: summary.decisions.map(\.description))
@@ -784,17 +778,97 @@ private struct InsightPaneView: View {
     }
 }
 
-private struct CaptionTurnView: View {
+private struct UnifiedTranscriptView: View {
+    let turns: [LiveCaptionTurn]
+    let transcriptText: String
+    let isRecording: Bool
+    let sourceLocale: String
+    let targetLocale: String
+    let autoFollowsLatest: Bool
+    let returnToLatest: () -> Void
+    let pauseFollowing: () -> Void
+    let editSpeaker: (LiveCaptionTurn) -> Void
+    let editText: (LiveCaptionTurn) -> Void
+
+    var body: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Transcript").commandCenterEyebrow()
+                    Spacer()
+                    if !autoFollowsLatest, !turns.isEmpty {
+                        Button("Return to latest") {
+                            returnToLatest()
+                        }
+                        .buttonStyle(CommandCenterActionButtonStyle())
+                    }
+                }
+
+                if turns.isEmpty {
+                    fallbackTranscript
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        ForEach(turns) { turn in
+                            BilingualTranscriptRow(
+                                turn: turn,
+                                secondLanguageEnabled: secondLanguageEnabled(for: turn),
+                                editSpeaker: turn.speaker.identifier == nil ? nil : {
+                                    editSpeaker(turn)
+                                },
+                                editText: {
+                                    editText(turn)
+                                }
+                            )
+                            .id(turn.id)
+                        }
+                    }
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8).onChanged { _ in
+                            if isRecording {
+                                pauseFollowing()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private var fallbackTranscript: some View {
+        Group {
+            if transcriptText.isEmpty {
+                Text(isRecording ? "Listening..." : "Recorded transcript will appear here.")
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+            } else {
+                Text(transcriptText)
+                    .font(CommandCenterTypography.transcript)
+                    .lineSpacing(6)
+                    .foregroundStyle(CommandCenterPalette.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func secondLanguageEnabled(for turn: LiveCaptionTurn) -> Bool {
+        LiveCaptionDisplayState.isSecondLanguageEnabled(
+            sourceLocale: turn.sourceLocale.isEmpty ? sourceLocale : turn.sourceLocale,
+            targetLocale: turn.targetLocale.isEmpty ? targetLocale : turn.targetLocale,
+            hasTranslatedText: !(turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        )
+    }
+}
+
+private struct BilingualTranscriptRow: View {
     let turn: LiveCaptionTurn
+    let secondLanguageEnabled: Bool
     var editSpeaker: (() -> Void)? = nil
     var editText: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
                 Text(turn.speaker.label ?? turn.speaker.identifier ?? "Speaker")
-                    .commandCenterMono()
-                Text(turn.isFinal ? "final" : "partial")
                     .commandCenterMono()
                 Spacer()
                 if let editSpeaker {
@@ -816,20 +890,42 @@ private struct CaptionTurnView: View {
                     .help("Correct caption")
                 }
             }
-            Text(turn.originalText)
-                .font(.system(size: 17, weight: .regular))
-                .lineSpacing(5)
-                .foregroundStyle(turn.isFinal ? CommandCenterPalette.text : CommandCenterPalette.secondaryText)
-                .textSelection(.enabled)
-            if let translatedText = turn.translatedText, !translatedText.isEmpty {
-                Text(translatedText)
-                    .font(.system(size: 15, weight: .regular))
+
+            switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled) {
+            case .translated(let primaryText, let sourceText):
+                Text(primaryText)
+                    .font(CommandCenterTypography.transcript)
+                    .lineSpacing(5)
+                    .foregroundStyle(CommandCenterPalette.text)
+                    .textSelection(.enabled)
+                Text(sourceText)
+                    .font(CommandCenterTypography.secondaryBody)
                     .lineSpacing(4)
                     .foregroundStyle(CommandCenterPalette.secondaryText)
                     .textSelection(.enabled)
-            } else if turn.translationHealth == .pending {
+            case .originalOnly(let text):
+                Text(text)
+                    .font(CommandCenterTypography.transcript)
+                    .lineSpacing(5)
+                    .foregroundStyle(CommandCenterPalette.text)
+                    .textSelection(.enabled)
+            case .pending(let sourceText):
+                Text(sourceText)
+                    .font(CommandCenterTypography.secondaryBody)
+                    .lineSpacing(4)
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                    .textSelection(.enabled)
                 Text("Translating...")
                     .commandCenterMono()
+            case .failed(let sourceText, _):
+                Text(sourceText)
+                    .font(CommandCenterTypography.secondaryBody)
+                    .lineSpacing(4)
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                    .textSelection(.enabled)
+                Text("translation unavailable")
+                    .commandCenterMono()
+                    .foregroundStyle(CommandCenterPalette.warning)
             }
         }
     }
@@ -845,18 +941,7 @@ private struct CaptionEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(title).commandCenterEyebrow()
-            TextEditor(text: $text)
-                .font(.system(size: 15))
-                .foregroundStyle(CommandCenterPalette.text)
-                .scrollContentBackground(.hidden)
-                .frame(width: 420, height: 130)
-                .padding(8)
-                .background(CommandCenterPalette.panelRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(CommandCenterPalette.border, lineWidth: 1)
-                )
+            CommandCenterTextEditor(text: $text)
             HStack {
                 Spacer()
                 Button("Cancel") {
@@ -884,7 +969,7 @@ private struct SummaryListView: View {
         if !visibleItems.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(CommandCenterTypography.sectionTitle)
                     .foregroundStyle(CommandCenterPalette.text)
                 ForEach(Array(visibleItems.enumerated()), id: \.offset) { _, item in
                     Text(item)

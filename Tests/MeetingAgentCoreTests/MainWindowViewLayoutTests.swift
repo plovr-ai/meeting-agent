@@ -137,29 +137,39 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertFalse(source.contains("LiveMeetingDashboardView"))
-        XCTAssertTrue(source.contains("CaptionTurnView"))
+        XCTAssertTrue(source.contains("UnifiedTranscriptView"))
         XCTAssertFalse(source.contains("GoalStatusPanel"))
         XCTAssertFalse(source.contains("SuggestedQuestionRow"))
         XCTAssertFalse(source.contains("LiveHealthChip"))
     }
 
-    func testTranscriptPaneShowsLiveCaptionStreamBeforeTranscript() throws {
+    func testTranscriptPaneUsesUnifiedTranscriptSurface() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        guard let liveCaptionsRange = source.range(of: "liveCaptions") else {
-            return XCTFail("Live caption stream is missing")
-        }
-        guard let transcriptRange = source.range(of: "transcript", options: [], range: liveCaptionsRange.upperBound..<source.endIndex) else {
-            return XCTFail("Transcript section is missing after live captions")
-        }
+        XCTAssertTrue(source.contains("UnifiedTranscriptView("))
+        XCTAssertTrue(source.contains("BilingualTranscriptRow("))
+        XCTAssertTrue(source.contains("LiveCaptionDisplayState("))
+        XCTAssertTrue(source.contains("ScrollViewReader"))
+        XCTAssertTrue(source.contains("LazyVStack"))
+        XCTAssertFalse(source.contains("Text(\"Live Captions\")"))
+        XCTAssertFalse(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
+        XCTAssertFalse(source.contains("Text(turn.isFinal ? \"final\" : \"partial\")"))
+        XCTAssertFalse(source.contains("\" turns\""))
+    }
 
-        XCTAssertLessThan(liveCaptionsRange.lowerBound, transcriptRange.lowerBound)
-        XCTAssertTrue(source.contains("Text(\"Live Captions\")"))
-        XCTAssertTrue(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
-        XCTAssertTrue(source.contains("CaptionTurnView("))
-        XCTAssertTrue(source.contains("turn: turn"))
+    func testUnifiedTranscriptPreservesFallbackAndQuietCorrectionControls() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("transcriptText.isEmpty"))
+        XCTAssertTrue(source.contains("returnToLatest"))
+        XCTAssertTrue(source.contains("translation unavailable"))
+        XCTAssertTrue(source.contains("Translating"))
+        XCTAssertTrue(source.contains("person.crop.circle.badge.pencil"))
+        XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
     }
 
     func testExportsPanelExposesImplementedExportActionsOnly() throws {
