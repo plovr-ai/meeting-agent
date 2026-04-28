@@ -51,6 +51,20 @@ public enum LivePipelineHealth: Codable, Equatable {
     }
 }
 
+public enum LiveCaptionChunkState: String, Codable, Equatable {
+    case draft
+    case frozen
+}
+
+public enum LiveCaptionFreezeReason: String, Codable, Equatable {
+    case speechFinal
+    case speakerChanged
+    case maxLength
+    case maxDuration
+    case punctuation
+    case manualStop
+}
+
 public struct MeetingKeyTerm: Codable, Equatable, Identifiable {
     public var id: String
     public var value: String
@@ -113,6 +127,9 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var captionHealth: LivePipelineHealth
     public var translationHealth: LivePipelineHealth
     public var createdAt: Date
+    public var chunkState: LiveCaptionChunkState
+    public var translationRevision: Int
+    public var freezeReason: LiveCaptionFreezeReason?
 
     public init(
         id: String? = nil,
@@ -126,7 +143,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         isFinal: Bool,
         captionHealth: LivePipelineHealth = .live,
         translationHealth: LivePipelineHealth = .pending,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        chunkState: LiveCaptionChunkState = .frozen,
+        translationRevision: Int = 0,
+        freezeReason: LiveCaptionFreezeReason? = nil
     ) {
         self.id = id ?? sourceSegmentID
         self.sourceSegmentID = sourceSegmentID
@@ -140,6 +160,9 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         self.captionHealth = captionHealth
         self.translationHealth = translationHealth
         self.createdAt = createdAt
+        self.chunkState = chunkState
+        self.translationRevision = translationRevision
+        self.freezeReason = freezeReason
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -155,6 +178,9 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         case captionHealth
         case translationHealth
         case createdAt
+        case chunkState
+        case translationRevision
+        case freezeReason
     }
 
     public init(from decoder: Decoder) throws {
@@ -171,6 +197,9 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         captionHealth = try container.decode(LivePipelineHealth.self, forKey: .captionHealth)
         translationHealth = try container.decode(LivePipelineHealth.self, forKey: .translationHealth)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+        chunkState = try container.decodeIfPresent(LiveCaptionChunkState.self, forKey: .chunkState) ?? .frozen
+        translationRevision = try container.decodeIfPresent(Int.self, forKey: .translationRevision) ?? 0
+        freezeReason = try container.decodeIfPresent(LiveCaptionFreezeReason.self, forKey: .freezeReason)
     }
 }
 
