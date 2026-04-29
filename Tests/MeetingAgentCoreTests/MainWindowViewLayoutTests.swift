@@ -48,6 +48,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
     }
 
+    func testTodayAgendaRefreshesCleanDraftWhenSelectedMeetingRecordChanges() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("@State private var recordBackedDraft = AgendaDraft()"))
+        XCTAssertTrue(source.contains("draft == recordBackedDraft"))
+        XCTAssertTrue(source.contains("resetDraftFromSelection()"))
+    }
+
     func testLiveWorkspaceShowsAgendaContextStrip() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
