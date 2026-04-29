@@ -136,6 +136,7 @@ struct MainWindowView: View {
                     statusText: viewModel.statusText,
                     isRecording: viewModel.isRecording,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
+                    recommendedQuestions: viewModel.recommendedQuestions,
                     stopRecording: {
                         Task {
                             do {
@@ -300,6 +301,7 @@ private struct MeetingDetailView: View {
     let statusText: String
     let isRecording: Bool
     let liveCaptionTurns: [LiveCaptionTurn]
+    let recommendedQuestions: [FollowUpQuestionSuggestion]
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
@@ -329,6 +331,7 @@ private struct MeetingDetailView: View {
                     transcriptText: transcriptText(for: meeting),
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
                     summary: summary(for: meeting),
+                    recommendedQuestions: recommendedQuestions,
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
                     exportTranscript: { exportTranscript(meeting) },
@@ -482,6 +485,7 @@ private struct MeetingCommandCenterView: View {
     let transcriptText: String
     let transcriptionStatusText: String
     let summary: MeetingSummary?
+    let recommendedQuestions: [FollowUpQuestionSuggestion]
     let stopRecording: () -> Void
     let copySummary: () -> Void
     let exportTranscript: () -> Void
@@ -530,6 +534,7 @@ private struct MeetingCommandCenterView: View {
                     meeting: meeting,
                     isRecording: isRecording,
                     summary: summary,
+                    recommendedQuestions: recommendedQuestions,
                     copySummary: copySummary,
                     exportTranscript: exportTranscript,
                     exportMeetingData: exportMeetingData,
@@ -884,6 +889,7 @@ private struct InsightPaneView: View {
     let meeting: MeetingRecord
     let isRecording: Bool
     let summary: MeetingSummary?
+    let recommendedQuestions: [FollowUpQuestionSuggestion]
     let copySummary: () -> Void
     let exportTranscript: () -> Void
     let exportMeetingData: () -> Void
@@ -894,6 +900,9 @@ private struct InsightPaneView: View {
         VStack(spacing: 0) {
             CommandCenterScrollView(background: CommandCenterPalette.surface, content: {
                 VStack(alignment: .leading, spacing: 16) {
+                    if !recommendedQuestions.isEmpty {
+                        RecommendedQuestionsPanel(questions: recommendedQuestions)
+                    }
                     phaseSummary
                     exports
                     summaryPanel
@@ -986,6 +995,29 @@ private struct InsightPaneView: View {
                 } else {
                     Text("No summary generated yet.")
                         .foregroundStyle(CommandCenterPalette.secondaryText)
+                }
+            }
+        }
+    }
+}
+
+private struct RecommendedQuestionsPanel: View {
+    let questions: [FollowUpQuestionSuggestion]
+
+    var body: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Recommended Questions").commandCenterEyebrow()
+                ForEach(Array(questions.prefix(2))) { question in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(question.chinese)
+                            .font(CommandCenterTypography.sectionTitle)
+                            .foregroundStyle(CommandCenterPalette.text)
+                            .textSelection(.enabled)
+                        Text(question.english)
+                            .commandCenterCaption(CommandCenterPalette.secondaryText)
+                            .textSelection(.enabled)
+                    }
                 }
             }
         }

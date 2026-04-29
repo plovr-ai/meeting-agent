@@ -118,6 +118,18 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Button(\"Regenerate Summary\")"))
     }
 
+    func testInsightsPaneShowsRecommendedQuestionsOnlyWhenAvailable() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("recommendedQuestions: viewModel.recommendedQuestions"))
+        XCTAssertTrue(source.contains("let recommendedQuestions: [FollowUpQuestionSuggestion]"))
+        XCTAssertTrue(source.contains("if !recommendedQuestions.isEmpty"))
+        XCTAssertTrue(source.contains("RecommendedQuestionsPanel(questions: recommendedQuestions)"))
+        XCTAssertTrue(source.contains("Text(\"Recommended Questions\").commandCenterEyebrow()"))
+        XCTAssertTrue(source.contains("ForEach(Array(questions.prefix(2)))"))
+        XCTAssertFalse(source.contains("No recommended questions"))
+    }
+
     func testMainWindowHasSettingsDestinationAndNoInlineConfigurationFields() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

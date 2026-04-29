@@ -29,16 +29,21 @@ final class DeterministicMeetingProgressAnalyzerTests: XCTestCase {
         XCTAssertEqual(state.status, .partiallyCovered)
         XCTAssertEqual(state.unresolvedItems, ["Confirm launch deadline"])
         XCTAssertEqual(state.suggestedQuestions.count, 1)
-        XCTAssertEqual(state.suggestedQuestions.first?.english, "Have we confirmed the deadline?")
+        XCTAssertEqual(state.suggestedQuestions.first?.english, "Could we clarify launch deadline?")
+        XCTAssertEqual(state.suggestedQuestions.first?.sourceObjectiveID, "deadline")
         XCTAssertFalse(state.suggestedQuestions.first?.chinese.isEmpty ?? true)
     }
 
-    func testBoundsSuggestedQuestionsToThree() async throws {
+    func testRecommendedQuestionsAreDecoupledFromRequiredQuestionsAndBoundedToTwo() async throws {
         let analyzer = DeterministicMeetingProgressAnalyzer()
         let goal = MeetingGoal(
             title: "Confirm launch plan",
-            objectives: [],
-            requiredQuestions: ["Q1?", "Q2?", "Q3?", "Q4?"],
+            objectives: [
+                MeetingObjective(id: "owner", title: "Confirm launch owner"),
+                MeetingObjective(id: "deadline", title: "Confirm launch deadline"),
+                MeetingObjective(id: "budget", title: "Confirm launch budget")
+            ],
+            requiredQuestions: ["This configured question should not be used"],
             expectedDecisions: [],
             keyTerms: []
         )
@@ -49,6 +54,55 @@ final class DeterministicMeetingProgressAnalyzerTests: XCTestCase {
             previousState: nil
         )
 
-        XCTAssertEqual(state.suggestedQuestions.count, 3)
+        XCTAssertEqual(state.suggestedQuestions.map(\.english), [
+            "Could we clarify launch owner?",
+            "Could we clarify launch deadline?"
+        ])
+    }
+
+    func testFallsBackToUncoveredAgendaTopicsWhenNoObjectivesExist() async throws {
+        let analyzer = DeterministicMeetingProgressAnalyzer()
+        let goal = MeetingGoal(
+            title: "Weekly operating review",
+            objectives: [],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+
+        let state = try await analyzer.analyze(
+            goal: goal,
+            agendaTopics: [
+                MeetingAgendaTopic(title: "Hiring plan"),
+                MeetingAgendaTopic(title: "Budget risk"),
+                MeetingAgendaTopic(title: "Launch readiness")
+            ],
+            recentCaptions: [LiveCaptionTurn(sourceSegmentID: "segment-1", originalText: "We already covered hiring plan.", isFinal: true)],
+            previousState: nil
+        )
+
+        XCTAssertEqual(state.suggestedQuestions.map(\.english), [
+            "Could we clarify Budget risk?",
+            "Could we clarify Launch readiness?"
+        ])
+    }
+
+    func testOmitsRecommendedQuestionsWithoutObjectiveOrTopicContext() async throws {
+        let analyzer = DeterministicMeetingProgressAnalyzer()
+        let goal = MeetingGoal(
+            title: "Weekly sync",
+            objectives: [],
+            requiredQuestions: ["Should not be shown"],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+
+        let state = try await analyzer.analyze(
+            goal: goal,
+            recentCaptions: [LiveCaptionTurn(sourceSegmentID: "segment-1", originalText: "hello", isFinal: true)],
+            previousState: nil
+        )
+
+        XCTAssertEqual(state.suggestedQuestions, [])
     }
 }
