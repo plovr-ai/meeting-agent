@@ -121,6 +121,9 @@ struct MainWindowView: View {
                     backToMeetings: {
                         destination = workspaceReturnDestination
                     },
+                    saveAgenda: { meetingID, update in
+                        try viewModel.saveAgenda(for: meetingID, update: update)
+                    },
                     stopRecording: {
                         Task {
                             do {
@@ -394,6 +397,7 @@ private struct MeetingDetailView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let backToMeetings: () -> Void
+    let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
@@ -424,6 +428,7 @@ private struct MeetingDetailView: View {
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
                     summary: summary(for: meeting),
                     recommendedQuestions: recommendedQuestions,
+                    saveAgenda: saveAgenda,
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
                     exportTranscript: { exportTranscript(meeting) },
@@ -576,6 +581,7 @@ private struct MeetingCommandCenterView: View {
     let transcriptionStatusText: String
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: () -> Void
     let exportTranscript: () -> Void
@@ -584,74 +590,125 @@ private struct MeetingCommandCenterView: View {
     let exportVTT: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
+    @State private var editAgendaTarget: MeetingRecord?
+    @State private var draft = AgendaDraft()
+    @State private var agendaRecordBackedDraft = AgendaDraft()
+    @State private var agendaSaveError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: backToMeetings) {
-                    Label("Back", systemImage: "chevron.left")
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                HStack {
+                    Button(action: backToMeetings) {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.plain)
+                    .font(CommandCenterTypography.button)
+                    .foregroundStyle(CommandCenterPalette.primary)
+
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .font(CommandCenterTypography.button)
-                .foregroundStyle(CommandCenterPalette.primary)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 10)
+                .background(CommandCenterPalette.surface)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(CommandCenterPalette.border)
+                        .frame(height: 1)
+                }
 
-                Spacer()
-            }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 10)
-            .background(CommandCenterPalette.surface)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(CommandCenterPalette.border)
-                    .frame(height: 1)
-            }
-
-            AgendaContextStrip(
-                meeting: meeting,
-                attendees: meeting.attendees,
-                topics: meeting.agendaTopics,
-                goalTitle: meeting.meetingGoal?.title
-            )
-
-            HStack(spacing: 0) {
-                TranscriptPaneView(
+                AgendaContextStrip(
                     meeting: meeting,
-                    pipelineDisplayName: pipelineDisplayName,
-                    transcriptionLinkText: transcriptionLinkText,
-                    transcriptionModelText: transcriptionModelText,
-                    preflightText: preflightText,
-                    actualTranscriptionSourceText: actualTranscriptionSourceText,
-                    statusText: statusText,
-                    isRecording: isRecording,
-                    sourceLocale: sourceLocale,
-                    targetLocale: targetLocale,
-                    liveCaptionTurns: liveCaptionTurns,
-                    transcriptText: transcriptText,
-                    transcriptionStatusText: transcriptionStatusText,
-                    stopRecording: stopRecording,
-                    retryTranscription: retryTranscription,
-                    updateSpeakerLabel: updateSpeakerLabel
+                    attendees: meeting.attendees,
+                    topics: meeting.agendaTopics,
+                    goalTitle: meeting.meetingGoal?.title,
+                    editAgenda: beginDetailAgendaEdit
                 )
-                .frame(minWidth: 520)
 
-                Divider()
-                    .overlay(CommandCenterPalette.border)
+                HStack(spacing: 0) {
+                    TranscriptPaneView(
+                        meeting: meeting,
+                        pipelineDisplayName: pipelineDisplayName,
+                        transcriptionLinkText: transcriptionLinkText,
+                        transcriptionModelText: transcriptionModelText,
+                        preflightText: preflightText,
+                        actualTranscriptionSourceText: actualTranscriptionSourceText,
+                        statusText: statusText,
+                        isRecording: isRecording,
+                        sourceLocale: sourceLocale,
+                        targetLocale: targetLocale,
+                        liveCaptionTurns: liveCaptionTurns,
+                        transcriptText: transcriptText,
+                        transcriptionStatusText: transcriptionStatusText,
+                        stopRecording: stopRecording,
+                        retryTranscription: retryTranscription,
+                        updateSpeakerLabel: updateSpeakerLabel
+                    )
+                    .frame(minWidth: 520)
 
-                InsightPaneView(
-                    meeting: meeting,
-                    isRecording: isRecording,
-                    summary: summary,
-                    recommendedQuestions: recommendedQuestions,
-                    copySummary: copySummary,
-                    exportTranscript: exportTranscript,
-                    exportMeetingData: exportMeetingData,
-                    exportSRT: exportSRT,
-                    exportVTT: exportVTT
+                    Divider()
+                        .overlay(CommandCenterPalette.border)
+
+                    InsightPaneView(
+                        meeting: meeting,
+                        isRecording: isRecording,
+                        summary: summary,
+                        recommendedQuestions: recommendedQuestions,
+                        copySummary: copySummary,
+                        exportTranscript: exportTranscript,
+                        exportMeetingData: exportMeetingData,
+                        exportSRT: exportSRT,
+                        exportVTT: exportVTT
+                    )
+                    .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                }
+            }
+
+            if editAgendaTarget != nil {
+                AgendaEditorView(
+                    meeting: editAgendaTarget,
+                    draft: $draft,
+                    saveError: agendaSaveError,
+                    save: saveDetailAgenda,
+                    cancel: cancelDetailAgendaEdit
                 )
-                .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                .frame(width: 360)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(CommandCenterPalette.border, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 12)
+                .padding(.top, 54)
+                .padding(.trailing, 18)
             }
         }
         .background(CommandCenterPalette.window)
+    }
+
+    private func beginDetailAgendaEdit() {
+        editAgendaTarget = meeting
+        draft = AgendaDraft(meeting: meeting)
+        agendaRecordBackedDraft = draft
+        agendaSaveError = nil
+    }
+
+    private func saveDetailAgenda() {
+        guard let meetingID = editAgendaTarget?.id else { return }
+        do {
+            try saveAgenda(meetingID, draft.update())
+            agendaRecordBackedDraft = draft
+            editAgendaTarget = nil
+            agendaSaveError = nil
+        } catch {
+            agendaSaveError = "Could not save agenda: \(error)"
+        }
+    }
+
+    private func cancelDetailAgendaEdit() {
+        draft = agendaRecordBackedDraft
+        editAgendaTarget = nil
+        agendaSaveError = nil
     }
 }
 
@@ -660,6 +717,7 @@ private struct AgendaContextStrip: View {
     let attendees: [MeetingAttendee]
     let topics: [MeetingAgendaTopic]
     let goalTitle: String?
+    let editAgenda: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -672,6 +730,10 @@ private struct AgendaContextStrip: View {
                 CommandCenterChip(title: "+\(topics.count - 3) topics")
             }
             Spacer()
+            Button(action: editAgenda) {
+                Label("Edit Agenda", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
             if let scheduledStartAt = meeting.scheduledStartAt {
                 CommandCenterChip(title: scheduledStartAt.formatted(date: .omitted, time: .shortened))
             }

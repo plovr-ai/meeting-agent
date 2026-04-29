@@ -547,7 +547,7 @@ private struct MeetingArtifactCard: View {
     }
 }
 
-private struct AgendaEditorView: View {
+struct AgendaEditorView: View {
     let meeting: MeetingRecord?
     @Binding var draft: AgendaDraft
     let saveError: String?
@@ -568,7 +568,7 @@ private struct AgendaEditorView: View {
                     Text("Selected Agenda")
                         .font(CommandCenterTypography.title)
                         .foregroundStyle(CommandCenterPalette.text)
-                    Text("Edit attendees, topics, time, and goal before opening the workspace.")
+                    Text("Edit attendees, topics, time, and goal for this meeting.")
                         .font(CommandCenterTypography.caption)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
 
@@ -657,7 +657,7 @@ private struct AgendaEditorView: View {
     }
 }
 
-private struct AgendaDraft: Equatable {
+struct AgendaDraft: Equatable {
     var name = ""
     var attendeesText = ""
     var topicsText = ""
