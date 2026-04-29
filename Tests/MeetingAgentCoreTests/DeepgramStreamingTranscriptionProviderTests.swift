@@ -131,9 +131,13 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-\(UUID().uuidString)")
             .appendingPathExtension("txt")
+        let performanceURL = transcriptURL.deletingLastPathComponent()
+            .appendingPathComponent("performance-\(UUID().uuidString)")
+            .appendingPathExtension("jsonl")
         defer {
             try? FileManager.default.removeItem(at: transcriptURL)
             try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+            try? FileManager.default.removeItem(at: performanceURL)
         }
         let session = FakeDeepgramStreamingSession()
         let client = FakeDeepgramStreamingClient(session: session)
@@ -146,7 +150,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             transcriptURL: transcriptURL,
             localeIdentifier: "en-US",
             sampleRate: 48_000,
-            channelCount: 1
+            channelCount: 1,
+            performanceEventLogger: PerformanceEventLogger(url: performanceURL)
         ))
         let frame = AudioFrame(pcm: Data([1, 2, 3, 4]), sampleRate: 48_000, channelCount: 1, timestampNanos: 10)
 
@@ -175,6 +180,9 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         )
         XCTAssertEqual(document.segments.first?.text, "hello live")
         XCTAssertEqual(document.segments.first?.sourceProvider, "deepgram-transcribe")
+        let performanceEvents = try performanceEventNames(at: performanceURL)
+        XCTAssertTrue(performanceEvents.contains("stt_segment_received"))
+        XCTAssertTrue(performanceEvents.contains("transcript_segment_written"))
     }
 
     func testStreamingResponseMapsInterimTranscriptToNonFinalSegment() throws {
@@ -654,6 +662,12 @@ private final class RecordingDeepgramRawResponseLogger: DeepgramRawResponseLogge
     func logRawResponse(_ data: Data, context: DeepgramRawResponseContext) {
         entries.append(Entry(data: data, context: context))
     }
+}
+
+private func performanceEventNames(at url: URL) throws -> [String] {
+    try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n")
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)).event }
 }
 
 private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {

@@ -41,22 +41,25 @@ public struct SpeechTranscriptionContext: Equatable {
     }
 }
 
-public struct SpeechTranscriptionStreamContext: Equatable {
+public struct SpeechTranscriptionStreamContext {
     public let transcriptURL: URL
     public let localeIdentifier: String
     public let sampleRate: Double
     public let channelCount: Int
+    public let performanceEventLogger: PerformanceEventLogger?
 
     public init(
         transcriptURL: URL,
         localeIdentifier: String,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger? = nil
     ) {
         self.transcriptURL = transcriptURL
         self.localeIdentifier = localeIdentifier
         self.sampleRate = sampleRate
         self.channelCount = channelCount
+        self.performanceEventLogger = performanceEventLogger
     }
 }
 
@@ -98,13 +101,15 @@ public enum StreamingSpeechTranscriberFactory {
         configuration: SpeechTranscriptionConfiguration,
         transcriptURL: URL,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger? = nil
     ) async throws -> AudioFrameTranscriber {
         let context = SpeechTranscriptionStreamContext(
             transcriptURL: transcriptURL,
             localeIdentifier: configuration.localeIdentifier,
             sampleRate: sampleRate,
-            channelCount: channelCount
+            channelCount: channelCount,
+            performanceEventLogger: performanceEventLogger
         )
         if configuration.usesDeepgram {
             return try await DeepgramStreamingSpeechTranscriptionProvider(

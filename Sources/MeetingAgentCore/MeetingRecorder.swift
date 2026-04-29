@@ -11,10 +11,11 @@ public final class MeetingRecorder {
     private var activeRecord: MeetingRecord?
     private let captureSessionFactory: () -> AudioCaptureSessionManaging
     private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
-    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int) async throws -> AudioFrameTranscriber
+    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber
     private var captureSession: AudioCaptureSessionManaging?
     private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
+    private var performanceEventLogger: PerformanceEventLogger?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
     private var isStartingTranscriber = false
@@ -31,12 +32,13 @@ public final class MeetingRecorder {
             wavWriterFactory: { url, sampleRate, channelCount in
                 try WavFileWriter(url: url, sampleRate: sampleRate, channelCount: channelCount)
             },
-            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount in
+            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount, performanceEventLogger in
                 try await StreamingSpeechTranscriberFactory.startTranscriber(
                     configuration: configuration,
                     transcriptURL: transcriptURL,
                     sampleRate: sampleRate,
-                    channelCount: channelCount
+                    channelCount: channelCount,
+                    performanceEventLogger: performanceEventLogger
                 )
             }
         )
@@ -46,7 +48,7 @@ public final class MeetingRecorder {
         store: MeetingStore,
         captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
-        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int) async throws -> AudioFrameTranscriber
+        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber
     ) {
         self.store = store
         self.captureSessionFactory = captureSessionFactory
@@ -67,6 +69,14 @@ public final class MeetingRecorder {
             startedAt: startedAt
         )
         activeRecord = stored.record
+        performanceEventLogger = stored.record.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
+        performanceEventLogger?.log(
+            "meeting_prepared",
+            metadata: [
+                "meetingID": stored.record.id.uuidString,
+                "targetDisplayName": target.displayName
+            ]
+        )
         diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
         state = .prepared(stored.record.id)
         return stored.record
@@ -81,6 +91,14 @@ public final class MeetingRecorder {
         }
 
         activeRecord = record
+        performanceEventLogger = record.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
+        performanceEventLogger?.log(
+            "meeting_prepared",
+            metadata: [
+                "meetingID": record.id.uuidString,
+                "targetDisplayName": target.displayName
+            ]
+        )
         diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
         state = .prepared(record.id)
         try store.save(record)
@@ -110,6 +128,17 @@ public final class MeetingRecorder {
         updatedRecord.transcriptionStatus = .transcribing
         updatedRecord.transcriptionFailureReason = nil
         activeRecord = updatedRecord
+        if performanceEventLogger == nil {
+            performanceEventLogger = updatedRecord.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
+        }
+        performanceEventLogger?.log(
+            "recording_starting",
+            metadata: [
+                "meetingID": updatedRecord.id.uuidString,
+                "transcriptionProviderID": updatedRecord.transcriptionProviderID,
+                "speechLocaleIdentifier": updatedRecord.speechLocaleIdentifier
+            ]
+        )
         pendingTranscriptionFrames = []
         isStartingTranscriber = false
         try store.save(updatedRecord)
@@ -125,6 +154,13 @@ public final class MeetingRecorder {
         diagnosticsTracker?.markRecording(
             sampleRate: session.outputSampleRate,
             channelCount: session.outputChannelCount
+        )
+        performanceEventLogger?.log(
+            "capture_started",
+            metadata: [
+                "sampleRate": String(session.outputSampleRate),
+                "channelCount": String(session.outputChannelCount)
+            ]
         )
 
         do {
@@ -153,7 +189,8 @@ public final class MeetingRecorder {
                     effectiveConfiguration,
                     transcriptURL,
                     session.outputSampleRate,
-                    session.outputChannelCount
+                    session.outputChannelCount,
+                    performanceEventLogger
                 )
                 transcriber = startedTranscriber
                 isStartingTranscriber = false
@@ -162,11 +199,16 @@ public final class MeetingRecorder {
                 isStartingTranscriber = false
                 pendingTranscriptionFrames = []
                 try markTranscriptionFailed("Speech recognition unavailable: \(error)")
+                performanceEventLogger?.log(
+                    "transcriber_start_failed",
+                    metadata: ["error": String(describing: error)]
+                )
                 transcriber = nil
             }
         }
 
         state = .recording(record.id)
+        performanceEventLogger?.log("recording_started")
     }
 
     public func drainFrames() throws {
@@ -174,6 +216,19 @@ public final class MeetingRecorder {
         let bufferBacklog = session.frameBuffer.count
         let droppedFrameCount = session.frameBuffer.droppedFrameCount
         let frames = session.frameBuffer.drain()
+        if let first = frames.first, let last = frames.last {
+            performanceEventLogger?.log(
+                "audio_frames_drained",
+                audioTimeSeconds: TimeInterval(last.timestampNanos) / 1_000_000_000,
+                metadata: [
+                    "frameCount": String(frames.count),
+                    "firstFrameTimestampNanos": String(first.timestampNanos),
+                    "lastFrameTimestampNanos": String(last.timestampNanos),
+                    "bufferBacklog": String(bufferBacklog),
+                    "droppedFrameCount": String(droppedFrameCount)
+                ]
+            )
+        }
         diagnosticsTracker?.record(
             frames: frames,
             bufferBacklog: bufferBacklog,
@@ -197,6 +252,10 @@ public final class MeetingRecorder {
         try writer?.close()
         let activeTranscriber = transcriber
         activeTranscriber?.finish()
+        performanceEventLogger?.log(
+            "recording_stopping",
+            metadata: ["endedReason": endedReason.rawValue]
+        )
         if let failureReason = activeTranscriber?.failureReason {
             try markTranscriptionFailed(failureReason)
         }
@@ -226,6 +285,15 @@ public final class MeetingRecorder {
         try diagnosticsTracker?.snapshot().writeIfPossible(to: record.diagnosticsURL)
         diagnosticsTracker = nil
         try store.save(record)
+        performanceEventLogger?.log(
+            "recording_stopped",
+            metadata: [
+                "meetingID": record.id.uuidString,
+                "endedReason": endedReason.rawValue,
+                "transcriptionStatus": record.transcriptionStatus.rawValue
+            ]
+        )
+        performanceEventLogger = nil
         activeRecord = nil
         state = .idle
         return record

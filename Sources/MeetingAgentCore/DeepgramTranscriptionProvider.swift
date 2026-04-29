@@ -411,13 +411,18 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
             channelCount: context.channelCount
         )
         let writer = try TranscriptFileWriter(url: context.transcriptURL)
-        return DeepgramStreamingTranscriber(session: session, writer: writer)
+        return DeepgramStreamingTranscriber(
+            session: session,
+            writer: writer,
+            performanceEventLogger: context.performanceEventLogger
+        )
     }
 }
 
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
     private let writer: TranscriptFileWriter
+    private let performanceEventLogger: PerformanceEventLogger?
     private let sendQueue: DeepgramFrameSendQueue
     private let failureLock = NSLock()
     private var receiveTask: Task<Void, Never>?
@@ -431,15 +436,25 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         return sendFailure
     }
 
-    init(session: DeepgramStreamingTranscriptionSession, writer: TranscriptFileWriter) {
+    init(
+        session: DeepgramStreamingTranscriptionSession,
+        writer: TranscriptFileWriter,
+        performanceEventLogger: PerformanceEventLogger? = nil
+    ) {
         self.session = session
         self.writer = writer
+        self.performanceEventLogger = performanceEventLogger
         self.sendQueue = DeepgramFrameSendQueue(session: session)
         self.sendQueue.onFailure = { [weak self] error in
             self?.recordSendFailure(error)
         }
         self.receiveTask = Task { [weak self, session] in
             for await segment in session.segments {
+                self?.performanceEventLogger?.logSegment(
+                    "stt_segment_received",
+                    segment: segment,
+                    metadata: ["sourceProvider": segment.sourceProvider]
+                )
                 try? self?.write(segment)
             }
             try? self?.flushFinalSegmentBuffer(markSpeechFinal: true)
@@ -462,6 +477,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         let segment = stableFallbackSegment(segment)
         guard segment.isFinal else {
             try writer.upsert(segment)
+            performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
             return
         }
         finalSegmentBuffer.append(segment)
@@ -485,6 +501,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         )
         for segment in committedSegments {
             try writer.upsert(segment)
+            performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
         }
     }
 

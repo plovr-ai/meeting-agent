@@ -6,6 +6,7 @@ private struct CaptionTranslationRequest {
     let key: String
     let isDraft: Bool
     let revision: Int
+    let performanceEventLogger: PerformanceEventLogger?
 }
 
 @MainActor
@@ -899,11 +900,22 @@ public final class MeetingAgentViewModel: ObservableObject {
             ].joined(separator: "\u{1F}")
             guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
             processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
+            currentPerformanceEventLogger()?.logSegment(
+                "caption_segment_ingested",
+                segment: segment,
+                metadata: ["path": "final"]
+            )
             for update in liveCaptionChunker.append(segment) {
                 liveCaptionStore.upsert(update.turn)
+                logCaptionTurnUpdate(update.turn)
             }
         }
         for segment in document.segments where !segment.isFinal {
+            currentPerformanceEventLogger()?.logSegment(
+                "caption_segment_ingested",
+                segment: segment,
+                metadata: ["path": "interim"]
+            )
             _ = liveCaptionStore.append(segment)
         }
         liveCaptionTurns = liveCaptionStore.turns
@@ -915,9 +927,73 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func freezeOpenLiveCaptionChunk(reason: LiveCaptionFreezeReason) {
         for update in liveCaptionChunker.flushOpenChunk(reason: reason) {
             liveCaptionStore.upsert(update.turn)
+            logCaptionTurnUpdate(update.turn, metadata: ["flushReason": reason.rawValue])
         }
         liveCaptionTurns = liveCaptionStore.turns
         scheduleCaptionTextTranslationIfNeeded()
+    }
+
+    private func currentPerformanceEventLogger() -> PerformanceEventLogger? {
+        selectedMeeting?.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
+    }
+
+    private func logCaptionTurnUpdate(
+        _ turn: LiveCaptionTurn,
+        metadata extraMetadata: [String: String] = [:]
+    ) {
+        var metadata = translationMetadata(for: turn, isDraft: turn.displayState == .draft)
+        metadata["displayState"] = String(describing: turn.displayState)
+        metadata["chunkState"] = String(describing: turn.chunkState)
+        metadata["translationRevision"] = String(turn.translationRevision)
+        for (key, value) in extraMetadata {
+            metadata[key] = value
+        }
+        currentPerformanceEventLogger()?.log(
+            "caption_turn_updated",
+            segmentID: turn.id,
+            isFinal: turn.isFinal,
+            textLength: turn.originalText.count,
+            metadata: metadata
+        )
+    }
+
+    private func logTranslationScheduled(
+        _ turn: LiveCaptionTurn,
+        isDraft: Bool,
+        logger: PerformanceEventLogger?
+    ) {
+        logger?.log(
+            "caption_translation_scheduled",
+            segmentID: turn.id,
+            isFinal: !isDraft,
+            textLength: turn.originalText.count,
+            metadata: translationMetadata(for: turn, isDraft: isDraft)
+        )
+    }
+
+    private func translationMetadata(
+        for turn: LiveCaptionTurn,
+        isDraft: Bool,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var metadata: [String: String] = [
+            "turnID": turn.id,
+            "sourceSegmentID": turn.sourceSegmentID,
+            "sourceSegmentIDs": turn.sourceSegmentIDs.joined(separator: ","),
+            "sourceLocale": turn.sourceLocale,
+            "targetLocale": turn.targetLocale,
+            "translationKind": isDraft ? "draft" : "final"
+        ]
+        if let boundaryStrength = turn.boundaryStrength {
+            metadata["boundaryStrength"] = String(describing: boundaryStrength)
+        }
+        if let boundaryReason = turn.boundaryReason {
+            metadata["boundaryReason"] = boundaryReason.rawValue
+        }
+        for (key, value) in extra {
+            metadata[key] = value
+        }
+        return metadata
     }
 
     private func scheduleCaptionTextTranslationIfNeeded() {
@@ -943,17 +1019,40 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard !draftCandidates.isEmpty || !finalCandidates.isEmpty else { return }
         guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
 
+        let performanceEventLogger = currentPerformanceEventLogger()
         let draftRequests = draftCandidates.map { turn -> CaptionTranslationRequest in
             let key = draftCaptionTranslationKey(for: turn)
             draftTranslationInFlightByTurnID[turn.id] = turn.translationRevision
             draftTranslationAttemptDatesByTurnID[turn.id] = Date()
-            return CaptionTranslationRequest(turn: turn, key: key, isDraft: true, revision: turn.translationRevision)
+            logTranslationScheduled(
+                turn,
+                isDraft: true,
+                logger: performanceEventLogger
+            )
+            return CaptionTranslationRequest(
+                turn: turn,
+                key: key,
+                isDraft: true,
+                revision: turn.translationRevision,
+                performanceEventLogger: performanceEventLogger
+            )
         }
 
         let finalRequests = finalCandidates.map { turn -> CaptionTranslationRequest in
             let key = finalCaptionTranslationKey(for: turn)
             finalTranslationInFlightTurnIDs.insert(turn.id)
-            return CaptionTranslationRequest(turn: turn, key: key, isDraft: false, revision: turn.translationRevision)
+            logTranslationScheduled(
+                turn,
+                isDraft: false,
+                logger: performanceEventLogger
+            )
+            return CaptionTranslationRequest(
+                turn: turn,
+                key: key,
+                isDraft: false,
+                revision: turn.translationRevision,
+                performanceEventLogger: performanceEventLogger
+            )
         }
 
         let requests = draftRequests + finalRequests
@@ -1024,11 +1123,25 @@ public final class MeetingAgentViewModel: ObservableObject {
                 createdAt: turn.createdAt
             )
             do {
+                request.performanceEventLogger?.log(
+                    "caption_translation_started",
+                    segmentID: turn.id,
+                    isFinal: !request.isDraft,
+                    textLength: sourceText.count,
+                    metadata: translationMetadata(for: turn, isDraft: request.isDraft)
+                )
                 let translated = try await provider.translate(
                     transcript: TranscriptDocument(segments: [segment]),
                     options: options
                 )
                 let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
+                request.performanceEventLogger?.log(
+                    "caption_translation_finished",
+                    segmentID: turn.id,
+                    isFinal: !request.isDraft,
+                    textLength: translatedText.count,
+                    metadata: translationMetadata(for: turn, isDraft: request.isDraft)
+                )
                 if request.isDraft {
                     acceptDraftTranslation(request, translatedText: translatedText)
                 } else {
@@ -1036,6 +1149,17 @@ public final class MeetingAgentViewModel: ObservableObject {
                 }
             } catch {
                 let nsError = error as NSError
+                request.performanceEventLogger?.log(
+                    "caption_translation_failed",
+                    segmentID: turn.id,
+                    isFinal: !request.isDraft,
+                    textLength: sourceText.count,
+                    metadata: translationMetadata(
+                        for: turn,
+                        isDraft: request.isDraft,
+                        extra: ["error": "\(nsError.domain) error \(nsError.code)"]
+                    )
+                )
                 liveCaptionStore.markTranslationFailed(forTurnID: turn.id, message: "\(nsError.domain) error \(nsError.code)")
                 liveCaptionTurns = liveCaptionStore.turns
                 clearTranslationInFlight(request)
@@ -1084,6 +1208,13 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
+        request.performanceEventLogger?.log(
+            "caption_translation_attached",
+            segmentID: request.turn.id,
+            isFinal: false,
+            textLength: translatedText.count,
+            metadata: translationMetadata(for: request.turn, isDraft: true)
+        )
         draftTranslationKeysByTurnID[request.turn.id] = request.key
         draftTranslationCharacterCountsByTurnID[request.turn.id] = current.originalText.count
         liveCaptionTurns = liveCaptionStore.turns
@@ -1100,6 +1231,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
         liveCaptionStore.markTranslationFinal(forTurnID: request.turn.id)
+        request.performanceEventLogger?.log(
+            "caption_translation_attached",
+            segmentID: request.turn.id,
+            isFinal: true,
+            textLength: translatedText.count,
+            metadata: translationMetadata(for: request.turn, isDraft: false)
+        )
         finalTranslationKeysByTurnID[request.turn.id] = request.key
         liveCaptionTurns = liveCaptionStore.turns
     }

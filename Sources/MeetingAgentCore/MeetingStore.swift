@@ -46,7 +46,8 @@ public final class MeetingStore {
             summaryURL: directory.appendingPathComponent("summary.md"),
             summaryJSONURL: directory.appendingPathComponent("summary.json"),
             summaryMarkdownURL: directory.appendingPathComponent("summary.md"),
-            diagnosticsURL: directory.appendingPathComponent("diagnostics.json")
+            diagnosticsURL: directory.appendingPathComponent("diagnostics.json"),
+            performanceEventsURL: directory.appendingPathComponent("performance-events.jsonl")
         )
         try save(record)
         return StoredMeeting(
@@ -88,6 +89,10 @@ public final class MeetingStore {
             var didBackfill = false
             if record.meetingProgressJSONURL == nil {
                 record.meetingProgressJSONURL = directory.appendingPathComponent("meeting-progress.json")
+                didBackfill = true
+            }
+            if record.performanceEventsURL == nil {
+                record.performanceEventsURL = directory.appendingPathComponent("performance-events.jsonl")
                 didBackfill = true
             }
             if backfillTranscriptionProviderIDIfNeeded(&record) {

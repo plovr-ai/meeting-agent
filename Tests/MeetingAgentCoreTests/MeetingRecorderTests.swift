@@ -92,6 +92,10 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(stopped?.endedAt, Date(timeIntervalSince1970: 200))
         XCTAssertEqual(stopped?.transcriptionStatus, .transcribed)
         XCTAssertEqual(fixture.recorder.state, .idle)
+        let performanceEvents = try performanceEventNames(at: XCTUnwrap(record.performanceEventsURL))
+        XCTAssertTrue(performanceEvents.contains("recording_started"))
+        XCTAssertTrue(performanceEvents.contains("audio_frames_drained"))
+        XCTAssertTrue(performanceEvents.contains("recording_stopped"))
     }
 
     func testPrepareRecordCanReuseExistingAgendaRecord() throws {
@@ -412,7 +416,8 @@ private final class FakeRecorderTranscriberFactory {
         configuration: SpeechTranscriptionConfiguration,
         transcriptURL: URL,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(
             localeIdentifier: configuration.localeIdentifier,
@@ -450,6 +455,12 @@ private func waitFor(
         try await Task.sleep(nanoseconds: interval)
     }
     XCTAssertTrue(condition(), "Timed out waiting for condition")
+}
+
+private func performanceEventNames(at url: URL) throws -> [String] {
+    try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n")
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)).event }
 }
 
 private func XCTAssertThrowsErrorAsync(

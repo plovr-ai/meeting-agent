@@ -23,6 +23,7 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(created.record.summaryMarkdownURL?.lastPathComponent, "summary.md")
         XCTAssertEqual(created.record.diagnosticsURL?.lastPathComponent, "diagnostics.json")
         XCTAssertEqual(created.record.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
+        XCTAssertEqual(created.record.performanceEventsURL?.lastPathComponent, "performance-events.jsonl")
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.directory.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.metadataURL.path))
     }
@@ -168,5 +169,7 @@ final class MeetingStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.first?.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
         XCTAssertEqual(saved.meetingProgressJSONURL?.lastPathComponent, "meeting-progress.json")
+        XCTAssertEqual(loaded.first?.performanceEventsURL?.lastPathComponent, "performance-events.jsonl")
+        XCTAssertEqual(saved.performanceEventsURL?.lastPathComponent, "performance-events.jsonl")
     }
 }
