@@ -294,7 +294,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.agendaTopics = update.agendaTopics.compactMap(Self.normalizedAgendaTopic)
         record.scheduledStartAt = update.scheduledStartAt
         record.scheduledEndAt = update.scheduledEndAt
-        record.meetingGoal = Self.normalizedMeetingGoal(update.meetingGoal)
+        let normalizedGoals = Self.normalizedMeetingGoals(update.meetingGoals, legacyGoal: update.meetingGoal)
+        record.meetingGoals = normalizedGoals
+        record.meetingGoal = normalizedGoals.first
 
         try store.save(record)
         meetings[index] = record
@@ -766,6 +768,18 @@ public final class MeetingAgentViewModel: ObservableObject {
         return goal.title.isEmpty ? nil : goal
     }
 
+    private static func normalizedMeetingGoals(_ goals: [MeetingGoal], legacyGoal: MeetingGoal?) -> [MeetingGoal] {
+        let sourceGoals: [MeetingGoal]
+        if !goals.isEmpty {
+            sourceGoals = goals
+        } else if let legacyGoal {
+            sourceGoals = [legacyGoal]
+        } else {
+            sourceGoals = []
+        }
+        return sourceGoals.compactMap(normalizedMeetingGoal)
+    }
+
     private static func derivedBilingualPipelineProfileID(
         transcriptionExecutionMode: ProviderExecutionMode,
         translationExecutionMode: ProviderExecutionMode
@@ -858,7 +872,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         else {
             return
         }
-        meetings[index].meetingGoal = meetingGoal
+        let goals = meetingGoal.map { [$0] } ?? []
+        meetings[index].meetingGoals = goals
+        meetings[index].meetingGoal = goals.first
         try? store.save(meetings[index])
     }
 

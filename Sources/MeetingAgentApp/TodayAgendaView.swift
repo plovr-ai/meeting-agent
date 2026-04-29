@@ -445,8 +445,10 @@ private struct AgendaRowView: View {
     }
 
     private var goalText: String {
-        let title = meeting.meetingGoal?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? "No goal" : title
+        let titles = meetingGoalTitles(for: meeting)
+        guard let first = titles.first else { return "No goals" }
+        let remaining = titles.count - 1
+        return remaining > 0 ? "\(first) +\(remaining)" : first
     }
 
     private var timeRange: String {
@@ -454,6 +456,13 @@ private struct AgendaRowView: View {
         guard let end = meeting.scheduledEndAt else { return start }
         return "\(start)\n\(end.formatted(date: .omitted, time: .shortened))"
     }
+}
+
+private func meetingGoalTitles(for meeting: MeetingRecord) -> [String] {
+    let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    return goals
+        .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
 }
 
 private struct MeetingArtifactCard: View {
@@ -584,7 +593,7 @@ struct AgendaEditorView: View {
                     labeledDatePicker("Scheduled End", date: $draft.scheduledEndAt)
                     labeledTextEditor("Attendees", text: $draft.attendeesText)
                     labeledTextEditor("Topics", text: $draft.topicsText)
-                    labeledTextEditor("Meeting Goal", text: $draft.goalText)
+                    goalsEditor
 
                     // Dirty navigation confirmation uses Save / Discard / Cancel.
                     HStack {
@@ -639,6 +648,39 @@ struct AgendaEditorView: View {
         }
     }
 
+    private var goalsEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Goals").commandCenterEyebrow()
+            ForEach(draft.goalTexts.indices, id: \.self) { index in
+                HStack(spacing: 8) {
+                    TextField("Goal", text: $draft.goalTexts[index])
+                        .textFieldStyle(.plain)
+                        .font(CommandCenterTypography.secondaryBody)
+                        .foregroundStyle(CommandCenterPalette.text)
+                        .padding(10)
+                        .background(CommandCenterPalette.panelRaised)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(CommandCenterPalette.border, lineWidth: 1)
+                        )
+                    Button {
+                        draft.removeGoal(at: index)
+                    } label: {
+                        Image(systemName: "trash")
+                            .accessibilityLabel("Remove Goal")
+                    }
+                    .buttonStyle(CommandCenterIconButtonStyle())
+                    .disabled(draft.goalTexts.count == 1)
+                }
+            }
+            Button("Add Goal") {
+                draft.addGoal()
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+        }
+    }
+
     private func labeledDatePicker(_ title: String, date: Binding<Date?>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).commandCenterEyebrow()
@@ -663,7 +705,7 @@ struct AgendaDraft: Equatable {
     var topicsText = ""
     var scheduledStartAt: Date?
     var scheduledEndAt: Date?
-    var goalText = ""
+    var goalTexts: [String] = [""]
 
     init() {}
 
@@ -680,11 +722,25 @@ struct AgendaDraft: Equatable {
         topicsText = meeting.agendaTopics.map(\.title).joined(separator: "\n")
         scheduledStartAt = meeting.scheduledStartAt ?? meeting.startedAt
         scheduledEndAt = meeting.scheduledEndAt
-        goalText = meeting.meetingGoal?.title ?? ""
+        let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+        goalTexts = goals.map(\.title)
+        ensureGoalRow()
     }
 
     func update() -> MeetingAgendaUpdate {
-        MeetingAgendaUpdate(
+        let goalValues = goalTexts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map {
+                MeetingGoal(
+                    title: $0,
+                    objectives: [],
+                    requiredQuestions: [],
+                    expectedDecisions: [],
+                    keyTerms: []
+                )
+            }
+        return MeetingAgendaUpdate(
             name: name,
             attendees: attendeesText
                 .split(whereSeparator: \.isNewline)
@@ -697,13 +753,24 @@ struct AgendaDraft: Equatable {
                 .map { MeetingAgendaTopic(title: String($0)) },
             scheduledStartAt: scheduledStartAt,
             scheduledEndAt: scheduledEndAt,
-            meetingGoal: MeetingGoal(
-                title: goalText,
-                objectives: [],
-                requiredQuestions: [],
-                expectedDecisions: [],
-                keyTerms: []
-            )
+            meetingGoal: goalValues.first,
+            meetingGoals: goalValues
         )
+    }
+
+    mutating func addGoal() {
+        goalTexts.append("")
+    }
+
+    mutating func removeGoal(at index: Int) {
+        guard goalTexts.indices.contains(index) else { return }
+        goalTexts.remove(at: index)
+        ensureGoalRow()
+    }
+
+    private mutating func ensureGoalRow() {
+        if goalTexts.isEmpty {
+            goalTexts = [""]
+        }
     }
 }

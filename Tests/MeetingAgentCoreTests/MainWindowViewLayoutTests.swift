@@ -102,6 +102,18 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
     }
 
+    func testTodayAgendaViewDefinesGoalListEditor() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("var goalTexts: [String] = [\"\"]"))
+        XCTAssertTrue(source.contains("goalsEditor"))
+        XCTAssertTrue(source.contains("Button(\"Add Goal\")"))
+        XCTAssertTrue(source.contains("func addGoal()"))
+        XCTAssertTrue(source.contains("func removeGoal(at index: Int)"))
+        XCTAssertTrue(source.contains("meetingGoals: goalValues"))
+        XCTAssertFalse(source.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
+    }
+
     func testTodayAgendaUsesTodayWorkflowSections() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
@@ -137,7 +149,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertFalse(source.contains("AgendaContextStrip("))
         XCTAssertFalse(source.contains("private struct AgendaContextStrip"))
-        XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
+        XCTAssertTrue(source.contains("meeting.attendees"))
+        XCTAssertTrue(source.contains("meeting.meetingGoals"))
         XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
         XCTAssertTrue(source.contains("title: goalDisplay"))
         XCTAssertTrue(source.contains("title: attendeesDisplay"))
@@ -275,6 +288,24 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(insightSource.contains("\"Summary ready\""))
     }
 
+    func testWorkspaceInsightPaneShowsGoalTracker() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("meetingProgressState: viewModel.meetingProgressState"))
+        XCTAssertTrue(source.contains("let meetingProgressState: MeetingProgressState?"))
+        XCTAssertTrue(source.contains("GoalTrackerPanel("))
+        XCTAssertTrue(source.contains("private struct GoalTrackerPanel"))
+        XCTAssertTrue(source.contains("meeting.meetingGoals"))
+
+        guard let trackerRange = source.range(of: "GoalTrackerPanel(") else {
+            return XCTFail("GoalTrackerPanel call is missing")
+        }
+        guard let phaseRange = source.range(of: "phaseSummary", range: trackerRange.upperBound..<source.endIndex) else {
+            return XCTFail("phaseSummary after tracker is missing")
+        }
+        XCTAssertLessThan(trackerRange.lowerBound, phaseRange.lowerBound)
+    }
+
     func testInsightsPaneShowsRecommendedQuestionsOnlyWhenAvailable() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
@@ -401,7 +432,9 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
 
         let agendaSource = try appSource(named: "TodayAgendaView.swift")
-        XCTAssertTrue(agendaSource.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
+        XCTAssertTrue(agendaSource.contains("goalsEditor"))
+        XCTAssertTrue(agendaSource.contains("Button(\"Add Goal\")"))
+        XCTAssertFalse(agendaSource.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
     }
 
     func testMainWindowRemovesUnimplementedMeetingGoalDashboardStructure() throws {
