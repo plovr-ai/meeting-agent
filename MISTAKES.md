@@ -493,3 +493,19 @@ When deleting source files, search build and coverage scripts for static file li
 After deleting source files, run `rg` across scripts and config for every deleted filename before final verification.
 
 ---
+
+## [91] Check every spec requirement before review pass
+
+**Date**: 2026-04-29
+**Category**: test-mistake
+
+### What went wrong
+The first meeting bucket navigation implementation covered labels and filtering, but missed the spec requirement for empty bucket states until manual review.
+
+### Correct approach
+Before marking implementation review as passing, compare each spec requirement against both code and tests, including small UI states like empty lists.
+
+### How to avoid
+For UI navigation changes, add explicit coverage for every visible state named in the spec, not only the primary populated path.
+
+---
