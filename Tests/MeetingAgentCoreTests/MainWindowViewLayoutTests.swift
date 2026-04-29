@@ -371,13 +371,20 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("destination = .settings"))
     }
 
-    func testSidebarRemovesFixedApplicationTitleHeader() throws {
+    func testSidebarRestoresApplicationTitleAtTopOfNavigation() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
+        guard let titleRange = source.range(of: "Text(\"Meeting Agent\")") else {
+            return XCTFail("Sidebar application title is missing")
+        }
+        guard let todayRange = source.range(of: "Button(\"Today\")") else {
+            return XCTFail("Today navigation button is missing")
+        }
+
+        XCTAssertLessThan(titleRange.lowerBound, todayRange.lowerBound)
         XCTAssertFalse(source.contains("sidebarHeader"))
-        XCTAssertFalse(source.contains("Text(\"Meeting Agent\")"))
         XCTAssertFalse(source.contains(".navigationTitle(\"Meeting Agent\")"))
     }
 
