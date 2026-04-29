@@ -26,6 +26,79 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertNil(turn.freezeReason)
     }
 
+    func testLiveCaptionTurnDefaultsDisplayAndTranslationStateFromLegacyChunkState() throws {
+        let data = Data("""
+        {
+          "id": "segment-1",
+          "sourceSegmentID": "segment-1",
+          "sourceSegmentIDs": ["segment-1"],
+          "speaker": {},
+          "originalText": "hello",
+          "sourceLocale": "en-US",
+          "targetLocale": "zh-CN",
+          "isFinal": true,
+          "captionHealth": { "state": "live" },
+          "translationHealth": { "state": "pending" },
+          "createdAt": "2026-04-28T00:00:00Z",
+          "chunkState": "frozen",
+          "freezeReason": "punctuation"
+        }
+        """.utf8)
+
+        let turn = try JSONDecoder.meetingAgent.decode(LiveCaptionTurn.self, from: data)
+
+        XCTAssertEqual(turn.displayState, .sealed)
+        XCTAssertEqual(turn.translationState, .draft)
+        XCTAssertEqual(turn.boundaryReason, .punctuation)
+        XCTAssertEqual(turn.boundaryStrength, .soft)
+        XCTAssertEqual(turn.chunkState, .frozen)
+    }
+
+    func testHardBoundaryDefaultsTranslationStateToFinal() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "done",
+            isFinal: true,
+            displayState: .sealed,
+            translationState: .final,
+            boundaryReason: .speechFinal,
+            boundaryStrength: .hard
+        )
+
+        XCTAssertEqual(turn.displayState, .sealed)
+        XCTAssertEqual(turn.translationState, .final)
+        XCTAssertEqual(turn.boundaryReason, .speechFinal)
+        XCTAssertEqual(turn.boundaryStrength, .hard)
+        XCTAssertEqual(turn.chunkState, .frozen)
+    }
+
+    func testSpeakerGroupsCombineConsecutiveSameSpeakerCaptionBlocks() {
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        let groups = LiveCaptionSpeakerGroup.groups(from: [
+            LiveCaptionTurn(sourceSegmentID: "s1", speaker: speaker, originalText: "First block.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "s2", speaker: speaker, originalText: "Second block.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "s3", speaker: TranscriptSpeaker(identifier: "speaker-2", label: "User B"), originalText: "Other speaker.", isFinal: true)
+        ])
+
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].speaker, speaker)
+        XCTAssertEqual(groups[0].turns.map(\.sourceSegmentID), ["s1", "s2"])
+        XCTAssertEqual(groups[1].turns.map(\.sourceSegmentID), ["s3"])
+    }
+
+    func testSpeakerGroupsStartNewGroupWhenSameSpeakerReturnsAfterDifferentSpeaker() {
+        let userA = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        let userB = TranscriptSpeaker(identifier: "speaker-2", label: "User B")
+        let groups = LiveCaptionSpeakerGroup.groups(from: [
+            LiveCaptionTurn(sourceSegmentID: "a1", speaker: userA, originalText: "A first.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "b1", speaker: userB, originalText: "B.", isFinal: true),
+            LiveCaptionTurn(sourceSegmentID: "a2", speaker: userA, originalText: "A again.", isFinal: true)
+        ])
+
+        XCTAssertEqual(groups.count, 3)
+        XCTAssertEqual(groups.map { $0.speaker.label }, ["User A", "User B", "User A"])
+    }
+
     func testAppendFinalSegmentCreatesStableTurn() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let segment = TranscriptSegment(
@@ -73,6 +146,20 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertNil(updated.translatedText)
         XCTAssertEqual(updated.translationHealth, .pending)
         XCTAssertNil(store.turns.first?.translatedText)
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
+    }
+
+    func testUpdatingDraftSegmentKeepsPreviousDraftTranslationWhileRetranslating() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = store.append(TranscriptSegment(id: "segment-1", text: "old draft", language: "en-US", isFinal: false))
+        store.attachTranslation("旧草稿翻译", toTurnID: "segment-1")
+
+        let updated = store.append(TranscriptSegment(id: "segment-1", text: "old draft with more text", language: "en-US", isFinal: false))
+
+        XCTAssertEqual(updated.originalText, "old draft with more text")
+        XCTAssertEqual(updated.translatedText, "旧草稿翻译")
+        XCTAssertEqual(updated.translationHealth, .pending)
+        XCTAssertEqual(store.turns.first?.translatedText, "旧草稿翻译")
         XCTAssertEqual(store.turns.first?.translationHealth, .pending)
     }
 
@@ -130,6 +217,111 @@ final class LiveCaptionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.turns.count, 2)
         XCTAssertEqual(store.turns.map(\.originalText), ["我们先看一下", "我有一个问题"])
+    }
+
+    func testAppendingInterimFromSameSpeakerExtendsLatestTurnWithoutDuplicatingOverlap() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        _ = store.append(TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "So I just No. It works. It",
+            language: "en-US",
+            isFinal: true
+        ))
+
+        let updated = store.append(TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "No. It works. It works very well.",
+            language: "en-US",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(updated.id, "final-1")
+        XCTAssertEqual(updated.sourceSegmentID, "final-1")
+        XCTAssertEqual(updated.sourceSegmentIDs, ["final-1", "interim-1"])
+        XCTAssertEqual(updated.originalText, "So I just No. It works. It works very well.")
+        XCTAssertFalse(updated.isFinal)
+        XCTAssertEqual(updated.chunkState, .draft)
+    }
+
+    func testAppendingInterimContainingLatestTurnKeepsSingleCompleteText() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        _ = store.append(TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "It works very well.",
+            language: "en-US",
+            isFinal: true
+        ))
+
+        let updated = store.append(TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "No. It works very well. Oh.",
+            language: "en-US",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(updated.sourceSegmentIDs, ["final-1", "interim-1"])
+        XCTAssertEqual(updated.originalText, "No. It works very well. Oh.")
+        XCTAssertFalse(updated.isFinal)
+    }
+
+    func testUpsertingSoftSealedTurnPreservesDraftTranslationState() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "That sounds good.",
+            isFinal: true,
+            chunkState: .frozen,
+            freezeReason: .punctuation,
+            displayState: .sealed,
+            translationState: .draft,
+            boundaryReason: .punctuation,
+            boundaryStrength: .soft
+        )
+
+        store.upsert(turn)
+
+        XCTAssertEqual(store.turns.first?.displayState, .sealed)
+        XCTAssertEqual(store.turns.first?.translationState, .draft)
+        XCTAssertEqual(store.turns.first?.boundaryStrength, .soft)
+    }
+
+    func testAppendingInterimToSoftSealedSameSpeakerBlockKeepsDisplayDraftOnlyWhenOverlapping() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "final-1",
+            speaker: speaker,
+            originalText: "No. It works.",
+            isFinal: true,
+            chunkState: .frozen,
+            freezeReason: .punctuation,
+            displayState: .sealed,
+            translationState: .draft,
+            boundaryReason: .punctuation,
+            boundaryStrength: .soft
+        ))
+
+        let updated = store.append(TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "It works very well.",
+            language: "en-US",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(store.turns.count, 1)
+        XCTAssertEqual(updated.displayState, .draft)
+        XCTAssertEqual(updated.translationState, .draft)
+        XCTAssertNil(updated.boundaryReason)
+        XCTAssertNil(updated.boundaryStrength)
     }
 
     func testMergingSameSpeakerPreservesTranslationWhileRetranslating() {

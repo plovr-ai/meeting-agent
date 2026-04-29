@@ -238,6 +238,22 @@ When using upsert for streaming interim data, test both interim-to-final replace
 
 ---
 
+## [57] Avoid public API expansion for injectable defaults
+
+**Date**: 2026-04-28
+**Category**: api-misuse
+
+### What went wrong
+The first summary provider injection made the default provider factory public only because Swift public initializer default arguments cannot reference private helpers.
+
+### Correct approach
+Use an optional injectable closure defaulting to `nil`, then assign the private default factory inside the initializer body.
+
+### How to avoid
+When adding test injection to a public initializer, keep helper factories private unless callers genuinely need them.
+
+---
+
 ## [48] Apply preferred-target test lessons before writing new tests
 
 **Date**: 2026-04-28
@@ -254,6 +270,22 @@ Before adding tests in an area mentioned by `MISTAKES.md`, choose assertions tha
 
 ---
 
+## [47] Do not assume origin/HEAD is configured
+
+**Date**: 2026-04-28
+**Category**: wrong-assumption
+
+### What went wrong
+The first issue worktree command derived an empty default branch from `git symbolic-ref refs/remotes/origin/HEAD`, so it tried to create a worktree from `origin/` instead of `origin/main`.
+
+### Correct approach
+If `origin/HEAD` is absent or empty, query `git remote show origin` or fall back to the known remote default branch before creating the issue worktree.
+
+### How to avoid
+Validate the resolved default branch is non-empty before passing it to `git fetch` or `git worktree add`.
+
+---
+
 ## [52] Do not publish capture sessions before consumers are ready
 
 **Date**: 2026-04-28
@@ -267,5 +299,21 @@ Start Core Audio capture first, but expose the session to drain callers only aft
 
 ### How to avoid
 When a producer starts before its consumers, test the exact window where external drain or poll loops can observe partially initialized state.
+
+---
+
+## [54] Keep awaited actor values out of XCTest autoclosures
+
+**Date**: 2026-04-28
+**Category**: test-mistake
+
+### What went wrong
+The first streaming raw-response logging test placed `await received.texts` directly inside `XCTAssertEqual`, which Swift rejects because XCTest assertions use non-async autoclosures.
+
+### Correct approach
+Await actor-isolated values into local constants before passing them to XCTest assertions.
+
+### How to avoid
+When asserting actor state in XCTest, split `let value = await actor.value` from `XCTAssertEqual(value, expected)`.
 
 ---

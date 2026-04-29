@@ -42,7 +42,7 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.last?.turn.freezeReason, .maxLength)
     }
 
-    func testMaxDurationFreezesTimedDraft() {
+    func testMaxDurationDoesNotFreezeMidSentenceDraft() {
         var chunker = LiveCaptionChunker(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
@@ -56,8 +56,8 @@ final class LiveCaptionChunkerTests: XCTestCase {
             end: 3
         ))
 
-        XCTAssertEqual(updates.last?.turn.chunkState, .frozen)
-        XCTAssertEqual(updates.last?.turn.freezeReason, .maxDuration)
+        XCTAssertEqual(updates.single?.turn.chunkState, .draft)
+        XCTAssertNil(updates.single?.turn.freezeReason)
     }
 
     func testPunctuationFreezesWhenMinimumLengthReached() {
@@ -71,6 +71,71 @@ final class LiveCaptionChunkerTests: XCTestCase {
 
         XCTAssertEqual(updates.last?.turn.chunkState, .frozen)
         XCTAssertEqual(updates.last?.turn.freezeReason, .punctuation)
+    }
+
+    func testSoftPunctuationBoundarySealsDisplayButKeepsDraftTranslation() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minPunctuationCharacters: 10)
+        )
+
+        let updates = chunker.append(segment(id: "s1", text: "That sounds good."))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.translationState, .draft)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .punctuation)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .soft)
+    }
+
+    func testSpeechFinalBoundarySealsDisplayAndFinalizesTranslation() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        let updates = chunker.append(segment(id: "s1", text: "Done.", speechFinal: true))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.translationState, .final)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .speechFinal)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .hard)
+    }
+
+    func testSpeakerChangeBoundaryFinalizesPreviousSpeakerTranslation() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = chunker.append(segment(id: "a1", speaker: "a", text: "First thought"))
+
+        let updates = chunker.append(segment(id: "b1", speaker: "b", text: "Second thought"))
+
+        XCTAssertEqual(updates.first?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.first?.turn.translationState, .final)
+        XCTAssertEqual(updates.first?.turn.boundaryReason, .speakerChanged)
+        XCTAssertEqual(updates.first?.turn.boundaryStrength, .hard)
+        XCTAssertEqual(updates.last?.turn.displayState, .draft)
+        XCTAssertEqual(updates.last?.turn.translationState, .draft)
+    }
+
+    func testInternalSentenceBoundaryFreezesLongDeepgramChunkBeforeNextSameSpeakerSegment() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minPunctuationCharacters: 80)
+        )
+
+        let firstUpdates = chunker.append(segment(
+            id: "deepgram-transcribe-stream-0.00",
+            text: "My name is Sherwin Chaffee, and I work at Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents",
+            start: 0,
+            end: 9.49
+        ))
+        let secondUpdates = chunker.append(segment(
+            id: "deepgram-transcribe-stream-9.49",
+            text: "But today, I'm very excited to share an agent that Microsoft has built",
+            start: 9.49,
+            end: 14.28
+        ))
+
+        XCTAssertEqual(firstUpdates.last?.turn.chunkState, .frozen)
+        XCTAssertEqual(firstUpdates.last?.turn.freezeReason, .punctuation)
+        XCTAssertEqual(secondUpdates.single?.turn.originalText, "But today, I'm very excited to share an agent that Microsoft has built")
     }
 
     func testManualFlushFreezesOpenDraft() {
@@ -95,6 +160,44 @@ final class LiveCaptionChunkerTests: XCTestCase {
         let secondBlankUpdates = secondBlankChunker.append(segment(id: "s2", text: " "))
 
         XCTAssertEqual(secondBlankUpdates.single?.turn.originalText, "first")
+    }
+
+    func testUpdatingSameSegmentIDReplacesOpenDraftText() {
+        var chunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+        _ = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select",
+            start: 2,
+            end: 3
+        ))
+
+        let draftUpdates = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select German and hear what it sounds like",
+            start: 1,
+            end: 4,
+            language: nil
+        ))
+
+        XCTAssertEqual(draftUpdates.single?.turn.sourceSegmentIDs, ["dg-utterance"])
+        XCTAssertEqual(draftUpdates.single?.turn.sourceLocale, "en-US")
+        XCTAssertEqual(
+            draftUpdates.single?.turn.originalText,
+            "Now what we can do is select German and hear what it sounds like"
+        )
+
+        let finalUpdates = chunker.append(segment(
+            id: "dg-utterance",
+            text: "Now what we can do is select German and hear what it sounds like",
+            speechFinal: true
+        ))
+
+        XCTAssertEqual(finalUpdates.map(\.turn.originalText), [
+            "Now what we can do is select German and hear what it sounds like",
+            "Now what we can do is select German and hear what it sounds like"
+        ])
+        XCTAssertEqual(finalUpdates.last?.turn.chunkState, .frozen)
+        XCTAssertEqual(finalUpdates.last?.turn.freezeReason, .speechFinal)
     }
 
     func testMissingSegmentLanguageFallsBackToChunkerSourceLocale() {

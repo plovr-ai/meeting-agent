@@ -118,7 +118,7 @@ public struct TranscriptFormatter {
         var mapper = SpeakerLabelMapper(speakers: transcriptTurns.map(\.speaker))
         return transcriptTurns.map { turn in
             let label = mapper.label(for: turn.speaker)
-            return ([label + ":"] + turn.texts).joined(separator: "\n")
+            return [label + ":", turn.renderedText].joined(separator: "\n")
         }
         .joined(separator: "\n\n")
     }
@@ -141,6 +141,13 @@ public struct TranscriptFormatter {
 private struct TranscriptTurn {
     let speaker: TranscriptSpeaker
     var texts: [String]
+
+    var renderedText: String {
+        texts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
 }
 
 struct SpeakerLabelMapper {

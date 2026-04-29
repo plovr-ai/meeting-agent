@@ -70,6 +70,57 @@ public struct LiveCaptionChunker: Equatable {
 
     private func mergedChunk(appending segment: TranscriptSegment) -> OpenChunk {
         if let openChunk {
+            if openChunk.turn.sourceSegmentIDs == [segment.id] {
+                let draft = LiveCaptionTurn(
+                    id: openChunk.turn.id,
+                    sourceSegmentID: segment.id,
+                    sourceSegmentIDs: [segment.id],
+                    speaker: segment.speaker,
+                    originalText: segment.text,
+                    translatedText: openChunk.turn.translatedText,
+                    sourceLocale: segment.language ?? sourceLocale,
+                    targetLocale: targetLocale,
+                    isFinal: true,
+                    captionHealth: .live,
+                    translationHealth: .pending,
+                    createdAt: segment.createdAt,
+                    chunkState: .draft,
+                    translationRevision: openChunk.turn.translationRevision + 1,
+                    freezeReason: nil,
+                    displayState: .draft,
+                    translationState: .draft,
+                    boundaryReason: nil,
+                    boundaryStrength: nil
+                )
+                let startTimeSeconds: Double?
+                switch (openChunk.startTimeSeconds, segment.startTimeSeconds) {
+                case let (first?, second?):
+                    startTimeSeconds = min(first, second)
+                case let (first?, nil):
+                    startTimeSeconds = first
+                case let (nil, second?):
+                    startTimeSeconds = second
+                case (nil, nil):
+                    startTimeSeconds = nil
+                }
+                let endTimeSeconds: Double?
+                switch (openChunk.endTimeSeconds, segment.endTimeSeconds) {
+                case let (first?, second?):
+                    endTimeSeconds = max(first, second)
+                case let (first?, nil):
+                    endTimeSeconds = first
+                case let (nil, second?):
+                    endTimeSeconds = second
+                case (nil, nil):
+                    endTimeSeconds = nil
+                }
+                return OpenChunk(
+                    turn: draft,
+                    startTimeSeconds: startTimeSeconds,
+                    endTimeSeconds: endTimeSeconds
+                )
+            }
+
             let draft = LiveCaptionTurn(
                 id: openChunk.turn.id,
                 sourceSegmentID: segment.id,
@@ -85,7 +136,11 @@ public struct LiveCaptionChunker: Equatable {
                 createdAt: segment.createdAt,
                 chunkState: .draft,
                 translationRevision: openChunk.turn.translationRevision + 1,
-                freezeReason: nil
+                freezeReason: nil,
+                displayState: .draft,
+                translationState: .draft,
+                boundaryReason: nil,
+                boundaryStrength: nil
             )
             return OpenChunk(
                 turn: draft,
@@ -106,7 +161,11 @@ public struct LiveCaptionChunker: Equatable {
             createdAt: segment.createdAt,
             chunkState: .draft,
             translationRevision: 1,
-            freezeReason: nil
+            freezeReason: nil,
+            displayState: .draft,
+            translationState: .draft,
+            boundaryReason: nil,
+            boundaryStrength: nil
         )
         return OpenChunk(
             turn: draft,
@@ -118,7 +177,10 @@ public struct LiveCaptionChunker: Equatable {
     private func freezeReason(for chunk: OpenChunk, latestSegment: TranscriptSegment) -> LiveCaptionFreezeReason? {
         if latestSegment.speechFinal { return .speechFinal }
         if chunk.turn.originalText.count >= policy.maxCharacters { return .maxLength }
-        if durationSeconds(for: chunk) >= policy.maxDurationSeconds { return .maxDuration }
+        if durationSeconds(for: chunk) >= policy.maxDurationSeconds,
+           hasStrongPunctuation(chunk.turn.originalText) {
+            return .maxDuration
+        }
         if chunk.turn.originalText.count >= policy.minPunctuationCharacters,
            hasStrongPunctuation(chunk.turn.originalText) {
             return .punctuation
@@ -136,7 +198,8 @@ public struct LiveCaptionChunker: Equatable {
     }
 
     private func frozen(_ turn: LiveCaptionTurn, reason: LiveCaptionFreezeReason) -> LiveCaptionTurn {
-        LiveCaptionTurn(
+        let strength = reason.boundaryStrength
+        return LiveCaptionTurn(
             id: turn.id,
             sourceSegmentID: turn.sourceSegmentID,
             sourceSegmentIDs: turn.sourceSegmentIDs,
@@ -151,7 +214,11 @@ public struct LiveCaptionChunker: Equatable {
             createdAt: turn.createdAt,
             chunkState: .frozen,
             translationRevision: turn.translationRevision,
-            freezeReason: reason
+            freezeReason: reason,
+            displayState: .sealed,
+            translationState: strength == .hard ? .final : .draft,
+            boundaryReason: reason,
+            boundaryStrength: strength
         )
     }
 
@@ -165,7 +232,10 @@ public struct LiveCaptionChunker: Equatable {
 
     private func hasStrongPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return [".", "!", "?", "。", "！", "？"].contains { trimmed.hasSuffix($0) }
+        for marker in [".", "!", "?", "。", "！", "？"] where trimmed.contains(marker) {
+            return true
+        }
+        return false
     }
 
     private struct OpenChunk: Equatable {

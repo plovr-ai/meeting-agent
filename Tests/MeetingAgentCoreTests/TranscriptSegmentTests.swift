@@ -21,8 +21,21 @@ final class TranscriptSegmentTests: XCTestCase {
 
         XCTAssertEqual(output, """
         User A:
-        first chunk
-        second chunk
+        first chunk second chunk
+        """)
+    }
+
+    func testConsecutiveSegmentsFromSameSpeakerDoNotSplitMidSentenceOnExport() {
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+
+        let output = TranscriptFormatter.render([
+            TranscriptSegment(speaker: speaker, text: "Now what we can do is I'm gonna select"),
+            TranscriptSegment(speaker: speaker, text: "German and you can hear what you sound like.")
+        ])
+
+        XCTAssertEqual(output, """
+        User A:
+        Now what we can do is I'm gonna select German and you can hear what you sound like.
         """)
     }
 
@@ -67,5 +80,13 @@ final class TranscriptSegmentTests: XCTestCase {
         User A:
         current partial result
         """)
+    }
+
+    func testSpeakerLabelMapperAllocatesLabelsWithoutPreRegisteredSpeakers() {
+        var mapper = SpeakerLabelMapper()
+
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-1")), "User A")
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-1")), "User A")
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-2")), "User B")
     }
 }

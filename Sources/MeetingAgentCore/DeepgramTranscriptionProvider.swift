@@ -37,6 +37,51 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
     }
 }
 
+public enum DeepgramRawResponseTransport: String, Equatable {
+    case http
+    case webSocket
+}
+
+public struct DeepgramRawResponseContext: Equatable {
+    public let providerID: String
+    public let transport: DeepgramRawResponseTransport
+
+    public init(providerID: String, transport: DeepgramRawResponseTransport) {
+        self.providerID = providerID
+        self.transport = transport
+    }
+}
+
+public protocol DeepgramRawResponseLogger {
+    func logRawResponse(_ data: Data, context: DeepgramRawResponseContext)
+}
+
+public final class DeepgramEnvironmentRawResponseLogger: DeepgramRawResponseLogger {
+    private let isEnabled: Bool
+    private let errorOutput: FileHandle
+
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        errorOutput: FileHandle = .standardError
+    ) {
+        self.isEnabled = environment["MEETING_AGENT_DEEPGRAM_RAW_RESPONSE_LOG"] == "1"
+        self.errorOutput = errorOutput
+    }
+
+    public func logRawResponse(_ data: Data, context: DeepgramRawResponseContext) {
+        guard isEnabled else { return }
+        let text = String(data: data, encoding: .utf8) ?? data.base64EncodedString()
+        let message = """
+        [MeetingAgent] Deepgram raw \(context.transport.rawValue) response (\(data.count) bytes, provider: \(context.providerID)):
+        \(text)
+
+        """
+        if let output = message.data(using: .utf8) {
+            try? errorOutput.write(contentsOf: output)
+        }
+    }
+}
+
 public protocol DeepgramTranscriptionClient {
     func transcribe(
         configuration: DeepgramTranscriptionConfiguration,
@@ -108,16 +153,25 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
 
 public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStreamingTranscriptionClient {
     private let webSocketFactory: (URLRequest) -> DeepgramWebSocketTask
+    private let rawResponseLogger: DeepgramRawResponseLogger
 
     public convenience init() {
-        self.init(webSocketFactory: { request in
-            URLSession.shared.webSocketTask(with: request)
-        })
+        self.init(
+            rawResponseLogger: DeepgramEnvironmentRawResponseLogger(),
+            webSocketFactory: { request in
+                URLSession.shared.webSocketTask(with: request)
+            }
+        )
     }
 
-    init(webSocketFactory: @escaping (URLRequest) -> DeepgramWebSocketTask) {
+    init(
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger(),
+        webSocketFactory: @escaping (URLRequest) -> DeepgramWebSocketTask
+    ) {
+        self.rawResponseLogger = rawResponseLogger
         self.webSocketFactory = webSocketFactory
     }
+
     public func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
@@ -147,7 +201,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         let task = webSocketFactory(request)
-        let session = URLSessionDeepgramStreamingSession(task: task)
+        let session = URLSessionDeepgramStreamingSession(task: task, rawResponseLogger: rawResponseLogger)
         task.resume()
         return session
     }
@@ -164,10 +218,15 @@ extension URLSessionWebSocketTask: DeepgramWebSocketTask {}
 
 final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private let task: DeepgramWebSocketTask
+    private let rawResponseLogger: DeepgramRawResponseLogger
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
 
-    init(task: DeepgramWebSocketTask) {
+    init(
+        task: DeepgramWebSocketTask,
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
+    ) {
         self.task = task
+        self.rawResponseLogger = rawResponseLogger
     }
 
     var segments: AsyncStream<TranscriptSegment> {
@@ -207,6 +266,10 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     }
 
     private func yieldSegments(from data: Data) {
+        rawResponseLogger.logRawResponse(
+            data,
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe", transport: .webSocket)
+        )
         for segment in DeepgramStreamingResponseMapper.segments(
             from: data,
             providerID: "deepgram-transcribe"
@@ -360,6 +423,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private var receiveTask: Task<Void, Never>?
     private var sendFailure: String?
     private var fallbackSegmentIndex = 0
+    private var finalSegmentBuffer: [TranscriptSegment] = []
 
     var failureReason: String? {
         failureLock.lock()
@@ -378,6 +442,8 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             for await segment in session.segments {
                 try? self?.write(segment)
             }
+            try? self?.flushFinalSegmentBuffer(markSpeechFinal: true)
+            try? self?.writer.close()
         }
     }
 
@@ -386,27 +452,93 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     }
 
     func finish() {
-        receiveTask?.cancel()
-        Task { [sendQueue, session, writer] in
+        Task { [sendQueue, session] in
             await sendQueue.finish()
             await session.close()
-            try? writer.close()
         }
     }
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
-        try writer.upsert(segment)
-        if segment.isFinal, segment.id.hasSuffix("-stream-active-\(fallbackSegmentIndex)") {
-            fallbackSegmentIndex += 1
+        guard segment.isFinal else {
+            try writer.upsert(segment)
+            return
         }
+        finalSegmentBuffer.append(segment)
+        try writeFinalSegmentBuffer(markSpeechFinal: segment.speechFinal)
+        advanceFallbackSegmentIndexIfNeeded(for: segment)
+        if segment.speechFinal {
+            finalSegmentBuffer.removeAll()
+        }
+    }
+
+    private func flushFinalSegmentBuffer(markSpeechFinal: Bool) throws {
+        guard !finalSegmentBuffer.isEmpty else { return }
+        try writeFinalSegmentBuffer(markSpeechFinal: markSpeechFinal)
+        finalSegmentBuffer.removeAll()
+    }
+
+    private func writeFinalSegmentBuffer(markSpeechFinal: Bool) throws {
+        let committedSegments = committedUtteranceSegments(
+            from: finalSegmentBuffer,
+            markSpeechFinal: markSpeechFinal
+        )
+        for segment in committedSegments {
+            try writer.upsert(segment)
+        }
+    }
+
+    private func committedUtteranceSegments(
+        from segments: [TranscriptSegment],
+        markSpeechFinal: Bool
+    ) -> [TranscriptSegment] {
+        var groups: [[TranscriptSegment]] = []
+        for segment in segments {
+            if let lastIndex = groups.indices.last,
+               groups[lastIndex].last?.speaker == segment.speaker {
+                groups[lastIndex].append(segment)
+            } else {
+                groups.append([segment])
+            }
+        }
+        return groups.enumerated().compactMap { index, group in
+            guard let first = group.first, let last = group.last else { return nil }
+            let text = group
+                .map(\.text)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            guard !text.isEmpty else { return nil }
+            return TranscriptSegment(
+                id: first.id,
+                speaker: first.speaker,
+                startTimeSeconds: group.compactMap(\.startTimeSeconds).min(),
+                endTimeSeconds: group.compactMap(\.endTimeSeconds).max(),
+                text: text,
+                language: group.compactMap(\.language).last,
+                sourceProvider: first.sourceProvider,
+                isFinal: true,
+                speechFinal: markSpeechFinal && index == groups.count - 1,
+                confidence: last.confidence,
+                createdAt: last.createdAt,
+                timingSource: timingSource(for: group)
+            )
+        }
+    }
+
+    private func timingSource(for segments: [TranscriptSegment]) -> TranscriptTimingSource {
+        let hasStart = segments.contains { $0.startTimeSeconds != nil }
+        let hasEnd = segments.contains { $0.endTimeSeconds != nil }
+        guard hasStart || hasEnd else { return .unavailable }
+        return hasStart && hasEnd ? .precise : .approximate
     }
 
     private func stableFallbackSegment(_ segment: TranscriptSegment) -> TranscriptSegment {
         let fallbackID = "\(segment.sourceProvider)-stream-active"
         guard segment.id == fallbackID else { return segment }
+        let stableID = "\(fallbackID)-\(fallbackSegmentIndex)"
         return TranscriptSegment(
-            id: "\(fallbackID)-\(fallbackSegmentIndex)",
+            id: stableID,
             speaker: segment.speaker,
             startTimeSeconds: segment.startTimeSeconds,
             endTimeSeconds: segment.endTimeSeconds,
@@ -414,10 +546,17 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             language: segment.language,
             sourceProvider: segment.sourceProvider,
             isFinal: segment.isFinal,
+            speechFinal: segment.speechFinal,
             confidence: segment.confidence,
             createdAt: segment.createdAt,
             timingSource: segment.timingSource
         )
+    }
+
+    private func advanceFallbackSegmentIndexIfNeeded(for segment: TranscriptSegment) {
+        let fallbackID = "\(segment.sourceProvider)-stream-active-\(fallbackSegmentIndex)"
+        guard segment.id == fallbackID else { return }
+        fallbackSegmentIndex += 1
     }
 
     private func recordSendFailure(_ error: Error) {
@@ -522,21 +661,26 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
 
     private let configuration: DeepgramTranscriptionConfiguration
     private let client: DeepgramTranscriptionClient
+    private let rawResponseLogger: DeepgramRawResponseLogger
 
     public init(
         configuration: DeepgramTranscriptionConfiguration,
-        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient()
+        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient(),
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
     ) {
         self.configuration = configuration
         self.client = client
+        self.rawResponseLogger = rawResponseLogger
     }
 
     public init(
         appConfiguration: SpeechTranscriptionConfiguration = .default,
-        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient()
+        client: DeepgramTranscriptionClient = URLSessionDeepgramTranscriptionClient(),
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
     ) {
         self.configuration = .app(appConfiguration)
         self.client = client
+        self.rawResponseLogger = rawResponseLogger
     }
 
     public func transcribe(audio: AudioInput, options: TranscriptionOptions) async throws -> TranscriptDocument {
@@ -549,6 +693,10 @@ public struct DeepgramAudioTranscriptionProvider: AudioTranscriptionProvider {
         let data = try await client.transcribe(
             configuration: configuration,
             wavURL: wavURL
+        )
+        rawResponseLogger.logRawResponse(
+            data,
+            context: DeepgramRawResponseContext(providerID: descriptor.id, transport: .http)
         )
         let response = try JSONDecoder.meetingAgent.decode(DeepgramResponse.self, from: data)
         return TranscriptDocument(segments: Self.segments(from: response, providerID: descriptor.id))

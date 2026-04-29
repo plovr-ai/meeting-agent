@@ -48,7 +48,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let realtimeTranslationController: RealtimeTranslationController
     private var liveCaptionStore = LiveCaptionStore()
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
-    private var processedLiveCaptionSegmentIDs = Set<String>()
+    private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private var attachedRealtimeTranslationTurnIDs = Set<String>()
@@ -62,6 +62,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let minDraftTranslationCharacterDelta = 80
     private let minDraftTranslationInterval: TimeInterval = 2
     private let captionTranslationProviderFactory: (SpeechTranscriptionConfiguration) -> TextTranslationProvider?
+    private let summaryProviderFactory: (SpeechTranscriptionConfiguration) -> MeetingSummaryProvider
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
@@ -78,6 +79,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             playbackSink: LocalAudioPlaybackSink()
         ),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
+        summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
@@ -86,6 +88,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.exportService = exportService
         self.realtimeTranslationController = realtimeTranslationController
         self.captionTranslationProviderFactory = captionTranslationProviderFactory
+        self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
+            Self.summaryProvider(for: configuration)
+        }
         self.processTargetsProvider = processTargetsProvider
         self.recorder.realtimeFrameConsumer = realtimeTranslationController
         if let speechConfiguration {
@@ -372,6 +377,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
         }
         freezeOpenLiveCaptionChunk(reason: .manualStop)
+        allowActiveTargetReprompt()
         Task { await stopRealtimeTranslation() }
         activeTarget = nil
         activeMeetingID = nil
@@ -391,6 +397,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             stoppedID = nil
         }
         await stopRealtimeTranslation()
+        allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
 
@@ -425,7 +432,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 generatedAt: generatedAt
             )
         } else {
-            let provider = Self.summaryProvider()
+            let provider = summaryProviderFactory(speechConfiguration)
             summary = try await provider.generateSummary(
                 input: MeetingSummaryInput(
                     meetingName: meeting.name,
@@ -677,6 +684,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         return true
     }
 
+    private func allowActiveTargetReprompt() {
+        guard let activeTarget else { return }
+        processMonitor.allowReprompt(processID: activeTarget.processID)
+    }
+
     public var selectedMeeting: MeetingRecord? {
         meetings.first { $0.id == selectedMeetingID }
     }
@@ -747,16 +759,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
-    private static func summaryProvider(
+    private nonisolated static func summaryProvider(
+        for configuration: SpeechTranscriptionConfiguration,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MeetingSummaryProvider {
         let provider = environment["MEETING_AGENT_SUMMARY_PROVIDER"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if provider == "openrouter" {
-            return OpenRouterMeetingSummaryProvider(configuration: .environment(
-                model: environment["MEETING_AGENT_OPENROUTER_MODEL"],
-                environment: environment
+            return OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
+                apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
+                    ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
+                model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
+                    ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
             ))
         }
         return ExtractiveMeetingSummaryProvider()
@@ -798,7 +813,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             sourceLocale: speechConfiguration.localeIdentifier,
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
-        processedLiveCaptionSegmentIDs.removeAll()
+        processedLiveCaptionSegmentSignaturesByID.removeAll()
         attachedRealtimeTranslationTurnIDs.removeAll()
         realtimeTranslationAttachmentCountsByCaptionID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
@@ -858,8 +873,32 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionTurns = []
             return
         }
-        for segment in document.segments where segment.isFinal && !processedLiveCaptionSegmentIDs.contains(segment.id) {
-            processedLiveCaptionSegmentIDs.insert(segment.id)
+        let currentSegmentIDs = Set(document.segments.map(\.id))
+        liveCaptionStore.removeNonFinalTurnsNotIn(segmentIDs: currentSegmentIDs)
+        processedLiveCaptionSegmentSignaturesByID = processedLiveCaptionSegmentSignaturesByID.filter {
+            currentSegmentIDs.contains($0.key)
+        }
+        for segment in document.segments where segment.isFinal {
+            let signatureSpeakerID: String
+            if let speakerID = segment.speakerID {
+                signatureSpeakerID = speakerID
+            } else {
+                signatureSpeakerID = ""
+            }
+            let signatureSpeakerLabel: String
+            if let speakerLabel = segment.speakerLabel {
+                signatureSpeakerLabel = speakerLabel
+            } else {
+                signatureSpeakerLabel = ""
+            }
+            let signature = [
+                segment.text,
+                segment.speechFinal ? "speechFinal" : "open",
+                signatureSpeakerID,
+                signatureSpeakerLabel
+            ].joined(separator: "\u{1F}")
+            guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
+            processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
             for update in liveCaptionChunker.append(segment) {
                 liveCaptionStore.upsert(update.turn)
             }
@@ -882,38 +921,58 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func scheduleCaptionTextTranslationIfNeeded() {
-        let draftRequests = liveCaptionStore.turns.compactMap { turn -> CaptionTranslationRequest? in
-            guard turn.isFinal,
-                  turn.chunkState == .draft,
-                  turn.translationHealth == .pending,
-                  shouldTranslateDraftCaption(turn),
+        let draftCandidates = liveCaptionStore.turns.filter { turn in
+            guard turn.translationHealth == .pending,
+                  shouldScheduleDraftTranslation(for: turn),
                   draftTranslationInFlightByTurnID[turn.id] != turn.translationRevision
-            else { return nil }
+            else { return false }
+            return true
+        }
+
+        let finalCandidates = liveCaptionStore.turns.filter { turn in
+            guard turn.displayState == .sealed,
+                  turn.boundaryStrength == .hard,
+                  turn.translationHealth == .pending
+            else { return false }
+            let key = finalCaptionTranslationKey(for: turn)
+            return finalTranslationKeysByTurnID[turn.id] != key
+                && !finalTranslationInFlightTurnIDs.contains(turn.id)
+        }
+
+        guard !draftCandidates.isEmpty || !finalCandidates.isEmpty else { return }
+        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
+
+        let draftRequests = draftCandidates.map { turn -> CaptionTranslationRequest in
             let key = draftCaptionTranslationKey(for: turn)
             draftTranslationInFlightByTurnID[turn.id] = turn.translationRevision
             draftTranslationAttemptDatesByTurnID[turn.id] = Date()
             return CaptionTranslationRequest(turn: turn, key: key, isDraft: true, revision: turn.translationRevision)
         }
 
-        let finalRequests = liveCaptionStore.turns.compactMap { turn -> CaptionTranslationRequest? in
-            guard turn.isFinal,
-                  turn.chunkState == .frozen,
-                  turn.translationHealth == .pending
-            else { return nil }
+        let finalRequests = finalCandidates.map { turn -> CaptionTranslationRequest in
             let key = finalCaptionTranslationKey(for: turn)
-            guard finalTranslationKeysByTurnID[turn.id] != key,
-                  !finalTranslationInFlightTurnIDs.contains(turn.id)
-            else { return nil }
             finalTranslationInFlightTurnIDs.insert(turn.id)
             return CaptionTranslationRequest(turn: turn, key: key, isDraft: false, revision: turn.translationRevision)
         }
 
         let requests = draftRequests + finalRequests
         guard !requests.isEmpty else { return }
-        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
         Task { [weak self, provider, requests] in
             await self?.translateCaptionTurns(requests, using: provider)
         }
+    }
+
+    private func shouldScheduleDraftTranslation(for turn: LiveCaptionTurn) -> Bool {
+        guard turn.translationState != .final else {
+            return false
+        }
+        if turn.displayState == .draft {
+            return shouldTranslateDraftCaption(turn)
+        }
+        if turn.displayState == .sealed, turn.boundaryStrength == .soft {
+            return true
+        }
+        return false
     }
 
     private func shouldTranslateDraftCaption(_ turn: LiveCaptionTurn, now: Date = Date()) -> Bool {
@@ -935,10 +994,11 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func translateCaptionTurns(_ requests: [CaptionTranslationRequest], using provider: TextTranslationProvider) async {
         for request in requests {
             let turn = request.turn
+            let sourceText = translationSourceText(for: turn, final: !request.isDraft)
             let segment = TranscriptSegment(
                 id: turn.sourceSegmentID,
                 speaker: turn.speaker,
-                text: turn.originalText,
+                text: sourceText,
                 language: turn.sourceLocale,
                 isFinal: turn.isFinal,
                 createdAt: turn.createdAt
@@ -964,11 +1024,33 @@ public final class MeetingAgentViewModel: ObservableObject {
         updateTranslationHealthFromRealtimeStatus()
     }
 
+    private func translationSourceText(for turn: LiveCaptionTurn, final: Bool) -> String {
+        guard final else {
+            return turn.originalText
+        }
+        let groups = LiveCaptionSpeakerGroup.groups(from: liveCaptionStore.turns)
+        guard let group = groups.first(where: { $0.turns.contains(where: { $0.id == turn.id }) }) else {
+            return turn.originalText
+        }
+        var texts: [String] = []
+        for candidate in group.turns {
+            texts.append(candidate.originalText)
+            if candidate.id == turn.id {
+                break
+            }
+        }
+        return texts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private func acceptDraftTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
         defer { clearTranslationInFlight(request) }
         guard let current = liveCaptionStore.turns.first(where: { $0.id == request.turn.id }),
               current.translationRevision == request.revision,
-              current.chunkState == .draft
+              current.translationState != .final,
+              shouldScheduleDraftTranslation(for: current)
         else {
             return
         }
@@ -980,10 +1062,15 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func acceptFinalTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
         defer { clearTranslationInFlight(request) }
-        guard liveCaptionStore.turns.contains(where: { $0.id == request.turn.id && $0.chunkState == .frozen }) else {
+        guard liveCaptionStore.turns.contains(where: {
+            $0.id == request.turn.id
+                && $0.displayState == .sealed
+                && $0.boundaryStrength == .hard
+        }) else {
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
+        liveCaptionStore.markTranslationFinal(forTurnID: request.turn.id)
         finalTranslationKeysByTurnID[request.turn.id] = request.key
         liveCaptionTurns = liveCaptionStore.turns
     }

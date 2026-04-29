@@ -14,6 +14,8 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
         XCTAssertEqual(configuration.hostedTranslationModelID, "google/gemini-2.5-flash")
         XCTAssertEqual(BilingualPipelineFactory.hostedTranslationModelOptions.first?.id, "google/gemini-2.5-flash")
+        XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
+        XCTAssertEqual(BilingualPipelineFactory.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
     }
 
@@ -139,6 +141,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
             hostedTranslationModelID: "openai/gpt-4.1-mini",
+            hostedSummaryModelID: "google/gemini-2.5-flash",
             openRouterAPIKey: "settings-key",
             openAIRealtimeAPIKey: " realtime-key ",
             deepgramAPIKey: " deepgram-key ",
@@ -251,6 +254,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertNil(configuration.openAIRealtimeAPIKey)
         XCTAssertNil(configuration.deepgramAPIKey)
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+        XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
     }
 
     func testDeepgramHostedValidationRequiresAPIKey() {

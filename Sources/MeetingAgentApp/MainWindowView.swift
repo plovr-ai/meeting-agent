@@ -937,19 +937,21 @@ private struct UnifiedTranscriptView: View {
                 if turns.isEmpty {
                     fallbackTranscript
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(turns) { turn in
-                            BilingualTranscriptRow(
-                                turn: turn,
-                                secondLanguageEnabled: secondLanguageEnabled(for: turn),
-                                editSpeaker: turn.speaker.identifier == nil ? nil : {
-                                    editSpeaker(turn)
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        let groups = LiveCaptionSpeakerGroup.groups(from: turns)
+                        ForEach(groups) { group in
+                            BilingualTranscriptGroup(
+                                group: group,
+                                sourceLocale: sourceLocale,
+                                targetLocale: targetLocale,
+                                editSpeaker: group.speaker.identifier == nil ? nil : {
+                                    if let firstTurn = group.turns.first {
+                                        editSpeaker(firstTurn)
+                                    }
                                 },
-                                editText: {
-                                    editText(turn)
-                                }
+                                editText: editText
                             )
-                            .id(turn.id)
+                            .id(group.id)
                         }
                     }
                     .simultaneousGesture(
@@ -980,6 +982,32 @@ private struct UnifiedTranscriptView: View {
         }
     }
 
+}
+
+private struct BilingualTranscriptGroup: View {
+    let group: LiveCaptionSpeakerGroup
+    let sourceLocale: String
+    let targetLocale: String
+    var editSpeaker: (() -> Void)? = nil
+    var editText: (LiveCaptionTurn) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            speakerLabel
+            ForEach(group.turns) { turn in
+                BilingualTranscriptBlock(
+                    turn: turn,
+                    secondLanguageEnabled: secondLanguageEnabled(for: turn),
+                    editText: {
+                        editText(turn)
+                    }
+                )
+                .id(turn.id)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func secondLanguageEnabled(for turn: LiveCaptionTurn) -> Bool {
         LiveCaptionDisplayState.isSecondLanguageEnabled(
             sourceLocale: turn.sourceLocale.isEmpty ? sourceLocale : turn.sourceLocale,
@@ -987,30 +1015,61 @@ private struct UnifiedTranscriptView: View {
             hasTranslatedText: !(turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         )
     }
+
+    private var speakerDisplayName: String {
+        group.speaker.label ?? group.speaker.identifier ?? "Speaker"
+    }
+
+    @ViewBuilder
+    private var speakerLabel: some View {
+        if let editSpeaker {
+            Menu {
+                Button("Edit name") {
+                    editSpeaker()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(speakerDisplayName)
+                        .commandCenterMono()
+                    Image(systemName: "chevron.down")
+                        .font(CommandCenterTypography.caption)
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .help("Edit speaker name")
+        } else {
+            Text(speakerDisplayName)
+                .commandCenterMono()
+        }
+    }
 }
 
-private struct BilingualTranscriptRow: View {
+private struct BilingualTranscriptBlock: View {
     let turn: LiveCaptionTurn
     let secondLanguageEnabled: Bool
-    var editSpeaker: (() -> Void)? = nil
     var editText: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                speakerLabel
-                Spacer()
-                if let editText {
-                    Button {
-                        editText()
-                    } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .buttonStyle(CommandCenterIconButtonStyle())
-                    .help("Correct caption")
+        HStack(alignment: .top, spacing: 8) {
+            transcriptText
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let editText {
+                Button {
+                    editText()
+                } label: {
+                    Image(systemName: "pencil")
                 }
+                .buttonStyle(CommandCenterIconButtonStyle())
+                .help("Correct caption")
             }
+        }
+    }
 
+    @ViewBuilder
+    private var transcriptText: some View {
+        VStack(alignment: .leading, spacing: 7) {
             switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled) {
             case .translated(let primaryText, let sourceText):
                 Text(primaryText)
@@ -1047,35 +1106,6 @@ private struct BilingualTranscriptRow: View {
                     .commandCenterMono()
                     .foregroundStyle(CommandCenterPalette.warning)
             }
-        }
-    }
-
-    private var speakerDisplayName: String {
-        turn.speaker.label ?? turn.speaker.identifier ?? "Speaker"
-    }
-
-    @ViewBuilder
-    private var speakerLabel: some View {
-        if let editSpeaker {
-            Menu {
-                Button("Edit name") {
-                    editSpeaker()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(speakerDisplayName)
-                        .commandCenterMono()
-                    Image(systemName: "chevron.down")
-                        .font(CommandCenterTypography.caption)
-                        .foregroundStyle(CommandCenterPalette.secondaryText)
-                }
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .help("Edit speaker name")
-        } else {
-            Text(speakerDisplayName)
-                .commandCenterMono()
         }
     }
 }

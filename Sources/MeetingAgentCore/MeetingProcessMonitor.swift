@@ -32,6 +32,10 @@ public final class MeetingProcessMonitor {
         ignoredProcessIDs.insert(processID)
     }
 
+    public func allowReprompt(processID: pid_t) {
+        promptedProcessIDs.remove(processID)
+    }
+
     public func reconcileRunningProcessIDs(_ runningProcessIDs: Set<pid_t>) {
         promptedProcessIDs = promptedProcessIDs.intersection(runningProcessIDs)
         ignoredProcessIDs = ignoredProcessIDs.intersection(runningProcessIDs)

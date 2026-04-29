@@ -56,6 +56,22 @@ public enum LiveCaptionChunkState: String, Codable, Equatable {
     case frozen
 }
 
+public enum LiveCaptionDisplayBlockState: String, Codable, Equatable {
+    case draft
+    case sealed
+}
+
+public enum LiveCaptionTranslationState: String, Codable, Equatable {
+    case draft
+    case pendingFinal
+    case final
+}
+
+public enum LiveCaptionBoundaryStrength: String, Codable, Equatable {
+    case soft
+    case hard
+}
+
 public enum LiveCaptionFreezeReason: String, Codable, Equatable {
     case speechFinal
     case speakerChanged
@@ -63,6 +79,15 @@ public enum LiveCaptionFreezeReason: String, Codable, Equatable {
     case maxDuration
     case punctuation
     case manualStop
+
+    public var boundaryStrength: LiveCaptionBoundaryStrength {
+        switch self {
+        case .speechFinal, .speakerChanged, .manualStop:
+            return .hard
+        case .maxLength, .maxDuration, .punctuation:
+            return .soft
+        }
+    }
 }
 
 public struct MeetingKeyTerm: Codable, Equatable, Identifiable {
@@ -130,6 +155,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var chunkState: LiveCaptionChunkState
     public var translationRevision: Int
     public var freezeReason: LiveCaptionFreezeReason?
+    public var displayState: LiveCaptionDisplayBlockState
+    public var translationState: LiveCaptionTranslationState
+    public var boundaryReason: LiveCaptionFreezeReason?
+    public var boundaryStrength: LiveCaptionBoundaryStrength?
 
     public init(
         id: String? = nil,
@@ -146,8 +175,15 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         createdAt: Date = Date(),
         chunkState: LiveCaptionChunkState = .frozen,
         translationRevision: Int = 0,
-        freezeReason: LiveCaptionFreezeReason? = nil
+        freezeReason: LiveCaptionFreezeReason? = nil,
+        displayState: LiveCaptionDisplayBlockState? = nil,
+        translationState: LiveCaptionTranslationState? = nil,
+        boundaryReason: LiveCaptionFreezeReason? = nil,
+        boundaryStrength: LiveCaptionBoundaryStrength? = nil
     ) {
+        let resolvedDisplayState = displayState ?? (chunkState == .draft ? .draft : .sealed)
+        let resolvedBoundaryReason = boundaryReason ?? freezeReason
+        let resolvedBoundaryStrength = boundaryStrength ?? resolvedBoundaryReason?.boundaryStrength
         self.id = id ?? sourceSegmentID
         self.sourceSegmentID = sourceSegmentID
         self.sourceSegmentIDs = sourceSegmentIDs ?? [sourceSegmentID]
@@ -163,6 +199,15 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         self.chunkState = chunkState
         self.translationRevision = translationRevision
         self.freezeReason = freezeReason
+        self.displayState = resolvedDisplayState
+        self.translationState = translationState ?? {
+            if resolvedDisplayState == .draft {
+                return .draft
+            }
+            return resolvedBoundaryStrength == .hard ? .final : .draft
+        }()
+        self.boundaryReason = resolvedBoundaryReason
+        self.boundaryStrength = resolvedBoundaryStrength
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -181,6 +226,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         case chunkState
         case translationRevision
         case freezeReason
+        case displayState
+        case translationState
+        case boundaryReason
+        case boundaryStrength
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,6 +249,46 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         chunkState = try container.decodeIfPresent(LiveCaptionChunkState.self, forKey: .chunkState) ?? .frozen
         translationRevision = try container.decodeIfPresent(Int.self, forKey: .translationRevision) ?? 0
         freezeReason = try container.decodeIfPresent(LiveCaptionFreezeReason.self, forKey: .freezeReason)
+        let decodedDisplayState = try container.decodeIfPresent(LiveCaptionDisplayBlockState.self, forKey: .displayState)
+        let decodedTranslationState = try container.decodeIfPresent(LiveCaptionTranslationState.self, forKey: .translationState)
+        let decodedBoundaryReason = try container.decodeIfPresent(LiveCaptionFreezeReason.self, forKey: .boundaryReason) ?? freezeReason
+        let decodedBoundaryStrength = try container.decodeIfPresent(LiveCaptionBoundaryStrength.self, forKey: .boundaryStrength) ?? decodedBoundaryReason?.boundaryStrength
+        let resolvedDisplayState = decodedDisplayState ?? (chunkState == .draft ? .draft : .sealed)
+        let resolvedTranslationState = decodedTranslationState ?? {
+            if resolvedDisplayState == .draft {
+                return .draft
+            }
+            return decodedBoundaryStrength == .hard ? .final : .draft
+        }()
+        displayState = resolvedDisplayState
+        translationState = resolvedTranslationState
+        boundaryReason = decodedBoundaryReason
+        boundaryStrength = decodedBoundaryStrength
+    }
+}
+
+public struct LiveCaptionSpeakerGroup: Equatable, Identifiable {
+    public var id: String
+    public var speaker: TranscriptSpeaker
+    public var turns: [LiveCaptionTurn]
+
+    public init(id: String, speaker: TranscriptSpeaker, turns: [LiveCaptionTurn]) {
+        self.id = id
+        self.speaker = speaker
+        self.turns = turns
+    }
+
+    public static func groups(from turns: [LiveCaptionTurn]) -> [LiveCaptionSpeakerGroup] {
+        var groups: [LiveCaptionSpeakerGroup] = []
+        for turn in turns {
+            if let lastIndex = groups.indices.last,
+               groups[lastIndex].speaker == turn.speaker {
+                groups[lastIndex].turns.append(turn)
+            } else {
+                groups.append(LiveCaptionSpeakerGroup(id: turn.id, speaker: turn.speaker, turns: [turn]))
+            }
+        }
+        return groups
     }
 }
 
@@ -264,8 +353,14 @@ public struct LiveCaptionStore: Equatable {
             targetLocale: targetLocale,
             isFinal: segment.isFinal,
             captionHealth: .live,
-            translationHealth: segment.isFinal ? .pending : .idle,
-            createdAt: segment.createdAt
+            translationHealth: .pending,
+            createdAt: segment.createdAt,
+            chunkState: segment.isFinal ? .frozen : .draft,
+            translationRevision: 1,
+            displayState: segment.isFinal ? .sealed : .draft,
+            translationState: .draft,
+            boundaryReason: nil,
+            boundaryStrength: nil
         )
         if let representedIndex = turns.firstIndex(where: { $0.sourceSegmentIDs.contains(segment.id) }),
            turns[representedIndex].sourceSegmentIDs.count > 1 {
@@ -277,9 +372,22 @@ public struct LiveCaptionStore: Equatable {
             if previousTurn.originalText == turn.originalText {
                 updated.translatedText = previousTurn.translatedText
                 updated.translationHealth = previousTurn.translationHealth
+                updated.translationRevision = previousTurn.translationRevision
+            } else {
+                if previousTurn.chunkState == .draft,
+                   turn.chunkState == .draft,
+                   let translatedText = previousTurn.translatedText,
+                   !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    updated.translatedText = translatedText
+                }
+                updated.translationRevision = previousTurn.translationRevision + 1
             }
             turns[index] = updated
             return updated
+        }
+        if let index = provisionalMergeTargetIndex(for: turn) {
+            turns[index] = mergedProvisionalTurn(turns[index], appending: turn)
+            return turns[index]
         }
         if let index = mergeTargetIndex(for: turn) {
             turns[index] = mergedTurn(turns[index], appending: turn)
@@ -305,11 +413,27 @@ public struct LiveCaptionStore: Equatable {
         return turn
     }
 
+    public mutating func removeNonFinalTurnsNotIn(segmentIDs: Set<String>) {
+        turns.removeAll { !$0.isFinal && !segmentIDs.contains($0.sourceSegmentID) }
+    }
+
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
         guard turn.isFinal,
               let lastIndex = turns.indices.last,
               turns[lastIndex].isFinal,
               turns[lastIndex].speaker == turn.speaker
+        else {
+            return nil
+        }
+        return lastIndex
+    }
+
+    private func provisionalMergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
+        guard !turn.isFinal,
+              let lastIndex = turns.indices.last,
+              turns[lastIndex].speaker == turn.speaker,
+              !turns[lastIndex].sourceSegmentIDs.contains(turn.sourceSegmentID),
+              transcriptTextOverlapsOrContains(turns[lastIndex].originalText, turn.originalText)
         else {
             return nil
         }
@@ -327,6 +451,30 @@ public struct LiveCaptionStore: Equatable {
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
         merged.createdAt = turn.createdAt
+        merged.displayState = turn.displayState
+        merged.translationState = turn.translationState
+        merged.boundaryReason = turn.boundaryReason
+        merged.boundaryStrength = turn.boundaryStrength
+        return merged
+    }
+
+    private func mergedProvisionalTurn(_ existing: LiveCaptionTurn, appending turn: LiveCaptionTurn) -> LiveCaptionTurn {
+        var merged = existing
+        merged.sourceSegmentIDs.append(contentsOf: turn.sourceSegmentIDs.filter { !merged.sourceSegmentIDs.contains($0) })
+        merged.originalText = joinedTranscriptText(existing.originalText, turn.originalText)
+        merged.sourceLocale = turn.sourceLocale
+        merged.targetLocale = turn.targetLocale
+        merged.isFinal = false
+        merged.captionHealth = turn.captionHealth
+        merged.translationHealth = .pending
+        merged.createdAt = turn.createdAt
+        merged.chunkState = .draft
+        merged.translationRevision += 1
+        merged.freezeReason = nil
+        merged.displayState = .draft
+        merged.translationState = .draft
+        merged.boundaryReason = nil
+        merged.boundaryStrength = nil
         return merged
     }
 
@@ -339,7 +487,94 @@ public struct LiveCaptionStore: Equatable {
         if trimmedSecond.isEmpty {
             return trimmedFirst
         }
+        if tokenSequence(normalizedTokens(trimmedFirst), contains: normalizedTokens(trimmedSecond)) {
+            return trimmedFirst
+        }
+        if tokenSequence(normalizedTokens(trimmedSecond), contains: normalizedTokens(trimmedFirst)) {
+            return trimmedSecond
+        }
+        let overlap = suffixPrefixOverlapCount(trimmedFirst, trimmedSecond)
+        if overlap > 0 {
+            let secondRemainder = droppingFirstWords(overlap, from: trimmedSecond)
+            if secondRemainder.isEmpty {
+                return trimmedFirst
+            }
+            return "\(trimmedFirst) \(secondRemainder)"
+        }
         return "\(trimmedFirst) \(trimmedSecond)"
+    }
+
+    private func transcriptTextOverlapsOrContains(_ first: String, _ second: String) -> Bool {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        guard !firstTokens.isEmpty, !secondTokens.isEmpty else {
+            return false
+        }
+        return tokenSequence(firstTokens, contains: secondTokens)
+            || tokenSequence(secondTokens, contains: firstTokens)
+            || suffixPrefixOverlapCount(first, second) > 0
+    }
+
+    private func suffixPrefixOverlapCount(_ first: String, _ second: String) -> Int {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        let maxOverlap = min(firstTokens.count, secondTokens.count)
+        guard maxOverlap > 0 else {
+            return 0
+        }
+        for overlap in stride(from: maxOverlap, through: 1, by: -1) {
+            if Array(firstTokens.suffix(overlap)) == Array(secondTokens.prefix(overlap)) {
+                return overlap
+            }
+        }
+        return 0
+    }
+
+    private func tokenSequence(_ haystack: [String], contains needle: [String]) -> Bool {
+        guard !needle.isEmpty, needle.count <= haystack.count else {
+            return false
+        }
+        if needle.count == haystack.count {
+            return haystack == needle
+        }
+        for start in 0...(haystack.count - needle.count) {
+            if Array(haystack[start..<(start + needle.count)]) == needle {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func normalizedTokens(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private func droppingFirstWords(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.startIndex
+        var insideWord = false
+        while index < text.endIndex {
+            let scalar = text[index].unicodeScalars.first
+            let isWord = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isWord {
+                insideWord = true
+            } else if insideWord {
+                remaining -= 1
+                insideWord = false
+                if remaining == 0 {
+                    return String(text[index...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            index = text.index(after: index)
+        }
+        if insideWord {
+            remaining -= 1
+        }
+        return remaining <= 0 ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public mutating func attachTranslation(_ text: String, toTurnID turnID: String) {
@@ -357,6 +592,11 @@ public struct LiveCaptionStore: Equatable {
     public mutating func markTranslationFailed(forTurnID turnID: String, message: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translationHealth = .failed(message)
+    }
+
+    public mutating func markTranslationFinal(forTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translationState = .final
     }
 
     public mutating func reset(sourceLocale: String, targetLocale: String) {

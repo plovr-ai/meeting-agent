@@ -180,6 +180,35 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(output.segments.first?.sourceProvider, "deepgram-transcribe")
     }
 
+    func testProviderLogsRawDeepgramResponseBeforeMapping() async throws {
+        let response = """
+        {
+          "results": {
+            "utterances": [
+              { "id": "utt-raw", "transcript": "raw hello", "speaker": 1 }
+            ]
+          }
+        }
+        """
+        let logger = RecordingDeepgramRawResponseLogger()
+        let provider = DeepgramAudioTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: RecordingDeepgramClient(response: response),
+            rawResponseLogger: logger
+        )
+
+        let output = try await provider.transcribe(
+            audio: AudioInput(wavURL: URL(fileURLWithPath: "/tmp/capture.wav"), localeIdentifier: "en-US"),
+            options: TranscriptionOptions(sourceLocale: "en-US")
+        )
+
+        XCTAssertEqual(output.segments.first?.text, "raw hello")
+        XCTAssertEqual(logger.entries.count, 1)
+        XCTAssertEqual(logger.entries.first?.context.providerID, "deepgram-transcribe")
+        XCTAssertEqual(logger.entries.first?.context.transport, .http)
+        XCTAssertEqual(String(data: try XCTUnwrap(logger.entries.first?.data), encoding: .utf8), response)
+    }
+
     func testProviderWritesDeepgramSpeakersIntoUserLabelsThroughTranscriptWriter() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-users-\(UUID().uuidString)")
@@ -471,6 +500,19 @@ private final class RecordingDeepgramClient: DeepgramTranscriptionClient {
             wavURL: wavURL
         ))
         return Data(response.utf8)
+    }
+}
+
+private final class RecordingDeepgramRawResponseLogger: DeepgramRawResponseLogger {
+    struct Entry {
+        let data: Data
+        let context: DeepgramRawResponseContext
+    }
+
+    private(set) var entries: [Entry] = []
+
+    func logRawResponse(_ data: Data, context: DeepgramRawResponseContext) {
+        entries.append(Entry(data: data, context: context))
     }
 }
 
