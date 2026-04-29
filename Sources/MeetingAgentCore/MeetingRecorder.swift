@@ -19,7 +19,8 @@ public final class MeetingRecorder {
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
     private var isStartingTranscriber = false
-    private let pendingTranscriptionFrameLimit = 512
+    // Keep roughly 30 seconds of common 10 ms Core Audio callbacks while hosted STT connects.
+    private let pendingTranscriptionFrameLimit = 3_000
 
     public private(set) var state: MeetingRecorderState = .idle
     public weak var realtimeFrameConsumer: RealtimeFrameConsumer?
@@ -150,7 +151,6 @@ public final class MeetingRecorder {
             try diagnosticsTracker?.snapshot().writeIfPossible(to: updatedRecord.diagnosticsURL)
             throw error
         }
-        captureSession = session
         diagnosticsTracker?.markRecording(
             sampleRate: session.outputSampleRate,
             channelCount: session.outputChannelCount
@@ -163,17 +163,28 @@ public final class MeetingRecorder {
             ]
         )
 
-        if let audioURL = updatedRecord.audioURL {
-            writer = try wavWriterFactory(
-                audioURL,
-                UInt32(session.outputSampleRate.rounded()),
-                UInt16(session.outputChannelCount)
-            )
+        do {
+            if let audioURL = updatedRecord.audioURL {
+                writer = try wavWriterFactory(
+                    audioURL,
+                    UInt32(session.outputSampleRate.rounded()),
+                    UInt16(session.outputChannelCount)
+                )
+            }
+
+            if updatedRecord.transcriptURL != nil {
+                isStartingTranscriber = true
+            }
+            captureSession = session
+        } catch {
+            session.stop()
+            diagnosticsTracker?.finish(endedReason: .captureFailed)
+            try diagnosticsTracker?.snapshot().writeIfPossible(to: updatedRecord.diagnosticsURL)
+            throw error
         }
 
         if let transcriptURL = updatedRecord.transcriptURL {
             do {
-                isStartingTranscriber = true
                 let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
                     transcriptURL,
@@ -304,6 +315,7 @@ public final class MeetingRecorder {
     private func flushPendingTranscriptionFrames() throws {
         let frames = pendingTranscriptionFrames
         pendingTranscriptionFrames = []
+        diagnosticsTracker?.recordStartupReplay(frames: frames)
         for frame in frames {
             try appendFrameToTranscriber(frame)
         }
@@ -322,7 +334,9 @@ public final class MeetingRecorder {
     private func bufferPendingTranscriptionFrame(_ frame: AudioFrame) {
         pendingTranscriptionFrames.append(frame)
         if pendingTranscriptionFrames.count > pendingTranscriptionFrameLimit {
-            pendingTranscriptionFrames.removeFirst(pendingTranscriptionFrames.count - pendingTranscriptionFrameLimit)
+            let overflow = pendingTranscriptionFrames.count - pendingTranscriptionFrameLimit
+            pendingTranscriptionFrames.removeFirst(overflow)
+            diagnosticsTracker?.recordDroppedStartupReplayFrames(overflow)
         }
     }
 

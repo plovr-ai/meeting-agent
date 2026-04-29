@@ -122,6 +122,9 @@ public struct MeetingExportService {
                 "- Peak level: \(format(diagnostics.peakLevel))",
                 "- Silent duration seconds: \(format(diagnostics.silentDurationSeconds))",
                 "- Dropped frames: \(diagnostics.droppedFrameCount)",
+                "- Startup replay frames: \(diagnostics.startupReplayFrameCount)",
+                "- Startup replay duration seconds: \(format(diagnostics.startupReplayDurationSeconds))",
+                "- Startup replay dropped frames: \(diagnostics.startupReplayDroppedFrameCount)",
                 ""
             ])
         } else {

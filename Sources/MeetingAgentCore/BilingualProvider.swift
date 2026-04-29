@@ -100,6 +100,36 @@ public struct TranslationOptions: Equatable {
     }
 }
 
+public extension TranslationOptions {
+    var isSameLanguage: Bool {
+        LocaleLanguageMatcher.isSameLanguage(sourceLocale, targetLocale)
+    }
+}
+
+enum LocaleLanguageMatcher {
+    static func isSameLanguage(_ lhs: String, _ rhs: String) -> Bool {
+        guard let left = languageCode(from: lhs),
+              let right = languageCode(from: rhs)
+        else {
+            return false
+        }
+        return left == right
+    }
+
+    private static func languageCode(from localeIdentifier: String) -> String? {
+        let normalized = localeIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+        guard let language = normalized.split(separator: "-").first,
+              !language.isEmpty
+        else {
+            return nil
+        }
+        return String(language)
+    }
+}
+
 public typealias SpeechTranslationOptions = TranslationOptions
 public typealias BilingualSubtitleOptions = TranslationOptions
 

@@ -997,6 +997,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func scheduleCaptionTextTranslationIfNeeded() {
+        completeSameLanguageCaptionTranslationsIfNeeded()
         let draftCandidates = liveCaptionStore.turns.filter { turn in
             guard turn.translationHealth == .pending,
                   shouldScheduleDraftTranslation(for: turn),
@@ -1061,6 +1062,19 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    private func completeSameLanguageCaptionTranslationsIfNeeded() {
+        var completedAny = false
+        for turn in liveCaptionStore.turns where turn.translationHealth == .pending {
+            let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+            guard options.isSameLanguage else { continue }
+            completeCaptionTranslationWithoutProvider(for: turn)
+            completedAny = true
+        }
+        guard completedAny else { return }
+        liveCaptionTurns = liveCaptionStore.turns
+        updateTranslationHealthFromRealtimeStatus()
+    }
+
     private func shouldScheduleDraftTranslation(for turn: LiveCaptionTurn) -> Bool {
         guard turn.translationState != .final else {
             return false
@@ -1094,6 +1108,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         for request in requests {
             let turn = request.turn
             let sourceText = translationSourceText(for: turn, final: !request.isDraft)
+            let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+            if options.isSameLanguage {
+                completeCaptionTranslationWithoutProvider(for: turn)
+                liveCaptionTurns = liveCaptionStore.turns
+                continue
+            }
             let segment = TranscriptSegment(
                 id: turn.sourceSegmentID,
                 speaker: turn.speaker,
@@ -1112,7 +1132,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 )
                 let translated = try await provider.translate(
                     transcript: TranscriptDocument(segments: [segment]),
-                    options: TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
+                    options: options
                 )
                 let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
                 request.performanceEventLogger?.log(
@@ -1146,6 +1166,15 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
         }
         updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func completeCaptionTranslationWithoutProvider(for turn: LiveCaptionTurn) {
+        liveCaptionStore.markTranslationCompleteWithoutText(forTurnID: turn.id)
+        draftTranslationKeysByTurnID[turn.id] = draftCaptionTranslationKey(for: turn)
+        draftTranslationCharacterCountsByTurnID[turn.id] = turn.originalText.count
+        finalTranslationKeysByTurnID[turn.id] = finalCaptionTranslationKey(for: turn)
+        draftTranslationInFlightByTurnID.removeValue(forKey: turn.id)
+        finalTranslationInFlightTurnIDs.remove(turn.id)
     }
 
     private func translationSourceText(for turn: LiveCaptionTurn, final: Bool) -> String {

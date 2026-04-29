@@ -159,6 +159,7 @@ final class MeetingExportServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Transcribed"))
         XCTAssertTrue(markdown.contains("Plain transcript text for validation."))
         XCTAssertTrue(markdown.contains("recordingSaved"))
+        XCTAssertTrue(markdown.contains("Startup replay frames: 0"))
     }
 }
 

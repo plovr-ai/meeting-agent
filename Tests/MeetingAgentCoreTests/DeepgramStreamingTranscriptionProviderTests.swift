@@ -406,6 +406,43 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
+    func testStreamingTranscriberSendsAudioFramesSerially() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-serial-send-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let session = FakeDeepgramStreamingSession()
+        session.suspendedFramePCM = Data([1])
+        let client = FakeDeepgramStreamingClient(session: session)
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 48_000,
+            channelCount: 1
+        ))
+        let first = AudioFrame(pcm: Data([1]), sampleRate: 48_000, channelCount: 1, timestampNanos: 1)
+        let second = AudioFrame(pcm: Data([2]), sampleRate: 48_000, channelCount: 1, timestampNanos: 2)
+
+        try transcriber.append(first)
+        try transcriber.append(second)
+        try await waitFor { session.isSuspendingFrame }
+
+        XCTAssertEqual(session.sentFrames, [])
+
+        session.resumeSuspendedSend()
+        try await waitFor { session.sentFrames.count == 2 }
+        transcriber.finish()
+
+        XCTAssertEqual(session.sentFrames, [first, second])
+    }
+
     func testStreamingResponseKeepsStableIDWhenInterimWordEndTimeChanges() throws {
         let first = DeepgramStreamingResponseMapper.segments(
             from: Data("""
@@ -636,7 +673,13 @@ private func performanceEventNames(at url: URL) throws -> [String] {
 private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
     private(set) var sentFrames: [AudioFrame] = []
+    var suspendedFramePCM: Data?
+    private var suspendedSendContinuation: CheckedContinuation<Void, Never>?
     let segments: AsyncStream<TranscriptSegment>
+
+    var isSuspendingFrame: Bool {
+        suspendedSendContinuation != nil
+    }
 
     init() {
         var streamContinuation: AsyncStream<TranscriptSegment>.Continuation!
@@ -647,7 +690,17 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
     }
 
     func send(_ frame: AudioFrame) async throws {
+        if frame.pcm == suspendedFramePCM {
+            await withCheckedContinuation { continuation in
+                suspendedSendContinuation = continuation
+            }
+        }
         sentFrames.append(frame)
+    }
+
+    func resumeSuspendedSend() {
+        suspendedSendContinuation?.resume()
+        suspendedSendContinuation = nil
     }
 
     func close() async {
@@ -666,4 +719,19 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
             continuation?.yield(segment)
         }
     }
+}
+
+private func waitFor(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: () -> Bool
+) async throws {
+    let interval: UInt64 = 10_000_000
+    let attempts = max(1, Int(timeoutNanoseconds / interval))
+    for _ in 0..<attempts {
+        if condition() {
+            return
+        }
+        try await Task.sleep(nanoseconds: interval)
+    }
+    XCTAssertTrue(condition(), "Timed out waiting for condition")
 }
