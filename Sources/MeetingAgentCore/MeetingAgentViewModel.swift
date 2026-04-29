@@ -58,12 +58,21 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var draftTranslationKeysByTurnID: [String: String] = [:]
     private var draftTranslationInFlightByTurnID: [String: Int] = [:]
     private var draftTranslationTasksByTurnID: [String: Task<Void, Never>] = [:]
+    private var captionTranslationTasksByRequestID: [String: Task<Void, Never>] = [:]
+    private var pendingDraftTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
+    private var pendingFinalTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
+    private var activeCaptionTranslationRequestIDs = Set<String>()
+    private var activeDraftTranslationRequestIDs = Set<String>()
+    private var activeDraftTranslationRequestIDsByTurnID: [String: String] = [:]
+    private var activeDraftTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
     private var draftTranslationCharacterCountsByTurnID: [String: Int] = [:]
     private var draftTranslationAttemptDatesByTurnID: [String: Date] = [:]
     private var finalTranslationKeysByTurnID: [String: String] = [:]
     private var finalTranslationInFlightTurnIDs = Set<String>()
     private let minDraftTranslationCharacterDelta = 80
     private let minDraftTranslationInterval: TimeInterval = 2
+    private let maxConcurrentCaptionTranslations = 2
+    private let maxConcurrentDraftCaptionTranslations = 1
     private let captionTranslationProviderFactory: (SpeechTranscriptionConfiguration) -> TextTranslationProvider?
     private let summaryProviderFactory: (SpeechTranscriptionConfiguration) -> MeetingSummaryProvider
     private let processTargetsProvider: () -> [AudioCaptureTarget]
@@ -838,6 +847,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         draftTranslationInFlightByTurnID.removeAll()
         draftTranslationTasksByTurnID.values.forEach { $0.cancel() }
         draftTranslationTasksByTurnID.removeAll()
+        captionTranslationTasksByRequestID.values.forEach { $0.cancel() }
+        captionTranslationTasksByRequestID.removeAll()
+        pendingDraftTranslationRequestsByTurnID.removeAll()
+        pendingFinalTranslationRequestsByTurnID.removeAll()
+        activeCaptionTranslationRequestIDs.removeAll()
+        activeDraftTranslationRequestIDs.removeAll()
+        activeDraftTranslationRequestIDsByTurnID.removeAll()
+        activeDraftTranslationRequestsByTurnID.removeAll()
         draftTranslationCharacterCountsByTurnID.removeAll()
         draftTranslationAttemptDatesByTurnID.removeAll()
         finalTranslationKeysByTurnID.removeAll()
@@ -988,6 +1005,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
+    private func logTranslationCancelled(_ request: CaptionTranslationRequest, reason: String) {
+        request.performanceEventLogger?.log(
+            "caption_translation_cancelled",
+            segmentID: request.turn.id,
+            isFinal: !request.isDraft,
+            textLength: request.turn.originalText.count,
+            metadata: translationMetadata(for: request, extra: ["reason": reason])
+        )
+    }
+
     private func translationMetadata(
         for request: CaptionTranslationRequest,
         extra: [String: String] = [:]
@@ -1083,21 +1110,17 @@ public final class MeetingAgentViewModel: ObservableObject {
             return request
         }
 
-        let requests = draftRequests + finalRequests
-        guard !requests.isEmpty else { return }
         for request in draftRequests {
-            draftTranslationTasksByTurnID[request.turn.id]?.cancel()
-            let task = Task { [weak self, provider, request] in
-                guard let self else { return }
-                await self.translateCaptionTurn(request, using: provider)
+            if let pending = pendingDraftTranslationRequestsByTurnID[request.turn.id] {
+                logTranslationCancelled(pending, reason: "superseded_by_newer_draft")
             }
-            draftTranslationTasksByTurnID[request.turn.id] = task
+            cancelActiveDraftTranslation(forTurnID: request.turn.id, reason: "superseded_by_newer_draft")
+            pendingDraftTranslationRequestsByTurnID[request.turn.id] = request
         }
-        if !finalRequests.isEmpty {
-            Task { [weak self, provider, finalRequests] in
-                await self?.translateCaptionTurns(finalRequests, using: provider)
-            }
+        for request in finalRequests {
+            pendingFinalTranslationRequestsByTurnID[request.turn.id] = request
         }
+        pumpCaptionTranslationQueue(using: provider)
     }
 
     private func completeSameLanguageCaptionTranslationsIfNeeded() {
@@ -1151,15 +1174,71 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
-    private func translateCaptionTurns(_ requests: [CaptionTranslationRequest], using provider: TextTranslationProvider) async {
-        for request in requests {
-            await translateCaptionTurn(request, using: provider)
+    private func pumpCaptionTranslationQueue(using provider: TextTranslationProvider) {
+        while activeCaptionTranslationRequestIDs.count < maxConcurrentCaptionTranslations {
+            if let request = nextPendingFinalTranslationRequest() {
+                pendingFinalTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
+                startCaptionTranslationRequest(request, using: provider)
+                continue
+            }
+            guard activeDraftTranslationRequestIDs.count < maxConcurrentDraftCaptionTranslations,
+                  let request = nextPendingDraftTranslationRequest()
+            else {
+                break
+            }
+            pendingDraftTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
+            startCaptionTranslationRequest(request, using: provider)
         }
-        updateTranslationHealthFromRealtimeStatus()
+    }
+
+    private func nextPendingFinalTranslationRequest() -> CaptionTranslationRequest? {
+        pendingFinalTranslationRequestsByTurnID.values
+            .sorted { lhs, rhs in
+                if lhs.turn.createdAt == rhs.turn.createdAt {
+                    return lhs.turn.id < rhs.turn.id
+                }
+                return lhs.turn.createdAt < rhs.turn.createdAt
+            }
+            .first
+    }
+
+    private func nextPendingDraftTranslationRequest() -> CaptionTranslationRequest? {
+        pendingDraftTranslationRequestsByTurnID.values
+            .sorted { lhs, rhs in
+                if lhs.turn.createdAt == rhs.turn.createdAt {
+                    return lhs.turn.id > rhs.turn.id
+                }
+                return lhs.turn.createdAt > rhs.turn.createdAt
+            }
+            .first
+    }
+
+    private func startCaptionTranslationRequest(
+        _ request: CaptionTranslationRequest,
+        using provider: TextTranslationProvider
+    ) {
+        activeCaptionTranslationRequestIDs.insert(request.id)
+        if request.isDraft {
+            activeDraftTranslationRequestIDs.insert(request.id)
+            activeDraftTranslationRequestIDsByTurnID[request.turn.id] = request.id
+            activeDraftTranslationRequestsByTurnID[request.turn.id] = request
+            draftTranslationTasksByTurnID[request.turn.id]?.cancel()
+        }
+        let task = Task { [weak self, provider, request] in
+            guard let self else { return }
+            await self.translateCaptionTurn(request, using: provider)
+        }
+        captionTranslationTasksByRequestID[request.id] = task
+        if request.isDraft {
+            draftTranslationTasksByTurnID[request.turn.id] = task
+        }
     }
 
     private func translateCaptionTurn(_ request: CaptionTranslationRequest, using provider: TextTranslationProvider) async {
-        defer { updateTranslationHealthFromRealtimeStatus() }
+        defer {
+            updateTranslationHealthFromRealtimeStatus()
+            pumpCaptionTranslationQueue(using: provider)
+        }
         let turn = request.turn
         if request.isDraft {
             await Task.yield()
@@ -1173,6 +1252,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         if options.isSameLanguage {
             completeCaptionTranslationWithoutProvider(for: turn)
             liveCaptionTurns = liveCaptionStore.turns
+            clearTranslationInFlight(request)
             return
         }
         let segment = TranscriptSegment(
@@ -1253,10 +1333,28 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
             .map(\.id)
         for turnID in supersededTurnIDs {
+            if let pending = pendingDraftTranslationRequestsByTurnID.removeValue(forKey: turnID) {
+                logTranslationCancelled(pending, reason: "superseded_by_final")
+            }
+            cancelActiveDraftTranslation(forTurnID: turnID, reason: "superseded_by_final")
             draftTranslationTasksByTurnID[turnID]?.cancel()
             draftTranslationTasksByTurnID.removeValue(forKey: turnID)
             draftTranslationInFlightByTurnID.removeValue(forKey: turnID)
         }
+    }
+
+    private func cancelActiveDraftTranslation(forTurnID turnID: String, reason: String) {
+        guard let requestID = activeDraftTranslationRequestIDsByTurnID.removeValue(forKey: turnID) else {
+            return
+        }
+        if let request = activeDraftTranslationRequestsByTurnID.removeValue(forKey: turnID) {
+            logTranslationCancelled(request, reason: reason)
+        }
+        draftTranslationTasksByTurnID[turnID]?.cancel()
+        draftTranslationTasksByTurnID.removeValue(forKey: turnID)
+        activeCaptionTranslationRequestIDs.remove(requestID)
+        activeDraftTranslationRequestIDs.remove(requestID)
+        captionTranslationTasksByRequestID.removeValue(forKey: requestID)
     }
 
     private func completeCaptionTranslationWithoutProvider(for turn: LiveCaptionTurn) {
@@ -1264,6 +1362,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         draftTranslationKeysByTurnID[turn.id] = draftCaptionTranslationKey(for: turn)
         draftTranslationCharacterCountsByTurnID[turn.id] = turn.originalText.count
         finalTranslationKeysByTurnID[turn.id] = finalCaptionTranslationKey(for: turn)
+        pendingDraftTranslationRequestsByTurnID.removeValue(forKey: turn.id)
+        pendingFinalTranslationRequestsByTurnID.removeValue(forKey: turn.id)
         draftTranslationInFlightByTurnID.removeValue(forKey: turn.id)
         finalTranslationInFlightTurnIDs.remove(turn.id)
     }
@@ -1296,6 +1396,13 @@ public final class MeetingAgentViewModel: ObservableObject {
               current.translationState != .final,
               shouldScheduleDraftTranslation(for: current)
         else {
+            request.performanceEventLogger?.log(
+                "caption_translation_stale",
+                segmentID: request.turn.id,
+                isFinal: false,
+                textLength: request.turn.originalText.count,
+                metadata: translationMetadata(for: request, extra: ["reason": "draft_no_longer_current"])
+            )
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
@@ -1318,6 +1425,13 @@ public final class MeetingAgentViewModel: ObservableObject {
                 && $0.displayState == .sealed
                 && $0.boundaryStrength == .hard
         }) else {
+            request.performanceEventLogger?.log(
+                "caption_translation_stale",
+                segmentID: request.turn.id,
+                isFinal: true,
+                textLength: request.turn.originalText.count,
+                metadata: translationMetadata(for: request, extra: ["reason": "final_no_longer_current"])
+            )
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
@@ -1334,7 +1448,16 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func clearTranslationInFlight(_ request: CaptionTranslationRequest) {
+        activeCaptionTranslationRequestIDs.remove(request.id)
+        activeDraftTranslationRequestIDs.remove(request.id)
+        captionTranslationTasksByRequestID.removeValue(forKey: request.id)
         if request.isDraft {
+            if activeDraftTranslationRequestIDsByTurnID[request.turn.id] == request.id {
+                activeDraftTranslationRequestIDsByTurnID.removeValue(forKey: request.turn.id)
+            }
+            if activeDraftTranslationRequestsByTurnID[request.turn.id]?.id == request.id {
+                activeDraftTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
+            }
             if draftTranslationInFlightByTurnID[request.turn.id] == request.revision {
                 draftTranslationInFlightByTurnID.removeValue(forKey: request.turn.id)
                 draftTranslationTasksByTurnID.removeValue(forKey: request.turn.id)
