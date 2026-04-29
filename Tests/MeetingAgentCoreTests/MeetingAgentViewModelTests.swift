@@ -936,6 +936,45 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, latestText)
     }
 
+    func testUnchangedInterimSegmentIsNotIngestedAgainOnRefresh() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["dg-active": "临时翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-active",
+                text: "hello interim",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "临时翻译" }
+
+        viewModel.drainRecordingFrames()
+
+        let ingestedEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter {
+                $0.event == "caption_segment_ingested"
+                    && $0.segmentID == "dg-active"
+                    && $0.metadata["path"] == "interim"
+            }
+
+        XCTAssertEqual(ingestedEvents.count, 1)
+        XCTAssertEqual(provider.requests.count, 1)
+    }
+
     func testInterimDeepgramSegmentDisplaysWithDraftTranslationBeforeFinalArrives() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
