@@ -2212,6 +2212,43 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(summary.provider, "openrouter:openai/gpt-4.1-mini")
     }
 
+    func testGenerateSummaryUsesConfiguredTargetLanguage() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(
+            name: "Launch Review",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000)
+        )
+        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US")
+        ])
+        try transcriptWriter.close()
+        let provider = CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini")
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            targetLocaleIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            hostedSummaryModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "test-key"
+        )
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechConfiguration: configuration,
+            summaryProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+
+        try await viewModel.generateSummary(for: stored.record.id)
+
+        XCTAssertEqual(provider.receivedInputs.first?.language, "en-US")
+        XCTAssertEqual(provider.receivedInputs.first?.targetLanguage, "zh-CN")
+    }
+
     func testDefaultSummaryProviderUsesSettingsBackedOpenRouterModel() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
@@ -2901,10 +2938,16 @@ private final class DelayedViewModelFakeTextTranslationProvider: TextTranslation
     }
 }
 
-private struct CapturingSummaryProvider: MeetingSummaryProvider {
+private final class CapturingSummaryProvider: MeetingSummaryProvider {
     let providerName: String
+    private(set) var receivedInputs: [MeetingSummaryInput] = []
+
+    init(providerName: String) {
+        self.providerName = providerName
+    }
 
     func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
+        receivedInputs.append(input)
         let usableSegments = input.segments.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
