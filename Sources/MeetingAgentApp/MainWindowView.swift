@@ -610,10 +610,7 @@ private struct MeetingCommandCenterView: View {
 
                 AgendaContextStrip(
                     meeting: meeting,
-                    attendees: meeting.attendees,
-                    topics: meeting.agendaTopics,
-                    goalTitle: meeting.meetingGoal?.title,
-                    editAgenda: beginDetailAgendaEdit
+                    topics: meeting.agendaTopics
                 )
 
                 HStack(spacing: 0) {
@@ -672,6 +669,26 @@ private struct MeetingCommandCenterView: View {
             .buttonStyle(.plain)
             .font(CommandCenterTypography.button)
             .foregroundStyle(CommandCenterPalette.primary)
+
+            Button(action: beginDetailAgendaEdit) {
+                CommandCenterChip(
+                    title: goalDisplay,
+                    tint: CommandCenterPalette.primary,
+                    filled: meeting.meetingGoal != nil
+                )
+            }
+            .buttonStyle(.plain)
+            .help("Edit meeting goal")
+
+            Button(action: beginDetailAgendaEdit) {
+                CommandCenterChip(
+                    title: attendeesDisplay,
+                    tint: CommandCenterPalette.cyan,
+                    filled: !meeting.attendees.isEmpty
+                )
+            }
+            .buttonStyle(.plain)
+            .help("Edit attendees")
 
             Spacer()
 
@@ -750,6 +767,15 @@ private struct MeetingCommandCenterView: View {
         .help("Meeting actions")
     }
 
+    private var goalDisplay: String {
+        let normalized = meeting.meetingGoal?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? "No goal" : normalized
+    }
+
+    private var attendeesDisplay: String {
+        meeting.attendees.isEmpty ? "No attendees" : "\(meeting.attendees.count) attendees"
+    }
+
     private func beginDetailAgendaEdit() {
         editAgendaTarget = meeting
         draft = AgendaDraft(meeting: meeting)
@@ -778,15 +804,10 @@ private struct MeetingCommandCenterView: View {
 
 private struct AgendaContextStrip: View {
     let meeting: MeetingRecord
-    let attendees: [MeetingAttendee]
     let topics: [MeetingAgendaTopic]
-    let goalTitle: String?
-    let editAgenda: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            CommandCenterChip(title: goalDisplay, tint: CommandCenterPalette.primary, filled: goalTitle != nil)
-            CommandCenterChip(title: "\(attendees.count) attendees", tint: CommandCenterPalette.cyan)
             ForEach(topics.prefix(3)) { topic in
                 CommandCenterChip(title: topic.title)
             }
@@ -794,10 +815,6 @@ private struct AgendaContextStrip: View {
                 CommandCenterChip(title: "+\(topics.count - 3) topics")
             }
             Spacer()
-            Button(action: editAgenda) {
-                Label("Edit Agenda", systemImage: "square.and.pencil")
-            }
-            .buttonStyle(CommandCenterActionButtonStyle())
             if let scheduledStartAt = meeting.scheduledStartAt {
                 CommandCenterChip(title: scheduledStartAt.formatted(date: .omitted, time: .shortened))
             }
@@ -810,11 +827,6 @@ private struct AgendaContextStrip: View {
                 .fill(CommandCenterPalette.border)
                 .frame(height: 1)
         }
-    }
-
-    private var goalDisplay: String {
-        let normalized = goalTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? "No goal" : normalized
     }
 }
 
