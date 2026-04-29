@@ -445,3 +445,19 @@ Transcript latency can compare event wall time against meeting start plus audio 
 Before summarizing performance events, inspect each event family for its actual timestamp fields and correlation keys instead of applying one latency formula globally.
 
 ---
+
+## [81] Do not let draft caches satisfy final translation state
+
+**Date**: 2026-04-29
+**Category**: logic-error
+
+### What went wrong
+The first persisted caption translation hydration treated any cached translation as complete for a reopened hard-final caption, so a draft cache could have blocked the required final translation request.
+
+### Correct approach
+Hydrate draft cached translations only for draft or soft-boundary caption state. Hard-final caption turns require a cache explicitly marked as final; otherwise they must remain eligible for final translation.
+
+### How to avoid
+When caching derived pipeline output, persist and check the lifecycle state that determines whether downstream work is truly complete.
+
+---
