@@ -356,3 +356,25 @@ public struct TranscriptSegmentAccumulator {
         )
     }
 }
+
+public final class FileBackedTranscriptUpdateSink: TranscriptUpdateSink {
+    private let writer: TranscriptFileWriter
+    private var accumulator: TranscriptSegmentAccumulator
+
+    public init(
+        transcriptURL: URL,
+        initialDocument: TranscriptDocument = TranscriptDocument()
+    ) throws {
+        self.writer = try TranscriptFileWriter(url: transcriptURL)
+        self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
+    }
+
+    public func receive(_ update: TranscriptSegmentUpdate) {
+        let result = accumulator.apply(update)
+        if let text = result.plainTextReplacement {
+            try? writer.replace(with: text)
+        } else {
+            try? writer.replace(with: result.document.segments)
+        }
+    }
+}

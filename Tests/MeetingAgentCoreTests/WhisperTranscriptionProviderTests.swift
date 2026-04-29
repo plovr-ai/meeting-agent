@@ -349,6 +349,39 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         }
     }
 
+    func testProviderStartContextEmitsTranscriptUpdates() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-provider-context-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.bin")
+        )
+        let updateSink = RecordingWhisperTranscriptUpdateSink()
+        let provider = WhisperSpeechTranscriptionProvider(
+            configuration: configuration,
+            processRunner: OutputWritingWhisperProcessRunner(outputText: "hello from whisper\n")
+        )
+
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 16_000,
+            channelCount: 1,
+            transcriptUpdateSink: updateSink
+        ))
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        transcriber.finish()
+
+        XCTAssertEqual(updateSink.updates.count, 1)
+        guard case .replaceAll(let segments) = updateSink.updates.first else {
+            return XCTFail("Expected replaceAll update")
+        }
+        XCTAssertEqual(segments.map(\.text), ["hello from whisper"])
+        XCTAssertEqual(segments.first?.sourceProvider, "whisper")
+    }
+
     func testTranscribesExistingAudioFile() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-retry-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -621,6 +654,14 @@ private final class RecordingWhisperProcessRunner: WhisperProcessRunning {
         if exitCode != 0 {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: whisper-cli exited with status \(exitCode): \(stderr)")
         }
+    }
+}
+
+private final class RecordingWhisperTranscriptUpdateSink: TranscriptUpdateSink {
+    private(set) var updates: [TranscriptSegmentUpdate] = []
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
     }
 }
 
