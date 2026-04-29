@@ -20,16 +20,27 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
     }
 
-    func testMainWindowRoutesThroughAgendaFirstSidebarSections() throws {
+    func testMainWindowRoutesThroughMeetingRecordBuckets() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
         XCTAssertTrue(source.contains("enum MainWindowDestination"))
         XCTAssertTrue(source.contains("case today"))
-        XCTAssertTrue(source.contains("case recordings"))
+        XCTAssertTrue(source.contains("case thisWeek"))
+        XCTAssertTrue(source.contains("case history"))
         XCTAssertTrue(source.contains("TodayAgendaView("))
         XCTAssertTrue(source.contains("Button(\"Today\")"))
-        XCTAssertTrue(source.contains("Button(\"Recordings\")"))
+        XCTAssertTrue(source.contains("Button(\"This Week\")"))
+        XCTAssertTrue(source.contains("Button(\"History\")"))
         XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
+        XCTAssertTrue(source.contains("meetings(for: destination)"))
+        XCTAssertTrue(source.contains("emptyMeetingListText(for: destination)"))
+        XCTAssertTrue(source.contains("meetingDisplayDate(_ meeting: MeetingRecord)"))
+        XCTAssertTrue(source.contains("meeting.scheduledStartAt ?? meeting.startedAt"))
+        XCTAssertTrue(source.contains("No meetings today"))
+        XCTAssertTrue(source.contains("No meetings this week"))
+        XCTAssertTrue(source.contains("No meeting history"))
+        XCTAssertFalse(source.contains("Button(\"Recordings\")"))
+        XCTAssertFalse(source.contains("Text(\"Recent Recordings\")"))
         XCTAssertFalse(source.contains("Text(\"Meetings\")"))
     }
 
@@ -46,6 +57,17 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let styleSource = source[styleRange.lowerBound..<nextViewRange.lowerBound]
         XCTAssertTrue(styleSource.contains(".frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)"))
         XCTAssertTrue(styleSource.contains(".contentShape(Rectangle())"))
+    }
+
+    func testMeetingBucketsUseCalendarBoundaries() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("TodayAgendaView("))
+        XCTAssertTrue(source.contains("meetings: meetings(for: .today)"))
+        XCTAssertTrue(source.contains("calendar.isDate(meetingDate, inSameDayAs: now)"))
+        XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)"))
+        XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)"))
+        XCTAssertTrue(source.contains("return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }"))
     }
 
     func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
@@ -166,7 +188,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("\"STT Locale\""))
     }
 
-    func testRecordingsRowsUseListSelectionTags() throws {
+    func testMeetingRowsUseListSelectionTags() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
