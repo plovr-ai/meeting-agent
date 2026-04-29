@@ -48,6 +48,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionStore = LiveCaptionStore()
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
     private var liveCaptionPipeline: LiveCaptionPipeline
+    private var liveCaptionPipelineUsesCaptionTranslationProvider = false
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
@@ -359,12 +360,18 @@ public final class MeetingAgentViewModel: ObservableObject {
         let transcriptResults = recorder.drainTranscriptUpdates()
         if transcriptResults.isEmpty {
             refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
+            if meetingProgressCoordinator != nil {
+                Task { [weak self] in
+                    await self?.refreshMeetingProgress()
+                }
+            }
         } else {
-            applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults)
-        }
-        if meetingProgressCoordinator != nil {
             Task { [weak self] in
-                await self?.refreshMeetingProgress()
+                guard let self else { return }
+                await applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults)
+                if meetingProgressCoordinator != nil {
+                    await refreshMeetingProgress()
+                }
             }
         }
         objectWillChange.send()
@@ -843,6 +850,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
         liveCaptionPipeline = makeLiveCaptionPipeline()
+        liveCaptionPipelineUsesCaptionTranslationProvider = false
         processedLiveCaptionSegmentSignaturesByID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
         draftTranslationInFlightByTurnID.removeAll()
@@ -940,6 +948,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionPipeline = makeLiveCaptionPipeline(
             translationProvider: captionTranslationProviderFactory(speechConfiguration)
         )
+        liveCaptionPipelineUsesCaptionTranslationProvider = true
         let snapshot = await liveCaptionPipeline.replay(document)
         guard !Task.isCancelled else { return }
         publishLiveCaptionPipelineSnapshot(snapshot)
@@ -958,18 +967,27 @@ public final class MeetingAgentViewModel: ObservableObject {
         return try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
     }
 
+    func applyTranscriptAccumulationResultsForTesting(
+        _ results: [TranscriptSegmentAccumulationResult]
+    ) async {
+        await applyTranscriptAccumulationResultsToLiveCaptions(results)
+    }
+
     private func applyTranscriptAccumulationResultsToLiveCaptions(
         _ results: [TranscriptSegmentAccumulationResult]
-    ) {
+    ) async {
         guard let latest = results.last else { return }
-        if latest.plainTextReplacement != nil {
-            liveCaptionStore = LiveCaptionStore(
-                sourceLocale: liveCaptionStore.sourceLocale,
-                targetLocale: liveCaptionStore.targetLocale
+        if !liveCaptionPipelineUsesCaptionTranslationProvider {
+            liveCaptionPipeline = makeLiveCaptionPipeline(
+                translationProvider: captionTranslationProviderFactory(speechConfiguration)
             )
-            processedLiveCaptionSegmentSignaturesByID.removeAll()
+            liveCaptionPipelineUsesCaptionTranslationProvider = true
         }
-        applyTranscriptDocumentToLiveCaptions(latest.document)
+        let snapshot = await liveCaptionPipeline.apply(latest)
+        publishLiveCaptionPipelineSnapshot(snapshot)
+        processedLiveCaptionSegmentSignaturesByID = latest.document.segments.reduce(into: [:]) { signatures, segment in
+            signatures[segment.id] = liveCaptionSegmentSignature(for: segment)
+        }
     }
 
     private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {

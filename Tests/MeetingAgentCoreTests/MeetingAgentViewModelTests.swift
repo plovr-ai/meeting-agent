@@ -417,6 +417,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )))
         viewModel.drainRecordingFrames()
 
+        try await waitFor {
+            viewModel.liveCaptionTurns.map(\.sourceSegmentID) == ["live-1"]
+        }
         XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["live-1"])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Live recorder transcript")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
@@ -499,9 +502,37 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
         viewModel.drainRecordingFrames()
 
+        try await waitFor {
+            viewModel.liveCaptionTurns.map(\.sourceSegmentID) == ["stream-1"]
+        }
         XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["stream-1"])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Streamed without polling")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, false)
+    }
+
+    func testActiveTranscriptUpdatesAreAppliedThroughPipeline() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var accumulator = TranscriptSegmentAccumulator()
+        let result = accumulator.apply(.upsert(TranscriptSegment(
+            id: "deepgram-draft-1",
+            text: "We should localize this rollout",
+            language: "en-US",
+            isFinal: false
+        )))
+
+        await viewModel.applyTranscriptAccumulationResultsForTesting([result])
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["deepgram-draft-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "We should localize this rollout")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.displayState, .draft)
+        XCTAssertEqual(viewModel.meetingProgressHealth.caption, .live)
     }
 
     func testDrainRecordingFramesTranslatesFinalCaptionsWithConfiguredOpenRouterModel() async throws {
