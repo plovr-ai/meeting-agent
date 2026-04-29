@@ -776,22 +776,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
-    private nonisolated static func summaryProvider(
+    nonisolated static func summaryProvider(
         for configuration: SpeechTranscriptionConfiguration,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MeetingSummaryProvider {
-        let provider = environment["MEETING_AGENT_SUMMARY_PROVIDER"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if provider == "openrouter" {
-            return OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
-                apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
-                    ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
-                model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
-                    ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
-            ))
-        }
-        return ExtractiveMeetingSummaryProvider()
+        OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
+            apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
+                ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
+            model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
+                ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
+        ))
     }
 
     private func persistSpeechConfiguration() {

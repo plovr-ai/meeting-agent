@@ -40,12 +40,10 @@ export MEETING_AGENT_WHISPER_BIN=/opt/homebrew/bin/whisper-cli
 export MEETING_AGENT_WHISPER_MODEL=/Users/allan/models/ggml-small.bin
 ```
 
-The default summary provider is `extractive-local`. To generate summaries with OpenRouter, configure the provider, API key, and model:
+The default summary provider is OpenRouter-backed and uses the summary model configured in app settings. To generate summaries with OpenRouter, configure the API key:
 
 ```sh
-export MEETING_AGENT_SUMMARY_PROVIDER=openrouter
 export MEETING_AGENT_OPENROUTER_API_KEY=<your-openrouter-key>
-export MEETING_AGENT_OPENROUTER_MODEL=openai/gpt-4.1-mini
 ```
 
 Use the app settings to match the meeting language. The default is `en-US`; Chinese recognition should usually use `zh-CN`.

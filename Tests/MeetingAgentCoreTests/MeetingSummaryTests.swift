@@ -30,7 +30,7 @@ final class MeetingSummaryTests: XCTestCase {
             language: "en-US",
             sourceSegmentIDs: ["segment-1", "segment-2"],
             generatedAt: Date(timeIntervalSince1970: 1_777_000_000),
-            provider: "extractive-local",
+            provider: "openrouter:openai/gpt-4.1-mini",
             status: .succeeded,
             failureReason: nil
         )
@@ -54,7 +54,7 @@ final class MeetingSummaryTests: XCTestCase {
           "language": "en-US",
           "sourceSegmentIDs": ["segment-1"],
           "generatedAt": "2026-04-29T01:00:00Z",
-          "provider": "extractive-local",
+          "provider": "openrouter:openai/gpt-4.1-mini",
           "status": "succeeded",
           "failureReason": null
         }
