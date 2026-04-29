@@ -86,6 +86,9 @@ public final class LiveCaptionPipeline {
                 if let sourceSegment {
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
                 }
+            case .interimUpdated(let segment):
+                let turn = store.append(segment)
+                hydrateCachedTranslation(from: segment, toTurnID: turn.id)
             case .removed(let turnID):
                 store.remove(turnID: turnID)
             }

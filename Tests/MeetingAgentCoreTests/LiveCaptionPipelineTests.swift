@@ -86,6 +86,44 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.captionHealth, .live)
     }
 
+    func testReplayMergesOverlappingInterimWithPreviousFinalTurn() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "speaker-1")
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "final-1",
+                speaker: speaker,
+                text: "Now what we can do is select German",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            ),
+            TranscriptSegment(
+                id: "interim-1",
+                speaker: speaker,
+                text: "select German and hear what it sounds like",
+                language: "en-US",
+                isFinal: false,
+                speechFinal: false
+            )
+        ])
+
+        let snapshot = await pipeline.replay(document)
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1", "interim-1"])
+        XCTAssertEqual(
+            snapshot.turns.first?.originalText,
+            "Now what we can do is select German and hear what it sounds like"
+        )
+        XCTAssertEqual(snapshot.turns.first?.displayState, .draft)
+    }
+
     func testReplayHydratesCachedTranslationFromFinalTranscriptSegment() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",

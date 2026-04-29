@@ -2,6 +2,7 @@ import Foundation
 
 public enum CaptionTurnEvent: Equatable {
     case draftUpdated(LiveCaptionTurn)
+    case interimUpdated(TranscriptSegment)
     case sealed(LiveCaptionTurn)
     case removed(turnID: String)
 }
@@ -32,24 +33,7 @@ public struct CaptionTurnAssembler: Equatable {
         }
 
         interimTurnIDs.insert(segment.id)
-        return [.draftUpdated(LiveCaptionTurn(
-            sourceSegmentID: segment.id,
-            speaker: segment.speaker,
-            originalText: segment.text,
-            sourceLocale: segment.language ?? sourceLocale,
-            targetLocale: targetLocale,
-            isFinal: false,
-            captionHealth: .live,
-            translationHealth: .pending,
-            createdAt: segment.createdAt,
-            chunkState: .draft,
-            translationRevision: 1,
-            freezeReason: nil,
-            displayState: .draft,
-            translationState: .draft,
-            boundaryReason: nil,
-            boundaryStrength: nil
-        ))]
+        return [.interimUpdated(segment)]
     }
 
     public mutating func removeSegments(notIn segmentIDs: Set<String>) -> [CaptionTurnEvent] {

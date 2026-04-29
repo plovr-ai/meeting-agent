@@ -49,7 +49,7 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         XCTAssertEqual(sealed.originalText, "First part second part.")
     }
 
-    func testInterimSegmentProducesDraftWithConfiguredFallbackLocales() {
+    func testInterimSegmentProducesInterimEvent() {
         var assembler = CaptionTurnAssembler(sourceLocale: "ja-JP", targetLocale: "en-US")
 
         let events = assembler.apply(segment(
@@ -60,15 +60,13 @@ final class CaptionTurnAssemblerTests: XCTestCase {
             speechFinal: false
         ))
 
-        XCTAssertEqual(events.count, 1)
-        guard case .draftUpdated(let draft) = events.first else {
-            XCTFail("Expected interim segment to update draft")
+        guard case .interimUpdated(let interim) = events.single else {
+            XCTFail("Expected interim segment to update")
             return
         }
-        XCTAssertEqual(draft.id, "segment-1")
-        XCTAssertEqual(draft.sourceLocale, "ja-JP")
-        XCTAssertEqual(draft.targetLocale, "en-US")
-        XCTAssertEqual(draft.displayState, .draft)
+        XCTAssertEqual(interim.id, "segment-1")
+        XCTAssertNil(interim.language)
+        XCTAssertFalse(interim.isFinal)
     }
 
     func testRemoveSegmentsEmitsRemovedEventsForMissingInterimSegments() {
@@ -114,5 +112,11 @@ final class CaptionTurnAssemblerTests: XCTestCase {
             isFinal: isFinal,
             speechFinal: speechFinal
         )
+    }
+}
+
+private extension Array {
+    var single: Element? {
+        count == 1 ? first : nil
     }
 }
