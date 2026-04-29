@@ -318,6 +318,22 @@ When asserting actor state in XCTest, split `let value = await actor.value` from
 
 ---
 
+## [56] Keep internal helpers out of the public API
+
+**Date**: 2026-04-29
+**Category**: api-misuse
+
+### What went wrong
+The first silence detector implementation made the new detector public even though only `MeetingRecorder` and `@testable` unit tests needed it.
+
+### Correct approach
+Default new helper types to internal and expose them publicly only when external package callers need them.
+
+### How to avoid
+Before committing a new `public` type or member, verify it is part of the intended package API rather than only an injectable implementation detail.
+
+---
+
 ## [43] Use detected transcript language after source setting removal
 
 **Date**: 2026-04-29
