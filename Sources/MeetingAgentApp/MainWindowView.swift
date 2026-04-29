@@ -90,10 +90,11 @@ struct MainWindowView: View {
                             openWorkspace(from: destination, selecting: meeting)
                             return
                         }
+                        let returnDestination = destination.agendaReturnDestination
                         Task {
                             do {
                                 try await viewModel.startRecording(for: target, meetingID: meeting.id)
-                                workspaceReturnDestination = destination.agendaReturnDestination
+                                workspaceReturnDestination = returnDestination
                                 destination = .workspace
                             } catch {
                                 viewModel.setRecordingStartError(error)

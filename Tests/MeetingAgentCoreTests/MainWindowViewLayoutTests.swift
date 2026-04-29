@@ -147,6 +147,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("@State private var workspaceReturnDestination: MainWindowDestination = .today"))
         XCTAssertTrue(source.contains("private func openWorkspace(from destination: MainWindowDestination, selecting meeting: MeetingRecord)"))
         XCTAssertTrue(source.contains("workspaceReturnDestination = destination.agendaReturnDestination"))
+        XCTAssertTrue(source.contains("let returnDestination = destination.agendaReturnDestination"))
+        XCTAssertTrue(source.contains("workspaceReturnDestination = returnDestination"))
         XCTAssertTrue(source.contains("destination = .workspace"))
         XCTAssertTrue(source.contains("var agendaReturnDestination: MainWindowDestination"))
         XCTAssertTrue(source.contains("case .workspace, .settings:"))
