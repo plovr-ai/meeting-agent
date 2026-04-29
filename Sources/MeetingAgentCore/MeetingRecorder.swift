@@ -12,6 +12,7 @@ public final class MeetingRecorder {
     private let captureSessionFactory: () -> AudioCaptureSessionManaging
     private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
     private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber
+    private let silenceDetector: AudioSilenceDetector
     private var captureSession: AudioCaptureSessionManaging?
     private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
@@ -48,12 +49,14 @@ public final class MeetingRecorder {
         store: MeetingStore,
         captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
-        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber
+        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber,
+        silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
     ) {
         self.store = store
         self.captureSessionFactory = captureSessionFactory
         self.wavWriterFactory = wavWriterFactory
         self.transcriberFactory = transcriberFactory
+        self.silenceDetector = silenceDetector
     }
 
     public func prepareRecord(
@@ -322,6 +325,7 @@ public final class MeetingRecorder {
     }
 
     private func appendFrameToTranscriber(_ frame: AudioFrame) throws {
+        guard !silenceDetector.isSilent(frame) else { return }
         do {
             try transcriber?.append(frame)
         } catch {

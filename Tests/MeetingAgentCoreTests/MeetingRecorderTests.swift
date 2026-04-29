@@ -63,7 +63,7 @@ final class MeetingRecorderTests: XCTestCase {
 
     func testStartDrainAndStopRecordingWithInjectedCapturePipeline() async throws {
         let fixture = try RecorderFixture()
-        let frame = AudioFrame(pcm: Data([1, 0, 2, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 9)
+        let frame = AudioFrame(pcm: Data([64, 0, 65, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 9)
         fixture.session.frameBuffer.push(frame)
         let consumer = CapturingRealtimeFrameConsumer()
         fixture.recorder.realtimeFrameConsumer = consumer
@@ -96,6 +96,24 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertTrue(performanceEvents.contains("recording_started"))
         XCTAssertTrue(performanceEvents.contains("audio_frames_drained"))
         XCTAssertTrue(performanceEvents.contains("recording_stopped"))
+    }
+
+    func testDrainFramesSkipsSilentAudioOnlyForTranscription() async throws {
+        let fixture = try RecorderFixture()
+        let silentFrame = AudioFrame(pcm: Data([0, 0, 2, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        let voicedFrame = AudioFrame(pcm: Data([64, 0, 0, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 2)
+        let consumer = CapturingRealtimeFrameConsumer()
+        fixture.recorder.realtimeFrameConsumer = consumer
+        fixture.session.frameBuffer.push(silentFrame)
+        fixture.session.frameBuffer.push(voicedFrame)
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        try fixture.recorder.drainFrames()
+
+        XCTAssertEqual(fixture.writer.writtenFrames, [silentFrame, voicedFrame])
+        XCTAssertEqual(fixture.transcriber.appendedFrames, [voicedFrame])
+        XCTAssertEqual(consumer.receivedFrames, [silentFrame, voicedFrame])
     }
 
     func testPrepareRecordCanReuseExistingAgendaRecord() throws {
@@ -164,7 +182,7 @@ final class MeetingRecorderTests: XCTestCase {
 
     func testDrainFramesPersistsTranscriptionFailureAndContinuesWritingAudio() async throws {
         let fixture = try RecorderFixture()
-        let frame = AudioFrame(pcm: Data([1, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        let frame = AudioFrame(pcm: Data([64, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
         fixture.session.frameBuffer.push(frame)
         fixture.transcriber.appendError = ProbeError.speechRecognition("append failed")
         let record = try fixture.recorder.prepareRecord(for: fixture.target)
@@ -182,7 +200,7 @@ final class MeetingRecorderTests: XCTestCase {
     func testDrainFramesBeforeTranscriberReadyFlushesStartupFramesWhenReady() async throws {
         let fixture = try RecorderFixture()
         fixture.transcriberFactory.shouldSuspend = true
-        let frame = AudioFrame(pcm: Data([9, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        let frame = AudioFrame(pcm: Data([64, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
         let record = try fixture.recorder.prepareRecord(for: fixture.target)
 
         let startTask = Task {
@@ -203,7 +221,7 @@ final class MeetingRecorderTests: XCTestCase {
 
     func testDrainDuringWriterSetupDoesNotDropStartupAudio() async throws {
         let fixture = try RecorderFixture()
-        let frame = AudioFrame(pcm: Data([8, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        let frame = AudioFrame(pcm: Data([64, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
         fixture.writerFactory.onMakeWriter = {
             fixture.session.frameBuffer.push(frame)
             try? fixture.recorder.drainFrames()
@@ -223,7 +241,7 @@ final class MeetingRecorderTests: XCTestCase {
         let record = try fixture.recorder.prepareRecord(for: fixture.target)
         let frames = (0..<3_008).map { index in
             AudioFrame(
-                pcm: Data([UInt8(index % 255), 0]),
+                pcm: Data([UInt8(64 + (index % 128)), 0]),
                 sampleRate: 16_000,
                 channelCount: 1,
                 timestampNanos: UInt64(index + 1)
