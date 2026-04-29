@@ -333,3 +333,19 @@ Live caption translation skip logic should compare each turn's actual source loc
 When a setting is redefined or removed, audit behavior against the runtime data that now represents that concept instead of the old configuration field.
 
 ---
+
+## [58] Trace display metadata through pre-render coalescing
+
+**Date**: 2026-04-29
+**Category**: logic-error
+
+### What went wrong
+The first subtitle timestamp design put `startedAt` on speaker groups, but review found that same-speaker caption turns could already be merged by `LiveCaptionStore`, with `createdAt` overwritten by the latest segment before grouping.
+
+### Correct approach
+When displaying first-item metadata for grouped UI state, preserve that metadata at every earlier coalescing layer, not only in the final view grouping type.
+
+### How to avoid
+For grouped display metadata, trace the data from source segment to store merge to view grouping before treating a group-level test as sufficient.
+
+---
