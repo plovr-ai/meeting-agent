@@ -763,6 +763,7 @@ public struct MeetingProgressState: Codable, Equatable {
 public protocol MeetingProgressAnalyzing {
     func analyze(
         goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState
@@ -779,6 +780,7 @@ public final class DeterministicMeetingProgressAnalyzer: MeetingProgressAnalyzin
 
     public func analyze(
         goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic] = [],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState {
@@ -805,18 +807,11 @@ public final class DeterministicMeetingProgressAnalyzer: MeetingProgressAnalyzin
         } else {
             status = .partiallyCovered
         }
-        let questions = goal.requiredQuestions
-            .filter { question in
-                !text.contains(question.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "?？")))
-            }
-            .prefix(3)
-            .map {
-                FollowUpQuestionSuggestion(
-                    chinese: Self.simpleChinesePrompt(for: $0),
-                    english: $0,
-                    sourceObjectiveID: nil
-                )
-            }
+        let questions = Self.recommendedQuestions(
+            from: objectiveProgress,
+            agendaTopics: agendaTopics,
+            transcriptText: text
+        )
         return MeetingProgressState(
             meetingID: previousState?.meetingID ?? meetingID,
             goal: goal,
@@ -831,13 +826,72 @@ public final class DeterministicMeetingProgressAnalyzer: MeetingProgressAnalyzin
         )
     }
 
-    private static func simpleChinesePrompt(for english: String) -> String {
-        "请确认：\(english)"
+    private static func recommendedQuestions(
+        from objectiveProgress: [MeetingObjectiveProgress],
+        agendaTopics: [MeetingAgendaTopic],
+        transcriptText: String
+    ) -> [FollowUpQuestionSuggestion] {
+        let unresolvedObjectiveQuestions = objectiveProgress
+            .filter { $0.status != .confirmed }
+            .compactMap { progress -> FollowUpQuestionSuggestion? in
+                let title = normalized(progress.title)
+                guard !title.isEmpty else { return nil }
+                return FollowUpQuestionSuggestion(
+                    chinese: chinesePrompt(for: title),
+                    english: englishPrompt(for: title),
+                    sourceObjectiveID: progress.objectiveID
+                )
+            }
+        if !unresolvedObjectiveQuestions.isEmpty {
+            return Array(unresolvedObjectiveQuestions.prefix(2))
+        }
+
+        let topicQuestions = agendaTopics.compactMap { topic -> FollowUpQuestionSuggestion? in
+            let title = normalized(topic.title)
+            guard !title.isEmpty,
+                  !transcriptText.contains(title.lowercased())
+            else {
+                return nil
+            }
+            return FollowUpQuestionSuggestion(
+                chinese: chinesePrompt(for: title),
+                english: englishPrompt(for: title),
+                sourceObjectiveID: nil
+            )
+        }
+        return Array(topicQuestions.prefix(2))
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func englishPrompt(for topic: String) -> String {
+        "Could we clarify \(questionSubject(for: topic))?"
+    }
+
+    private static func chinesePrompt(for topic: String) -> String {
+        "可以进一步确认\(questionSubject(for: topic))吗？"
+    }
+
+    private static func questionSubject(for topic: String) -> String {
+        let prefixes = ["Confirm ", "Decide ", "Review ", "Align on ", "Clarify "]
+        for prefix in prefixes where topic.range(
+            of: prefix,
+            options: [.caseInsensitive, .anchored]
+        ) != nil {
+            return String(topic.dropFirst(prefix.count))
+        }
+        return topic
     }
 }
 
 public final class MeetingProgressCoordinator {
     private let goal: MeetingGoal
+    private let agendaTopics: [MeetingAgendaTopic]
     private let analyzer: MeetingProgressAnalyzing
     private let progressURL: URL
     private let minimumAnalysisInterval: TimeInterval
@@ -849,12 +903,14 @@ public final class MeetingProgressCoordinator {
 
     public init(
         goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic] = [],
         analyzer: MeetingProgressAnalyzing,
         progressURL: URL,
         minimumAnalysisInterval: TimeInterval = 30,
         now: @escaping () -> Date = Date.init
     ) {
         self.goal = goal
+        self.agendaTopics = agendaTopics
         self.analyzer = analyzer
         self.progressURL = progressURL
         self.minimumAnalysisInterval = minimumAnalysisInterval
@@ -873,6 +929,7 @@ public final class MeetingProgressCoordinator {
         do {
             let nextState = try await analyzer.analyze(
                 goal: goal,
+                agendaTopics: agendaTopics,
                 recentCaptions: newTurns,
                 previousState: state
             )

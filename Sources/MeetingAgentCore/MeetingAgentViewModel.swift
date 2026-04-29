@@ -52,6 +52,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
     private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
+    public var recommendedQuestions: [FollowUpQuestionSuggestion] {
+        Array((meetingProgressState?.suggestedQuestions ?? []).prefix(2))
+    }
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
     private var attachedRealtimeTranslationTurnIDs = Set<String>()
     private var realtimeTranslationAttachmentCountsByCaptionID: [String: Int] = [:]
@@ -1585,6 +1588,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         meetingProgressCoordinator = MeetingProgressCoordinator(
             goal: goal,
+            agendaTopics: selectedMeeting?.agendaTopics ?? [],
             analyzer: DeterministicMeetingProgressAnalyzer(meetingID: selectedMeeting?.id ?? UUID()),
             progressURL: progressURL
         )

@@ -73,6 +73,7 @@ final class MeetingProgressCoordinatorTests: XCTestCase {
 
 private final class SpyProgressAnalyzer: MeetingProgressAnalyzing {
     struct Call {
+        let agendaTopics: [MeetingAgendaTopic]
         let recentCaptions: [LiveCaptionTurn]
     }
 
@@ -81,10 +82,11 @@ private final class SpyProgressAnalyzer: MeetingProgressAnalyzing {
 
     func analyze(
         goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState {
-        calls.append(Call(recentCaptions: recentCaptions))
+        calls.append(Call(agendaTopics: agendaTopics, recentCaptions: recentCaptions))
         if let error {
             throw error
         }

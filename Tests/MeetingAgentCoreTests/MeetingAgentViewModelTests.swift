@@ -1336,10 +1336,61 @@ final class MeetingAgentViewModelTests: XCTestCase {
         await viewModel.refreshMeetingProgress()
 
         XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
-        XCTAssertEqual(viewModel.meetingProgressState?.suggestedQuestions.first?.english, "Have we confirmed the deadline?")
+        XCTAssertEqual(viewModel.meetingProgressState?.suggestedQuestions, [])
         let progressURL = try XCTUnwrap(record.meetingProgressJSONURL)
         let saved = try JSONDecoder.meetingAgent.decode(MeetingProgressState.self, from: Data(contentsOf: progressURL))
         XCTAssertEqual(saved.lastAnalyzedSegmentID, "segment-1")
+    }
+
+    func testRefreshMeetingProgressPublishesRecommendedQuestions() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .local,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        try viewModel.saveAgenda(
+            for: record.id,
+            update: MeetingAgendaUpdate(
+                name: record.name,
+                attendees: [],
+                agendaTopics: [
+                    MeetingAgendaTopic(title: "Budget risk"),
+                    MeetingAgendaTopic(title: "Launch readiness")
+                ],
+                scheduledStartAt: record.scheduledStartAt,
+                scheduledEndAt: record.scheduledEndAt,
+                meetingGoal: MeetingGoal(
+                    title: "Confirm launch plan",
+                    objectives: [],
+                    requiredQuestions: [],
+                    expectedDecisions: [],
+                    keyTerms: []
+                )
+            )
+        )
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "We discussed hiring.", language: "en-US", isFinal: true)
+        ])
+        viewModel.drainRecordingFrames()
+
+        await viewModel.refreshMeetingProgress()
+
+        XCTAssertEqual(viewModel.recommendedQuestions.map(\.english), [
+            "Could we clarify Budget risk?",
+            "Could we clarify Launch readiness?"
+        ])
     }
 
     func testPreMeetingGoalAnalyzesAfterRecordingStarts() async throws {
