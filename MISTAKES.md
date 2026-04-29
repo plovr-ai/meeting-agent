@@ -381,3 +381,35 @@ Use a manually delayed provider and assert the pending provider queue shape dire
 For async cancellation tests, assert deterministic intermediate state instead of relying on sleep timing or completion ordering.
 
 ---
+
+## [67] Use narrow context when patching repeated test initializers
+
+**Date**: 2026-04-29
+**Category**: test-mistake
+
+### What went wrong
+While injecting deterministic summary providers into view-model summary tests, a broad patch matched repeated `MeetingAgentViewModel(store:processTargetsProvider:)` initializers in unrelated progress-loading tests before the intended legacy summary URL test.
+
+### Correct approach
+Patch repeated test setup with nearby behavior-specific context, then inspect the exact changed hunks before running verification.
+
+### How to avoid
+When a test file repeats the same initializer shape, include the test name or adjacent setup lines in the patch context.
+
+---
+
+## [69] Refresh view-model metadata after recorder startup persistence
+
+**Date**: 2026-04-29
+**Category**: logic-error
+
+### What went wrong
+Starting a detected meeting let `MeetingRecorder` persist the record as transcribing, but `MeetingAgentViewModel` kept the pre-start in-memory record, so the meeting page could still show transcription as not started.
+
+### Correct approach
+After async recorder startup completes, refresh the affected meeting from the store so UI state reflects recorder-owned transcription metadata, including startup failures.
+
+### How to avoid
+When a lower-level service mutates persisted model state during an async operation, update the caller's in-memory model before returning to the UI.
+
+---

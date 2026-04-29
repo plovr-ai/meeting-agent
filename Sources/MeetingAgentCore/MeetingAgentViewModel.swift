@@ -255,6 +255,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 record: record,
                 speechConfiguration: recordingConfiguration
             )
+            refreshMeetingFromStore(record.id)
         } catch {
             if let stopped = try? recorder.stopRecording(),
                let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
@@ -265,6 +266,14 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw error
         }
         statusText = "Recording \(record.name)"
+    }
+
+    private func refreshMeetingFromStore(_ id: UUID) {
+        guard let refreshed = try? store.loadMeetings().first(where: { $0.id == id }),
+              let index = meetings.firstIndex(where: { $0.id == id })
+        else { return }
+
+        meetings[index] = refreshed
     }
 
     public func setRecordingStartError(_ error: Error) {
@@ -786,22 +795,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
-    private nonisolated static func summaryProvider(
+    nonisolated static func summaryProvider(
         for configuration: SpeechTranscriptionConfiguration,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> MeetingSummaryProvider {
-        let provider = environment["MEETING_AGENT_SUMMARY_PROVIDER"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if provider == "openrouter" {
-            return OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
-                apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
-                    ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
-                model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
-                    ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
-            ))
-        }
-        return ExtractiveMeetingSummaryProvider()
+        OpenRouterMeetingSummaryProvider(configuration: OpenRouterChatConfiguration(
+            apiKey: SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
+                ?? environment["MEETING_AGENT_OPENROUTER_API_KEY"],
+            model: SpeechTranscriptionConfiguration.normalized(configuration.hostedSummaryModelID)
+                ?? environment["MEETING_AGENT_OPENROUTER_MODEL"]
+        ))
     }
 
     private func persistSpeechConfiguration() {

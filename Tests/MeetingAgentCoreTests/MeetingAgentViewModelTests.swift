@@ -130,11 +130,56 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Meeting detected: zoom.us")
     }
 
+    func testSecondDetectedMeetingShowsTranscribingAfterFirstMeetingStops() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        var currentTarget = AudioCaptureTarget(
+            processID: 10,
+            displayName: "zoom.us",
+            bundleIdentifier: "us.zoom.xos",
+            isAudioOutputActive: true
+        )
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [currentTarget] }
+        )
+
+        XCTAssertEqual(viewModel.pollForMeetingCandidates(), currentTarget)
+        try await viewModel.startRecordingForPendingCandidate()
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        currentTarget = AudioCaptureTarget(
+            processID: 11,
+            displayName: "Google Meet",
+            bundleIdentifier: "com.google.Chrome",
+            isAudioOutputActive: true
+        )
+        XCTAssertEqual(viewModel.pollForMeetingCandidates(), currentTarget)
+        try await viewModel.startRecordingForPendingCandidate()
+
+        XCTAssertEqual(viewModel.selectedMeeting?.name, "Google Meet")
+        XCTAssertEqual(viewModel.selectedMeeting?.transcriptionStatus, .transcribing)
+        XCTAssertEqual(fixture.session.startedTargets, [
+            AudioCaptureTarget(
+                processID: 10,
+                displayName: "zoom.us",
+                bundleIdentifier: "us.zoom.xos",
+                isAudioOutputActive: true
+            ),
+            currentTarget
+        ])
+        XCTAssertEqual(fixture.transcriberFactory.requests.count, 2)
+    }
+
     func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
-        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US")
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") }
+        )
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
 
         viewModel.setPendingCandidate(target)
@@ -1811,7 +1856,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
         ])
         try transcriptWriter.close()
-        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US")
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") }
+        )
         try viewModel.loadMeetings()
 
         try await viewModel.generateSummary(
@@ -1840,7 +1889,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(id: "segment-1", text: "We agreed to update renewal pricing next week.", language: "en-US")
         ])
         try transcriptWriter.close()
-        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US", processTargetsProvider: { [] })
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") },
+            processTargetsProvider: { [] }
+        )
         try viewModel.loadMeetings()
 
         try await viewModel.generateSummary(
@@ -1867,7 +1921,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(id: "segment-1", text: "We agreed to update renewal pricing next week.", language: "en-US")
         ])
         try transcriptWriter.close()
-        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US", processTargetsProvider: { [] })
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") },
+            processTargetsProvider: { [] }
+        )
         try viewModel.loadMeetings()
 
         try await viewModel.generateSummary(
@@ -1923,6 +1982,39 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let summary = try MeetingSummaryWriter.read(from: stored.record.summaryJSONURL!)
         XCTAssertEqual(summary.status, .succeeded)
         XCTAssertEqual(summary.provider, "openrouter:openai/gpt-4.1-mini")
+    }
+
+    func testDefaultSummaryProviderUsesSettingsBackedOpenRouterModel() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            hostedSummaryModelID: "openai/gpt-4.1-mini",
+            openRouterAPIKey: "test-key"
+        )
+
+        let provider = MeetingAgentViewModel.summaryProvider(for: configuration, environment: [:])
+
+        XCTAssertEqual(provider.providerName, "openrouter:openai/gpt-4.1-mini")
+    }
+
+    func testDefaultSummaryProviderIgnoresLegacyExtractiveEnvironmentSelection() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            hostedSummaryModelID: "google/gemini-2.5-flash",
+            openRouterAPIKey: "test-key"
+        )
+
+        let provider = MeetingAgentViewModel.summaryProvider(
+            for: configuration,
+            environment: ["MEETING_AGENT_SUMMARY_PROVIDER": "extractive-local"]
+        )
+
+        XCTAssertEqual(provider.providerName, "openrouter:google/gemini-2.5-flash")
     }
 
     func testRetryTranscriptionClearsDownstreamSummaryArtifacts() async throws {
@@ -2007,7 +2099,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(id: "segment-1", text: "We decided to launch.", language: "en-US")
         ])
         try transcriptWriter.close()
-        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") },
+            processTargetsProvider: { [] }
+        )
         try viewModel.loadMeetings()
 
         try await viewModel.generateSummary(for: stored.id)
@@ -2716,17 +2812,47 @@ private struct CapturingSummaryProvider: MeetingSummaryProvider {
     let providerName: String
 
     func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
-        MeetingSummary(
-            autoGeneratedTitle: "Launch Scope Alignment",
-            overview: "The team aligned on launch scope.",
-            keyTopics: ["Launch"],
-            decisions: [],
-            actionItems: [],
+        let usableSegments = input.segments.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let decisions = usableSegments
+            .filter { $0.text.lowercased().contains("decided") || $0.text.lowercased().contains("agreed") }
+            .map {
+                MeetingDecision(
+                    description: $0.text,
+                    participants: [],
+                    sourceSegmentIDs: [$0.id],
+                    confidence: 0.8
+                )
+            }
+        let actionItems = usableSegments
+            .filter { $0.text.lowercased().contains("follow up") || $0.text.lowercased().contains("will") }
+            .map {
+                MeetingActionItem(
+                    description: $0.text,
+                    owner: nil,
+                    dueDate: nil,
+                    sourceSegmentIDs: [$0.id],
+                    confidence: 0.8
+                )
+            }
+        let overview = usableSegments.map(\.text).joined(separator: " ")
+        return MeetingSummary(
+            autoGeneratedTitle: MeetingSummaryTitleGenerator.title(
+                meetingName: input.meetingName,
+                keyTopics: [],
+                overview: overview,
+                segments: input.segments
+            ),
+            overview: overview,
+            keyTopics: [],
+            decisions: decisions,
+            actionItems: actionItems,
             openQuestions: [],
             risks: [],
-            followUps: [],
+            followUps: actionItems.map(\.description),
             language: input.language,
-            sourceSegmentIDs: input.segments.map(\.id),
+            sourceSegmentIDs: usableSegments.map(\.id),
             generatedAt: input.generatedAt,
             provider: providerName,
             status: .succeeded,
