@@ -173,11 +173,11 @@ final class MainWindowViewLayoutTests: XCTestCase {
         guard let metadataRange = source.range(of: "private var metadata: some View") else {
             return XCTFail("Pipeline metadata section is missing")
         }
-        guard let actionsRange = source.range(of: "private var recordingActions: some View", range: metadataRange.upperBound..<source.endIndex) else {
-            return XCTFail("Recording actions section is missing")
+        guard let failureReasonRange = source.range(of: "private var failureReason: some View", range: metadataRange.upperBound..<source.endIndex) else {
+            return XCTFail("Pipeline metadata boundary is missing")
         }
 
-        let metadataSource = source[metadataRange.lowerBound..<actionsRange.lowerBound]
+        let metadataSource = source[metadataRange.lowerBound..<failureReasonRange.lowerBound]
         XCTAssertTrue(metadataSource.contains("Image(systemName: \"exclamationmark.circle\")"))
         XCTAssertTrue(metadataSource.contains(".help(pipelineDebugHelpText)"))
         XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: transcriptionStatusText"))
@@ -196,27 +196,52 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("caption_translation_attached"))
     }
 
-    func testRecordingAndRetryButtonsShareActionRow() throws {
+    func testMeetingWorkspaceConsolidatesActionsIntoTopRow() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        guard let stopRange = source.range(of: "Button(\"Stop Recording\")") else {
-            return XCTFail("Stop Recording button is missing")
+        guard let workspaceRange = source.range(of: "private struct MeetingCommandCenterView") else {
+            return XCTFail("Meeting workspace view is missing")
         }
-        guard let retryRange = source.range(of: "Button(\"Retry Transcription\")") else {
-            return XCTFail("Retry Transcription button is missing")
+        guard let agendaRange = source.range(of: "private struct AgendaContextStrip", range: workspaceRange.upperBound..<source.endIndex) else {
+            return XCTFail("Meeting workspace boundary is missing")
         }
-        XCTAssertLessThan(stopRange.lowerBound, retryRange.lowerBound)
+        let workspaceSource = source[workspaceRange.lowerBound..<agendaRange.lowerBound]
 
-        let precedingSource = source[..<stopRange.lowerBound]
-        guard let actionRowStart = precedingSource.range(of: "HStack", options: .backwards) else {
-            return XCTFail("Recording action row is missing")
-        }
+        XCTAssertTrue(workspaceSource.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Stop Recording\", systemImage: \"stop.fill\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Record\", systemImage: \"record.circle\")"))
+        XCTAssertTrue(workspaceSource.contains("Menu {"))
+        XCTAssertTrue(workspaceSource.contains("Image(systemName: \"ellipsis.circle\")"))
+        XCTAssertTrue(workspaceSource.contains(".accessibilityLabel(\"Meeting actions\")"))
+        XCTAssertTrue(workspaceSource.contains(".help(\"Meeting actions\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Copy Summary\", systemImage: \"doc.on.clipboard\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.summaryURL == nil)"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export Transcript\", systemImage: \"doc.text\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.transcriptURL == nil)"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export Meeting JSON\", systemImage: \"curlybraces\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Retry Transcription\", systemImage: \"arrow.clockwise\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.audioURL == nil)"))
 
-        let actionRow = source[actionRowStart.lowerBound..<retryRange.upperBound]
-        XCTAssertTrue(actionRow.contains("Button(\"Stop Recording\")"))
-        XCTAssertTrue(actionRow.contains("Button(\"Retry Transcription\")"))
+        guard let transcriptRange = source.range(of: "private struct TranscriptPaneView") else {
+            return XCTFail("Transcript pane is missing")
+        }
+        guard let insightRange = source.range(of: "private struct InsightPaneView", range: transcriptRange.upperBound..<source.endIndex) else {
+            return XCTFail("Insight pane boundary is missing")
+        }
+        let transcriptSource = source[transcriptRange.lowerBound..<insightRange.lowerBound]
+        XCTAssertFalse(transcriptSource.contains("private var recordingActions: some View"))
+        XCTAssertFalse(transcriptSource.contains("Button(\"Retry Transcription\")"))
+
+        guard let nextViewRange = source.range(of: "private struct RecommendedQuestionsPanel", range: insightRange.upperBound..<source.endIndex) else {
+            return XCTFail("Insight pane boundary is missing")
+        }
+        let insightSource = source[insightRange.lowerBound..<nextViewRange.lowerBound]
+        XCTAssertFalse(insightSource.contains("private var exports: some View"))
+        XCTAssertFalse(insightSource.contains("Text(\"Exports\")"))
     }
 
     func testSummaryDownloadAndRegenerateControlsAreRemoved() throws {
@@ -458,15 +483,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
 """))
     }
 
-    func testExportsPanelExposesImplementedExportActionsOnly() throws {
+    func testActionMenuExposesImplementedExportActionsOnly() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("exportSRT"))
         XCTAssertTrue(source.contains("exportVTT"))
-        XCTAssertTrue(source.contains("Label(\"SRT\", systemImage: \"captions.bubble\")"))
-        XCTAssertTrue(source.contains("Label(\"VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
         XCTAssertFalse(source.contains("exportReadinessReport"))
