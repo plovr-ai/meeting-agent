@@ -141,6 +141,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         }
         let session = FakeDeepgramStreamingSession()
         let client = FakeDeepgramStreamingClient(session: session)
+        let updateSink = RecordingTranscriptUpdateSinkForTests()
         let provider = DeepgramStreamingSpeechTranscriptionProvider(
             configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
             client: client
@@ -151,7 +152,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             localeIdentifier: "en-US",
             sampleRate: 48_000,
             channelCount: 1,
-            performanceEventLogger: PerformanceEventLogger(url: performanceURL)
+            performanceEventLogger: PerformanceEventLogger(url: performanceURL),
+            transcriptUpdateSink: updateSink
         ))
         let frame = AudioFrame(pcm: Data([1, 2, 3, 4]), sampleRate: 48_000, channelCount: 1, timestampNanos: 10)
 
@@ -175,6 +177,13 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(client.requests.first?.sampleRate, 48_000)
         XCTAssertEqual(client.requests.first?.channelCount, 1)
         XCTAssertEqual(session.sentFrames, [frame])
+        XCTAssertEqual(updateSink.updates.count, 1)
+        guard case .upsert(let updatedSegment) = updateSink.updates.first else {
+            return XCTFail("Expected upsert update")
+        }
+        XCTAssertEqual(updatedSegment.id, "dg-1")
+        XCTAssertEqual(updatedSegment.text, "hello live")
+        XCTAssertEqual(updatedSegment.sourceProvider, "deepgram-transcribe")
         let document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
@@ -731,6 +740,14 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
         ) {
             continuation?.yield(segment)
         }
+    }
+}
+
+private final class RecordingTranscriptUpdateSinkForTests: TranscriptUpdateSink {
+    private(set) var updates: [TranscriptSegmentUpdate] = []
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
     }
 }
 

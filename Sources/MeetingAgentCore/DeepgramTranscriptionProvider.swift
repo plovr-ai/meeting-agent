@@ -414,6 +414,7 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
         return DeepgramStreamingTranscriber(
             session: session,
             writer: writer,
+            transcriptUpdateSink: context.transcriptUpdateSink,
             performanceEventLogger: context.performanceEventLogger
         )
     }
@@ -422,6 +423,7 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
     private let writer: TranscriptFileWriter
+    private let transcriptUpdateSink: TranscriptUpdateSink?
     private let performanceEventLogger: PerformanceEventLogger?
     private let sendQueue: DeepgramFrameSendQueue
     private let failureLock = NSLock()
@@ -438,10 +440,12 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     init(
         session: DeepgramStreamingTranscriptionSession,
         writer: TranscriptFileWriter,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil,
         performanceEventLogger: PerformanceEventLogger? = nil
     ) {
         self.session = session
         self.writer = writer
+        self.transcriptUpdateSink = transcriptUpdateSink
         self.performanceEventLogger = performanceEventLogger
         self.sendQueue = DeepgramFrameSendQueue(session: session)
         self.sendQueue.onFailure = { [weak self] error in
@@ -473,6 +477,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
+        transcriptUpdateSink?.receive(.upsert(segment))
         guard segment.isFinal else {
             try writer.upsert(segment)
             performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)

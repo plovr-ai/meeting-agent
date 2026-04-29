@@ -29,6 +29,7 @@ final class OpenAIRealtimeTranscriptionProviderTests: XCTestCase {
 
     func testProviderStartsSessionSendsConfigurationAndWritesCompletedSegments() async throws {
         let transport = FakeRealtimeTranscriptionTransport()
+        let updateSink = RecordingOpenAITranscriptUpdateSink()
         let transcriptURL = temporaryURL("transcript.txt")
         try FileManager.default.createDirectory(
             at: transcriptURL.deletingLastPathComponent(),
@@ -43,7 +44,8 @@ final class OpenAIRealtimeTranscriptionProviderTests: XCTestCase {
             transcriptURL: transcriptURL,
             localeIdentifier: "en-US",
             sampleRate: 24_000,
-            channelCount: 1
+            channelCount: 1,
+            transcriptUpdateSink: updateSink
         ))
 
         transport.yield("""
@@ -58,6 +60,13 @@ final class OpenAIRealtimeTranscriptionProviderTests: XCTestCase {
         )
         XCTAssertEqual(document.segments.map(\.text), ["Hello world"])
         XCTAssertEqual(document.segments.first?.sourceProvider, "openai-realtime-transcribe")
+        XCTAssertEqual(updateSink.updates.count, 1)
+        guard case .upsert(let updatedSegment) = updateSink.updates.first else {
+            return XCTFail("Expected upsert update")
+        }
+        XCTAssertEqual(updatedSegment.id, "item-1")
+        XCTAssertEqual(updatedSegment.text, "Hello world")
+        XCTAssertEqual(updatedSegment.sourceProvider, "openai-realtime-transcribe")
         XCTAssertTrue(transport.sentMessages.contains {
             String(decoding: $0, as: UTF8.self).contains("\"type\":\"session.update\"")
         })
@@ -100,5 +109,13 @@ private final class FakeRealtimeTranscriptionTransport: RealtimeTranscriptionWeb
 
     func yield(_ text: String) {
         continuation.yield(Data(text.utf8))
+    }
+}
+
+private final class RecordingOpenAITranscriptUpdateSink: TranscriptUpdateSink {
+    private(set) var updates: [TranscriptSegmentUpdate] = []
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
     }
 }
