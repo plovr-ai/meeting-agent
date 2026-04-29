@@ -598,16 +598,7 @@ private struct MeetingCommandCenterView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
-                HStack {
-                    Button(action: backToMeetings) {
-                        Label("Back", systemImage: "chevron.left")
-                    }
-                    .buttonStyle(.plain)
-                    .font(CommandCenterTypography.button)
-                    .foregroundStyle(CommandCenterPalette.primary)
-
-                    Spacer()
-                }
+                topCommandRow
                 .padding(.horizontal, 22)
                 .padding(.vertical, 10)
                 .background(CommandCenterPalette.surface)
@@ -640,8 +631,6 @@ private struct MeetingCommandCenterView: View {
                         liveCaptionTurns: liveCaptionTurns,
                         transcriptText: transcriptText,
                         transcriptionStatusText: transcriptionStatusText,
-                        stopRecording: stopRecording,
-                        retryTranscription: retryTranscription,
                         updateSpeakerLabel: updateSpeakerLabel
                     )
                     .frame(minWidth: 520)
@@ -653,12 +642,7 @@ private struct MeetingCommandCenterView: View {
                         meeting: meeting,
                         isRecording: isRecording,
                         summary: summary,
-                        recommendedQuestions: recommendedQuestions,
-                        copySummary: copySummary,
-                        exportTranscript: exportTranscript,
-                        exportMeetingData: exportMeetingData,
-                        exportSRT: exportSRT,
-                        exportVTT: exportVTT
+                        recommendedQuestions: recommendedQuestions
                     )
                     .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
                 }
@@ -672,18 +656,98 @@ private struct MeetingCommandCenterView: View {
                     save: saveDetailAgenda,
                     cancel: cancelDetailAgendaEdit
                 )
-                .frame(width: 360)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(CommandCenterPalette.border, lineWidth: 1)
-                )
                 .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 12)
                 .padding(.top, 54)
                 .padding(.trailing, 18)
             }
         }
         .background(CommandCenterPalette.window)
+    }
+
+    private var topCommandRow: some View {
+        HStack(spacing: 12) {
+            Button(action: backToMeetings) {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(.plain)
+            .font(CommandCenterTypography.button)
+            .foregroundStyle(CommandCenterPalette.primary)
+
+            Spacer()
+
+            recordingCommand
+            overflowMenu
+        }
+    }
+
+    @ViewBuilder
+    private var recordingCommand: some View {
+        if isRecording {
+            Button {
+                stopRecording()
+            } label: {
+                Label("Stop Recording", systemImage: "stop.fill")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
+        } else {
+            Button {
+            } label: {
+                Label("Record", systemImage: "record.circle")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+            .disabled(true)
+            .help("Recording can be started from an agenda item.")
+        }
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            Button {
+                copySummary()
+            } label: {
+                Label("Copy Summary", systemImage: "doc.on.clipboard")
+            }
+            .disabled(isRecording || meeting.summaryURL == nil)
+
+            Button {
+                exportTranscript()
+            } label: {
+                Label("Export Transcript", systemImage: "doc.text")
+            }
+            .disabled(isRecording || meeting.transcriptURL == nil)
+
+            Button {
+                exportMeetingData()
+            } label: {
+                Label("Export Meeting JSON", systemImage: "curlybraces")
+            }
+
+            Button {
+                exportSRT()
+            } label: {
+                Label("Export SRT", systemImage: "captions.bubble")
+            }
+
+            Button {
+                exportVTT()
+            } label: {
+                Label("Export VTT", systemImage: "captions.bubble")
+            }
+
+            Divider()
+
+            Button {
+                retryTranscription()
+            } label: {
+                Label("Retry Transcription", systemImage: "arrow.clockwise")
+            }
+            .disabled(isRecording || meeting.audioURL == nil)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .accessibilityLabel("Meeting actions")
+        }
+        .buttonStyle(CommandCenterIconButtonStyle())
+        .help("Meeting actions")
     }
 
     private func beginDetailAgendaEdit() {
@@ -768,8 +832,6 @@ private struct TranscriptPaneView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
-    let stopRecording: () -> Void
-    let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
@@ -782,7 +844,6 @@ private struct TranscriptPaneView: View {
                 CommandCenterScrollView(content: {
                     VStack(alignment: .leading, spacing: 22) {
                         metadata
-                        recordingActions
                         failureReason
                         UnifiedTranscriptView(
                             turns: liveCaptionTurns,
@@ -892,22 +953,6 @@ private struct TranscriptPaneView: View {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
                 }
             }
-        }
-    }
-
-    private var recordingActions: some View {
-        HStack(spacing: 10) {
-            Button("Stop Recording") {
-                stopRecording()
-            }
-            .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
-            .disabled(!isRecording)
-
-            Button("Retry Transcription") {
-                retryTranscription()
-            }
-            .buttonStyle(CommandCenterActionButtonStyle())
-            .disabled(isRecording || meeting.audioURL == nil)
         }
     }
 
@@ -1040,11 +1085,6 @@ private struct InsightPaneView: View {
     let isRecording: Bool
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
-    let copySummary: () -> Void
-    let exportTranscript: () -> Void
-    let exportMeetingData: () -> Void
-    let exportSRT: () -> Void
-    let exportVTT: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1054,7 +1094,6 @@ private struct InsightPaneView: View {
                         RecommendedQuestionsPanel(questions: recommendedQuestions)
                     }
                     phaseSummary
-                    exports
                     summaryPanel
                 }
                 .padding(22)
@@ -1074,53 +1113,6 @@ private struct InsightPaneView: View {
                 HStack {
                     CommandCenterChip(title: isRecording ? "ACTIVE" : "RECORDED", tint: CommandCenterPalette.primary, filled: true)
                     CommandCenterChip(title: summary == nil ? "Summary pending" : "Summary ready", tint: summary == nil ? CommandCenterPalette.warning : CommandCenterPalette.primary)
-                }
-            }
-        }
-    }
-
-    private var exports: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Exports").commandCenterEyebrow()
-                HStack {
-                    Button {
-                        copySummary()
-                    } label: {
-                        Label("Copy Summary", systemImage: "doc.on.clipboard")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                    .disabled(isRecording || meeting.summaryURL == nil)
-
-                    Button {
-                        exportTranscript()
-                    } label: {
-                        Label("Transcript", systemImage: "doc.text")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                    .disabled(isRecording || meeting.transcriptURL == nil)
-                }
-                HStack {
-                    Button {
-                        exportMeetingData()
-                    } label: {
-                        Label("Meeting JSON", systemImage: "curlybraces")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-
-                    Button {
-                        exportSRT()
-                    } label: {
-                        Label("SRT", systemImage: "captions.bubble")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-
-                    Button {
-                        exportVTT()
-                    } label: {
-                        Label("VTT", systemImage: "captions.bubble")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
                 }
             }
         }
