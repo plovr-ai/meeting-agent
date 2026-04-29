@@ -413,32 +413,48 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         let transcript = try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
         let progress = progressState(for: meeting)
-        let summary: MeetingSummary
-        if progress != nil {
-            summary = GoalOrientedSummaryProvider().generate(
-                transcript: transcript,
-                progress: progress,
+        let provider = summaryProviderFactory(speechConfiguration)
+        let summary = try await provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: meeting.name,
+                startedAt: meeting.startedAt,
+                endedAt: meeting.endedAt,
+                language: speechLocaleIdentifier,
+                targetLanguage: speechConfiguration.targetLocaleIdentifier,
+                meetingGoal: summaryGoalContext(for: progress),
+                segments: transcript.segments,
                 generatedAt: generatedAt
             )
-        } else {
-            let provider = summaryProviderFactory(speechConfiguration)
-            summary = try await provider.generateSummary(
-                input: MeetingSummaryInput(
-                    meetingName: meeting.name,
-                    startedAt: meeting.startedAt,
-                    endedAt: meeting.endedAt,
-                    language: speechLocaleIdentifier,
-                    targetLanguage: speechConfiguration.targetLocaleIdentifier,
-                    meetingGoal: nil,
-                    segments: transcript.segments,
-                    generatedAt: generatedAt
-                )
-            )
-        }
+        )
         try MeetingSummaryWriter.write(summary, jsonURL: summaryJSONURL, markdownURL: summaryMarkdownURL)
         try applyGeneratedTitleIfNeeded(summary: summary, meetingID: meetingID)
         statusText = summary.status == .succeeded ? "Summary generated" : "Summary failed"
         objectWillChange.send()
+    }
+
+    private func summaryGoalContext(for progress: MeetingProgressState?) -> String? {
+        guard let progress else { return nil }
+        var lines = [
+            "Goal: \(progress.goal.title)",
+            "Current status: \(progress.status.displayText)"
+        ]
+        appendSummaryContextSection("Confirmed items", progress.confirmedItems, to: &lines)
+        appendSummaryContextSection("Unresolved items", progress.unresolvedItems, to: &lines)
+        appendSummaryContextSection(
+            "Suggested follow-up questions",
+            progress.suggestedQuestions.map(\.english),
+            to: &lines
+        )
+        return lines.joined(separator: "\n")
+    }
+
+    private func appendSummaryContextSection(_ title: String, _ items: [String], to lines: inout [String]) {
+        let visibleItems = items
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !visibleItems.isEmpty else { return }
+        lines.append("\(title):")
+        lines.append(contentsOf: visibleItems.map { "- \($0)" })
     }
 
     private func applyGeneratedTitleIfNeeded(summary: MeetingSummary, meetingID: UUID) throws {

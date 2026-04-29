@@ -208,7 +208,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRecording)
     }
 
-    func testGenerateSummaryUsesMatchingMeetingProgressSnapshot() async throws {
+    func testGenerateSummaryIncludesMatchingMeetingProgressSnapshot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -253,16 +253,24 @@ final class MeetingAgentViewModelTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 200)
         )
         try JSONEncoder.meetingAgent.encode(progress).write(to: XCTUnwrap(stored.meetingProgressJSONURL), options: .atomic)
-        let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US", processTargetsProvider: { [] })
+        let provider = CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini")
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
         try viewModel.loadMeetings()
 
         try await viewModel.generateSummary(for: stored.id, generatedAt: Date(timeIntervalSince1970: 300))
 
         let summary = try MeetingSummaryWriter.read(from: XCTUnwrap(stored.summaryJSONURL))
-        XCTAssertEqual(summary.provider, "goal-oriented-deterministic")
-        XCTAssertEqual(summary.overview, "Goal: Confirm launch plan. Current status: on track.")
-        XCTAssertEqual(summary.decisions.first?.description, "Confirm launch owner")
-        XCTAssertEqual(summary.followUps, ["Have we confirmed the deadline?"])
+        XCTAssertEqual(summary.provider, "openrouter:openai/gpt-4.1-mini")
+        let meetingGoal = try XCTUnwrap(provider.receivedInputs.first?.meetingGoal)
+        XCTAssertTrue(meetingGoal.contains("Goal: Confirm launch plan"))
+        XCTAssertTrue(meetingGoal.contains("Current status: on track"))
+        XCTAssertTrue(meetingGoal.contains("- Confirm launch owner"))
+        XCTAssertTrue(meetingGoal.contains("- Have we confirmed the deadline?"))
     }
 
     func testStartRecordingForPendingCandidateUsesConfiguredLocaleAndRecordingState() async throws {
