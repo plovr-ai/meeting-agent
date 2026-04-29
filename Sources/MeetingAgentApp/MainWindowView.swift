@@ -19,6 +19,12 @@ struct MainWindowView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 VStack(spacing: 6) {
+                    Text("Meeting Agent")
+                        .font(CommandCenterTypography.sectionTitle)
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 6)
+
                     Button("Today") {
                         destination = .today
                     }
