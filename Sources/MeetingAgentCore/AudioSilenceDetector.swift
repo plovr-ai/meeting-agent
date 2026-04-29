@@ -1,13 +1,13 @@
 import Foundation
 
-public struct AudioSilenceDetector: Equatable {
-    public let amplitudeThreshold: Int16
+struct AudioSilenceDetector: Equatable {
+    let amplitudeThreshold: Int16
 
-    public init(amplitudeThreshold: Int16 = 32) {
+    init(amplitudeThreshold: Int16 = 32) {
         self.amplitudeThreshold = max(0, amplitudeThreshold)
     }
 
-    public func isSilent(_ frame: AudioFrame) -> Bool {
+    func isSilent(_ frame: AudioFrame) -> Bool {
         guard !frame.pcm.isEmpty,
               frame.pcm.count.isMultiple(of: MemoryLayout<Int16>.size)
         else {
