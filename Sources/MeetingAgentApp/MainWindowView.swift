@@ -361,7 +361,7 @@ struct MainWindowView: View {
 private extension MainWindowDestination {
     var agendaReturnDestination: MainWindowDestination {
         switch self {
-        case .today, .thisWeek, .history:
+        case .today, .meetings, .library:
             return self
         case .workspace, .settings:
             return .today

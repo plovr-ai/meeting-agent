@@ -151,8 +151,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("workspaceReturnDestination = returnDestination"))
         XCTAssertTrue(source.contains("destination = .workspace"))
         XCTAssertTrue(source.contains("var agendaReturnDestination: MainWindowDestination"))
+        XCTAssertTrue(source.contains("case .today, .meetings, .library:"))
         XCTAssertTrue(source.contains("case .workspace, .settings:"))
         XCTAssertTrue(source.contains("return .today"))
+        XCTAssertFalse(source.contains("case .today, .thisWeek, .history:"))
     }
 
     func testMeetingWorkspaceRendersBackButton() throws {
