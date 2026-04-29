@@ -477,3 +477,19 @@ When UI refresh logic compares a visible draft against a clean baseline, update 
 For dirty-state guards, audit every path that transitions a draft from dirty back to clean, not only the initial load/reset path.
 
 ---
+
+## [88] Clean coverage exclusions after deleting source files
+
+**Date**: 2026-04-29
+**Category**: build-config
+
+### What went wrong
+Deleting the realtime speech translation files initially left their filenames in the unit coverage exclusion list, so verification still printed stale excluded adapters after the files were gone.
+
+### Correct approach
+When deleting source files, search build and coverage scripts for static file lists and remove stale entries in the same change.
+
+### How to avoid
+After deleting source files, run `rg` across scripts and config for every deleted filename before final verification.
+
+---
