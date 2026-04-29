@@ -12,6 +12,7 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(second.document.segments.map(\.id), ["active"])
         XCTAssertEqual(second.document.segments.map(\.text), ["hello world"])
         XCTAssertEqual(second.document.segments.map(\.isFinal), [true])
+        XCTAssertEqual(accumulator.currentDocument.segments.map(\.id), ["active"])
     }
 
     func testUpsertFinalPrunesShiftedDeepgramInterim() {
@@ -69,5 +70,24 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(result.document.segments.first?.translatedText, "确认负责人。")
         XCTAssertEqual(result.document.segments.first?.translationTargetLocale, "zh-CN")
         XCTAssertEqual(result.document.segments.first?.translationIsFinal, true)
+    }
+
+    func testFileBackedTranscriptUpdateSinkPersistsUpdates() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-sink-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transcriptURL = directory.appendingPathComponent("transcript.txt")
+        let sink = try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL)
+
+        sink.receive(.replaceAll([
+            TranscriptSegment(id: "segment-1", text: "hello", language: "en-US", isFinal: true)
+        ]))
+
+        let document = try TranscriptFileWriter.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.segments.map(\.id), ["segment-1"])
+        XCTAssertEqual(document.segments.map(\.text), ["hello"])
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello\n")
     }
 }
