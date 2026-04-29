@@ -34,6 +34,9 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
     public let confidence: Double?
     public let createdAt: Date
     public let timingSource: TranscriptTimingSource
+    public let translatedText: String?
+    public let translationTargetLocale: String?
+    public let translationIsFinal: Bool?
 
     public var speaker: TranscriptSpeaker {
         TranscriptSpeaker(identifier: speakerID, label: speakerLabel)
@@ -51,7 +54,10 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         speechFinal: Bool = false,
         confidence: Double? = nil,
         createdAt: Date = Date(),
-        timingSource: TranscriptTimingSource = .unavailable
+        timingSource: TranscriptTimingSource = .unavailable,
+        translatedText: String? = nil,
+        translationTargetLocale: String? = nil,
+        translationIsFinal: Bool? = nil
     ) {
         self.id = id
         self.speakerID = speaker.identifier
@@ -66,6 +72,9 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         self.confidence = confidence
         self.createdAt = createdAt
         self.timingSource = timingSource
+        self.translatedText = translatedText
+        self.translationTargetLocale = translationTargetLocale
+        self.translationIsFinal = translationIsFinal
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -82,6 +91,9 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         case confidence
         case createdAt
         case timingSource
+        case translatedText
+        case translationTargetLocale
+        case translationIsFinal
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,6 +111,9 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable {
         confidence = try container.decodeIfPresent(Double.self, forKey: .confidence)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         timingSource = try container.decodeIfPresent(TranscriptTimingSource.self, forKey: .timingSource) ?? .unavailable
+        translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
+        translationTargetLocale = try container.decodeIfPresent(String.self, forKey: .translationTargetLocale)
+        translationIsFinal = try container.decodeIfPresent(Bool.self, forKey: .translationIsFinal)
     }
 }
 

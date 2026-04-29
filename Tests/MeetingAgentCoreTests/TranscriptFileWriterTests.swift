@@ -22,6 +22,50 @@ final class TranscriptFileWriterTests: XCTestCase {
         let document = try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
 
         XCTAssertEqual(document.segments.first?.speechFinal, false)
+        XCTAssertNil(document.segments.first?.translatedText)
+        XCTAssertNil(document.segments.first?.translationTargetLocale)
+        XCTAssertNil(document.segments.first?.translationIsFinal)
+    }
+
+    func testUpdateSegmentTranslationPersistsCacheAndTextEditClearsIt() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+
+        let writer = try TranscriptFileWriter(url: url)
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "Confirm the owner.", language: "en-US")
+        ])
+
+        try TranscriptFileWriter.updateSegmentTranslation(
+            segmentID: "segment-1",
+            text: "确认负责人。",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            textURL: url,
+            structuredURL: jsonURL
+        )
+
+        var document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(document.segments.first?.translationTargetLocale, "zh-CN")
+        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
+
+        try TranscriptFileWriter.updateSegmentText(
+            segmentID: "segment-1",
+            text: "Confirm the launch owner.",
+            textURL: url,
+            structuredURL: jsonURL
+        )
+
+        document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.first?.text, "Confirm the launch owner.")
+        XCTAssertNil(document.segments.first?.translatedText)
+        XCTAssertNil(document.segments.first?.translationTargetLocale)
+        XCTAssertNil(document.segments.first?.translationIsFinal)
     }
 
     func testTranscriptWriterReplacesPartialTextWithLatestText() throws {

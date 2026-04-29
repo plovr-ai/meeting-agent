@@ -957,6 +957,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             )
             for update in liveCaptionChunker.append(segment) {
                 liveCaptionStore.upsert(update.turn)
+                hydrateCachedTranslation(from: segment, toTurnID: update.turn.id)
                 logCaptionTurnUpdate(update.turn)
             }
         }
@@ -995,6 +996,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 metadata: ["path": "interim"]
             )
             _ = liveCaptionStore.append(segment)
+            hydrateCachedTranslation(from: segment, toTurnID: segment.id)
         }
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
@@ -1448,6 +1450,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
+        persistCaptionTranslation(request, translatedText: translatedText, isFinal: false)
         request.performanceEventLogger?.log(
             "caption_translation_attached",
             segmentID: request.turn.id,
@@ -1478,6 +1481,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
         liveCaptionStore.markTranslationFinal(forTurnID: request.turn.id)
+        persistCaptionTranslation(request, translatedText: translatedText, isFinal: true)
         request.performanceEventLogger?.log(
             "caption_translation_attached",
             segmentID: request.turn.id,
@@ -1519,6 +1523,46 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func captionTranslationKey(for turn: LiveCaptionTurn) -> String {
         "\(turn.sourceSegmentIDs.joined(separator: ","))|\(turn.sourceLocale)|\(turn.targetLocale)|\(turn.originalText)"
+    }
+
+    private func hydrateCachedTranslation(from segment: TranscriptSegment, toTurnID turnID: String) {
+        guard let translatedText = segment.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !translatedText.isEmpty,
+              let targetLocale = segment.translationTargetLocale?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let current = liveCaptionStore.turns.first(where: { $0.id == turnID }),
+              targetLocale == current.targetLocale
+        else {
+            return
+        }
+        if current.displayState == .sealed,
+           current.boundaryStrength == .hard,
+           segment.translationIsFinal != true {
+            return
+        }
+        liveCaptionStore.attachTranslation(translatedText, toTurnID: turnID)
+        guard let hydrated = liveCaptionStore.turns.first(where: { $0.id == turnID }) else { return }
+        draftTranslationKeysByTurnID[turnID] = draftCaptionTranslationKey(for: hydrated)
+        draftTranslationCharacterCountsByTurnID[turnID] = hydrated.originalText.count
+        if segment.translationIsFinal == true {
+            liveCaptionStore.markTranslationFinal(forTurnID: turnID)
+            finalTranslationKeysByTurnID[turnID] = finalCaptionTranslationKey(for: hydrated)
+        }
+    }
+
+    private func persistCaptionTranslation(
+        _ request: CaptionTranslationRequest,
+        translatedText: String,
+        isFinal: Bool
+    ) {
+        guard let meeting = selectedMeeting else { return }
+        try? TranscriptFileWriter.updateSegmentTranslation(
+            segmentID: request.turn.sourceSegmentID,
+            text: translatedText,
+            targetLocale: request.turn.targetLocale,
+            isFinal: isFinal,
+            textURL: meeting.transcriptURL,
+            structuredURL: meeting.transcriptJSONURL
+        )
     }
 
     private func attachRealtimeTranslationsToLiveCaptions() {
