@@ -349,3 +349,19 @@ When displaying first-item metadata for grouped UI state, preserve that metadata
 For grouped display metadata, trace the data from source segment to store merge to view grouping before treating a group-level test as sufficient.
 
 ---
+
+## [63] Make async coalescing regressions deterministic
+
+**Date**: 2026-04-29
+**Category**: test-mistake
+
+### What went wrong
+The first superseded draft translation regression used a sleeping fake provider and asserted completion state, which could pass or fail based on task scheduling instead of proving the stale request was skipped before provider work.
+
+### Correct approach
+Use a manually delayed provider and assert the pending provider queue shape directly when testing async coalescing or cancellation behavior.
+
+### How to avoid
+For async cancellation tests, assert deterministic intermediate state instead of relying on sleep timing or completion ordering.
+
+---
