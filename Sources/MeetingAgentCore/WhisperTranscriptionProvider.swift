@@ -432,6 +432,17 @@ struct WhisperSpeechTranscriptionProvider: SpeechTranscriptionProvider {
         )
     }
 
+    func start(context: SpeechTranscriptionStreamContext) async throws -> AudioFrameTranscriber {
+        let configuration = try configuration ?? WhisperConfiguration.fromEnvironment()
+        return try WhisperCLITranscriber.start(
+            transcriptURL: context.transcriptURL,
+            localeIdentifier: context.localeIdentifier,
+            configuration: configuration,
+            processRunner: processRunner,
+            transcriptUpdateSink: context.transcriptUpdateSink
+        )
+    }
+
     func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
         guard let inputAudioURL = context.inputAudioURL else {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: no audio file is available for retry")
@@ -484,7 +495,7 @@ enum WhisperFileTranscriber {
                 timingSource: .unavailable
             )
         }
-        try TranscriptFileWriter(url: transcriptURL).replace(with: segments)
+        try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceAll(segments))
     }
 
     private static func normalizedTranscriptLines(_ text: String) -> [String] {
@@ -504,6 +515,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
     private let localeIdentifier: String
     private let languageCode: String?
     private let chunkDurationSeconds: Double
+    private let transcriptUpdateSink: TranscriptUpdateSink?
     private var chunkFrames: [AudioFrame] = []
     private var pendingChunkDurationSeconds = 0.0
     private var transcribedDurationSeconds = 0.0
@@ -519,7 +531,8 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         processRunner: WhisperProcessRunning,
         localeIdentifier: String,
         languageCode: String?,
-        chunkDurationSeconds: Double
+        chunkDurationSeconds: Double,
+        transcriptUpdateSink: TranscriptUpdateSink?
     ) {
         self.transcriptURL = transcriptURL
         self.temporaryDirectory = temporaryDirectory
@@ -528,6 +541,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         self.localeIdentifier = localeIdentifier
         self.languageCode = languageCode
         self.chunkDurationSeconds = max(0.001, chunkDurationSeconds)
+        self.transcriptUpdateSink = transcriptUpdateSink
     }
 
     static func start(
@@ -536,7 +550,8 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
         workingDirectory: URL = FileManager.default.temporaryDirectory,
-        chunkDurationSeconds: Double = 3
+        chunkDurationSeconds: Double = 3,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil
     ) throws -> WhisperCLITranscriber {
         let temporaryDirectory = workingDirectory.appendingPathComponent("meeting-agent-whisper-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
@@ -548,7 +563,8 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             processRunner: processRunner,
             localeIdentifier: localeIdentifier,
             languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier, modelURL: configuration.modelURL),
-            chunkDurationSeconds: chunkDurationSeconds
+            chunkDurationSeconds: chunkDurationSeconds,
+            transcriptUpdateSink: transcriptUpdateSink
         )
     }
 
@@ -577,7 +593,11 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
         } catch {
             let message = failureMessage(for: error)
             failureReason = message
-            try? TranscriptFileWriter(url: transcriptURL).replace(with: message)
+            if let transcriptUpdateSink {
+                transcriptUpdateSink.receive(.replaceWithPlainText(message))
+            } else {
+                try? FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceWithPlainText(message))
+            }
         }
 
         try? FileManager.default.removeItem(at: temporaryDirectory)
@@ -646,7 +666,11 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
                     timingSource: .approximate
                 )
             }
-            try TranscriptFileWriter(url: transcriptURL).replace(with: transcriptSegments)
+            if let transcriptUpdateSink {
+                transcriptUpdateSink.receive(.replaceAll(transcriptSegments))
+            } else {
+                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceAll(transcriptSegments))
+            }
         }
 
         chunkFrames.removeAll(keepingCapacity: true)
