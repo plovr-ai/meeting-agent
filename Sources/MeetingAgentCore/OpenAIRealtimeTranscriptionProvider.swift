@@ -108,6 +108,7 @@ public struct OpenAIRealtimeTranscriptionProvider {
         return OpenAIRealtimeTranscriptionTranscriber(
             transport: transport,
             writer: writer,
+            transcriptUpdateSink: context.transcriptUpdateSink,
             localeIdentifier: context.localeIdentifier
         )
     }
@@ -168,6 +169,7 @@ public struct OpenAIRealtimeTranscriptionProvider {
 final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
     private let transport: RealtimeTranscriptionWebSocketTransport
     private let writer: TranscriptFileWriter
+    private let transcriptUpdateSink: TranscriptUpdateSink?
     private let localeIdentifier: String
     private var receiveTask: Task<Void, Never>?
     private(set) var failureReason: String?
@@ -175,12 +177,14 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
     init(
         transport: RealtimeTranscriptionWebSocketTransport,
         writer: TranscriptFileWriter,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil,
         localeIdentifier: String
     ) {
         self.transport = transport
         self.writer = writer
+        self.transcriptUpdateSink = transcriptUpdateSink
         self.localeIdentifier = localeIdentifier
-        self.receiveTask = Task { [transport, writer, localeIdentifier] in
+        self.receiveTask = Task { [transport, writer, transcriptUpdateSink, localeIdentifier] in
             var segmentIndex = 0
             for await data in transport.incomingMessages {
                 do {
@@ -189,16 +193,19 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
                     case .completed(let itemID, let transcript):
                         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { continue }
-                        try writer.append(TranscriptSegment(
+                        let segment = TranscriptSegment(
                             id: itemID.isEmpty ? "openai-realtime-\(segmentIndex)" : itemID,
                             text: text,
                             language: localeIdentifier,
                             sourceProvider: "openai-realtime-transcribe",
                             isFinal: true,
                             timingSource: .unavailable
-                        ))
+                        )
+                        transcriptUpdateSink?.receive(.upsert(segment))
+                        try writer.append(segment)
                         segmentIndex += 1
                     case .failed(let message):
+                        transcriptUpdateSink?.receive(.replaceWithPlainText("OpenAI Realtime transcription failed: \(message)"))
                         try writer.replace(with: "OpenAI Realtime transcription failed: \(message)")
                     case .connected, .delta:
                         break
