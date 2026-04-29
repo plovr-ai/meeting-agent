@@ -488,6 +488,97 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true, true])
     }
 
+    func testInterimSegmentKeepsOnlyTextBeyondExistingFinalPrefixOverlap() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-1", label: "User B")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-15.309999",
+            speaker: speaker,
+            startTimeSeconds: 15.309999,
+            endTimeSeconds: 21.630001,
+            text: "No. It works. It works very well. It works very, very well. Oh, wow. That's awesome.",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-18.11",
+            speaker: speaker,
+            startTimeSeconds: 18.11,
+            endTimeSeconds: 22.35,
+            text: "It works very, very well. Oh, wow. That's awesome. Now this",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), [
+            "deepgram-transcribe-stream-15.309999",
+            "deepgram-transcribe-stream-18.11"
+        ])
+        XCTAssertEqual(document.segments.map(\.text), [
+            "No. It works. It works very well. It works very, very well. Oh, wow. That's awesome.",
+            "Now this"
+        ])
+        XCTAssertEqual(document.segments.last?.startTimeSeconds, 21.630001)
+    }
+
+    func testAdjacentFinalSegmentsTogetherPruneCoveredInterim() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "User A")
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            speaker: speaker,
+            startTimeSeconds: 0,
+            endTimeSeconds: 2,
+            text: "Alpha beta",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-2.0",
+            speaker: speaker,
+            startTimeSeconds: 2,
+            endTimeSeconds: 4,
+            text: "gamma delta",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.1",
+            speaker: speaker,
+            startTimeSeconds: 1.5,
+            endTimeSeconds: 2.5,
+            text: "beta gamma",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            timingSource: .precise
+        ))
+
+        let document = try TranscriptFileWriter.readDocument(from: jsonURL)
+        XCTAssertEqual(document.segments.map(\.id), [
+            "deepgram-transcribe-stream-0.0",
+            "deepgram-transcribe-stream-2.0"
+        ])
+    }
+
     func testUpdateSpeakerLabelRewritesStructuredAndRenderedTranscript() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")

@@ -81,4 +81,12 @@ final class TranscriptSegmentTests: XCTestCase {
         current partial result
         """)
     }
+
+    func testSpeakerLabelMapperAllocatesLabelsWithoutPreRegisteredSpeakers() {
+        var mapper = SpeakerLabelMapper()
+
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-1")), "User A")
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-1")), "User A")
+        XCTAssertEqual(mapper.label(for: TranscriptSpeaker(identifier: "speaker-2")), "User B")
+    }
 }

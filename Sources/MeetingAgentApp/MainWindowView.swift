@@ -937,7 +937,7 @@ private struct UnifiedTranscriptView: View {
                 if turns.isEmpty {
                     fallbackTranscript
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    LazyVStack(alignment: .leading, spacing: 20) {
                         let groups = LiveCaptionSpeakerGroup.groups(from: turns)
                         ForEach(groups) { group in
                             BilingualTranscriptGroup(
@@ -951,7 +951,7 @@ private struct UnifiedTranscriptView: View {
                                 },
                                 editText: editText
                             )
-                            .id(group.turns.last?.id ?? group.id)
+                            .id(group.id)
                         }
                     }
                     .simultaneousGesture(
@@ -992,7 +992,7 @@ private struct BilingualTranscriptGroup: View {
     var editText: (LiveCaptionTurn) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             speakerLabel
             ForEach(group.turns) { turn in
                 BilingualTranscriptBlock(
@@ -1002,6 +1002,7 @@ private struct BilingualTranscriptGroup: View {
                         editText(turn)
                     }
                 )
+                .id(turn.id)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1051,20 +1052,24 @@ private struct BilingualTranscriptBlock: View {
     var editText: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Spacer()
-                if let editText {
-                    Button {
-                        editText()
-                    } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .buttonStyle(CommandCenterIconButtonStyle())
-                    .help("Correct caption")
+        HStack(alignment: .top, spacing: 8) {
+            transcriptText
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let editText {
+                Button {
+                    editText()
+                } label: {
+                    Image(systemName: "pencil")
                 }
+                .buttonStyle(CommandCenterIconButtonStyle())
+                .help("Correct caption")
             }
+        }
+    }
 
+    @ViewBuilder
+    private var transcriptText: some View {
+        VStack(alignment: .leading, spacing: 7) {
             switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled) {
             case .translated(let primaryText, let sourceText):
                 Text(primaryText)

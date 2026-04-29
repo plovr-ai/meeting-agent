@@ -50,6 +50,7 @@ public final class TranscriptFileWriter {
             document.segments.removeAll { Self.shouldReplaceExistingSegment($0, with: segment) }
             document.segments.append(segment)
         }
+        document.segments = Self.trimmedCoveredInterimPrefixes(document.segments)
         document.segments = Self.prunedCoveredInterimSegments(document.segments)
         try replace(with: document.segments)
     }
@@ -243,6 +244,111 @@ public final class TranscriptFileWriter {
             guard !segment.isFinal else { return true }
             return !finalSegmentsCoverInterim(finalSegments, segment)
         }
+    }
+
+    private static func trimmedCoveredInterimPrefixes(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var finalSegments: [TranscriptSegment] = []
+        for segment in segments where segment.isFinal {
+            finalSegments.append(segment)
+        }
+        guard !finalSegments.isEmpty else { return segments }
+        var output: [TranscriptSegment] = []
+        segmentLoop:
+        for segment in segments {
+            guard !segment.isFinal else {
+                output.append(segment)
+                continue
+            }
+            var current = segment
+            for final in finalSegments {
+                guard final.sourceProvider == current.sourceProvider,
+                      let finalStart = final.startTimeSeconds,
+                      let finalEnd = final.endTimeSeconds,
+                      let interimStart = current.startTimeSeconds,
+                      let interimEnd = current.endTimeSeconds
+                else {
+                    continue
+                }
+                let tolerance = 0.25
+                guard finalStart <= interimStart + tolerance,
+                      finalEnd > interimStart + tolerance,
+                      finalEnd < interimEnd + tolerance
+                else {
+                    continue
+                }
+                let firstTokens = final.text
+                    .lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                var normalizedFirstTokens: [String] = []
+                for token in firstTokens where !token.isEmpty {
+                    normalizedFirstTokens.append(token)
+                }
+                let secondTokens = current.text
+                    .lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                var normalizedSecondTokens: [String] = []
+                for token in secondTokens where !token.isEmpty {
+                    normalizedSecondTokens.append(token)
+                }
+                let maxOverlap = min(normalizedFirstTokens.count, normalizedSecondTokens.count)
+                var overlap = 0
+                if maxOverlap > 0 {
+                    for candidate in stride(from: maxOverlap, through: 1, by: -1) {
+                        if Array(normalizedFirstTokens.suffix(candidate)) == Array(normalizedSecondTokens.prefix(candidate)) {
+                            overlap = candidate
+                            break
+                        }
+                    }
+                }
+                guard overlap >= 2,
+                      speakersAreCompatible(final.speaker, current.speaker) || overlap >= 3
+                else {
+                    continue
+                }
+                var remaining = overlap
+                var index = current.text.startIndex
+                var insideWord = false
+                var remainder = ""
+                while index < current.text.endIndex {
+                    let scalar = current.text[index].unicodeScalars.first
+                    let isWord = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+                    if isWord {
+                        insideWord = true
+                    } else if insideWord {
+                        remaining -= 1
+                        insideWord = false
+                        if remaining == 0 {
+                            remainder = String(current.text[index...])
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            break
+                        }
+                    }
+                    index = current.text.index(after: index)
+                }
+                if remainder.isEmpty, insideWord {
+                    remaining -= 1
+                }
+                let text = (remaining <= 0 ? remainder : current.text)
+                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:!?")))
+                guard !text.isEmpty else { continue segmentLoop }
+                current = TranscriptSegment(
+                    id: current.id,
+                    speaker: current.speaker,
+                    startTimeSeconds: max(interimStart, min(finalEnd, interimEnd)),
+                    endTimeSeconds: current.endTimeSeconds,
+                    text: text,
+                    language: current.language,
+                    sourceProvider: current.sourceProvider,
+                    isFinal: current.isFinal,
+                    speechFinal: current.speechFinal,
+                    confidence: current.confidence,
+                    createdAt: current.createdAt,
+                    timingSource: current.timingSource
+                )
+            }
+            output.append(current)
+        }
+        return output
     }
 
     private static func finalSegmentsCoverInterim(_ finalSegments: [TranscriptSegment], _ interim: TranscriptSegment) -> Bool {

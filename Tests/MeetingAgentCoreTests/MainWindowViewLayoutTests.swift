@@ -260,6 +260,24 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("BilingualTranscriptBlock"))
     }
 
+    func testUnifiedTranscriptUsesStableSpeakerGroupIDsAndTurnScrollAnchors() throws {
+        let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
+
+        XCTAssertTrue(source.contains(".id(group.id)"))
+        XCTAssertTrue(source.contains(".id(turn.id)"))
+        XCTAssertFalse(source.contains(".id(group.turns.last?.id ?? group.id)"))
+    }
+
+    func testBilingualTranscriptBlockDoesNotReserveBlankHeaderRowForCorrectionButton() throws {
+        let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("HStack(alignment: .top, spacing: 8)"))
+        XCTAssertFalse(source.contains("""
+            HStack(spacing: 8) {
+                Spacer()
+"""))
+    }
+
     func testExportsPanelExposesImplementedExportActionsOnly() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
