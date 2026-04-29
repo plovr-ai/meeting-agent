@@ -14,6 +14,7 @@ struct TodayAgendaView: View {
     let createMeeting: () throws -> Void
 
     @State private var draft = AgendaDraft()
+    @State private var recordBackedDraft = AgendaDraft()
     @State private var draftMeetingID: UUID?
     @State private var saveError: String?
     @State private var createError: String?
@@ -47,6 +48,9 @@ struct TodayAgendaView: View {
             guard draftMeetingID == selectedMeetingID else {
                 resetDraftFromSelection()
                 return
+            }
+            if draft == recordBackedDraft {
+                resetDraftFromSelection()
             }
         }
     }
@@ -172,11 +176,13 @@ struct TodayAgendaView: View {
     private func resetDraftFromSelection() {
         guard let selectedMeeting else {
             draft = AgendaDraft()
+            recordBackedDraft = draft
             draftMeetingID = nil
             saveError = nil
             return
         }
         draft = AgendaDraft(meeting: selectedMeeting)
+        recordBackedDraft = draft
         draftMeetingID = selectedMeeting.id
         saveError = nil
     }
