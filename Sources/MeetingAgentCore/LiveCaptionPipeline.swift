@@ -24,6 +24,7 @@ public final class LiveCaptionPipeline {
     private let performanceEventLogger: PerformanceEventLogger?
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
+    private var interimSegmentsByID: [String: TranscriptSegment] = [:]
 
     public init(
         sourceLocale: String,
@@ -37,6 +38,7 @@ public final class LiveCaptionPipeline {
         self.performanceEventLogger = performanceEventLogger
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        interimSegmentsByID = [:]
     }
 
     public func apply(_ result: TranscriptSegmentAccumulationResult) async -> LiveCaptionPipelineSnapshot {
@@ -98,15 +100,28 @@ public final class LiveCaptionPipeline {
         for event in events {
             switch event {
             case .draftUpdated(let turn), .sealed(let turn):
+                if let sourceSegment,
+                   !turn.isFinal,
+                   let previousSegment = interimSegmentsByID[sourceSegment.id] {
+                    let updated = store.replaceInterimSegment(previousSegment, with: sourceSegment)
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    interimSegmentsByID[sourceSegment.id] = sourceSegment
+                    continue
+                }
                 store.upsert(turn)
                 if let sourceSegment {
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
+                    if sourceSegment.isFinal {
+                        interimSegmentsByID[sourceSegment.id] = nil
+                    }
                 }
             case .interimUpdated(let segment):
                 let turn = store.append(segment)
                 hydrateCachedTranslation(from: segment, toTurnID: turn.id)
+                interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
                 store.remove(turnID: turnID)
+                interimSegmentsByID[turnID] = nil
             }
         }
     }

@@ -423,6 +423,44 @@ public struct LiveCaptionStore: Equatable {
         turns.removeAll { $0.id == turnID }
     }
 
+    @discardableResult
+    public mutating func replaceInterimSegment(
+        _ previousSegment: TranscriptSegment,
+        with segment: TranscriptSegment
+    ) -> LiveCaptionTurn {
+        guard !segment.isFinal,
+              let index = turns.firstIndex(where: {
+                  $0.sourceSegmentIDs.contains(segment.id) && $0.sourceSegmentIDs.count > 1
+              })
+        else {
+            return append(segment)
+        }
+
+        var updated = turns[index]
+        let previousText = updated.originalText
+        updated.originalText = replacedTranscriptText(
+            in: updated.originalText,
+            previous: previousSegment.text,
+            replacement: segment.text
+        )
+        updated.sourceLocale = segment.language ?? sourceLocale
+        updated.targetLocale = targetLocale
+        updated.isFinal = false
+        updated.captionHealth = .live
+        updated.translationHealth = .pending
+        updated.chunkState = .draft
+        if previousText != updated.originalText {
+            updated.translationRevision += 1
+        }
+        updated.freezeReason = nil
+        updated.displayState = .draft
+        updated.translationState = .draft
+        updated.boundaryReason = nil
+        updated.boundaryStrength = nil
+        turns[index] = updated
+        return updated
+    }
+
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
         guard turn.isFinal,
               let lastIndex = turns.indices.last,
@@ -506,6 +544,23 @@ public struct LiveCaptionStore: Equatable {
             return "\(trimmedFirst) \(secondRemainder)"
         }
         return "\(trimmedFirst) \(trimmedSecond)"
+    }
+
+    private func replacedTranscriptText(in text: String, previous: String, replacement: String) -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrevious = previous.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isEmpty {
+            return trimmedReplacement
+        }
+        if trimmedPrevious.isEmpty {
+            return joinedTranscriptText(trimmedText, trimmedReplacement)
+        }
+        if let range = trimmedText.range(of: trimmedPrevious) {
+            return String(trimmedText.replacingCharacters(in: range, with: trimmedReplacement))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return joinedTranscriptText(trimmedText, trimmedReplacement)
     }
 
     private func transcriptTextOverlapsOrContains(_ first: String, _ second: String) -> Bool {
