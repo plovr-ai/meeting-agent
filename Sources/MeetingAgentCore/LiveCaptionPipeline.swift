@@ -203,9 +203,10 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleTranslations() async {
-        var updatedStore = store
-        await translationScheduler.scheduleTranslations(in: &updatedStore)
-        store = updatedStore
+        let updates = await translationScheduler.translationUpdates(for: store)
+        for update in updates {
+            translationScheduler.apply(update, to: &store)
+        }
     }
 
     private func currentTranslationHealth() -> LivePipelineHealth {

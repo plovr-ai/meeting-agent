@@ -982,7 +982,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         liveCaptionTurns = snapshot.turns
         meetingProgressHealth.caption = snapshot.captionHealth
-        updateCaptionTranslationHealth()
+        meetingProgressHealth.translation = snapshot.translationHealth
     }
 
     private func applyTranscriptDocumentToLiveCaptions(_ document: TranscriptDocument) {

@@ -617,6 +617,37 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.translatedText, "Alex 是上线负责人。")
     }
 
+    func testSelectedMeetingReplayPublishesPipelineDegradedTranslationHealth() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+                text: "Alex is the launch owner.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let provider = FailingViewModelTextTranslationProvider(error: NSError(domain: "translation", code: 2))
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+        await viewModel.waitForLiveCaptionReplayForTesting()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .failed("translation error 2"))
+        XCTAssertEqual(viewModel.meetingProgressHealth.translation, .degraded("translation error 2"))
+    }
+
     func testReopenedHardFinalCaptionDoesNotTreatDraftCacheAsComplete() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2897,6 +2928,29 @@ private final class ViewModelFakeTextTranslationProvider: TextTranslationProvide
             },
             provenance: PipelineProvenance(profileID: "fake-view-model-translation")
         )
+    }
+}
+
+private final class FailingViewModelTextTranslationProvider: TextTranslationProvider {
+    let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "failing-view-model-translation",
+        displayName: "Failing View Model Translation",
+        capability: .textTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        throw error
     }
 }
 

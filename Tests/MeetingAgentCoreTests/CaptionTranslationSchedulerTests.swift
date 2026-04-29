@@ -59,6 +59,51 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertNil(store.turns.first?.translatedText)
     }
 
+    func testSoftSealedAndDraftTurnsDoNotCallProvider() async {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "soft",
+            originalText: "soft boundary",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            translationHealth: .pending,
+            displayState: .sealed,
+            translationState: .draft,
+            boundaryReason: .punctuation,
+            boundaryStrength: .soft
+        ))
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "draft",
+            originalText: "draft turn",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: false,
+            translationHealth: .pending,
+            displayState: .draft,
+            translationState: .draft
+        ))
+        let provider = RecordingTextTranslationProvider(translations: ["soft": "软边界", "draft": "草稿"])
+        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+
+        await scheduler.scheduleTranslations(in: &store)
+
+        XCTAssertTrue(provider.requests.isEmpty)
+        XCTAssertEqual(store.turns.map(\.translationHealth), [.pending, .pending])
+    }
+
+    func testNilProviderLeavesHardSealedTranslationPending() async {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let scheduler = CaptionTranslationScheduler(provider: nil, performanceEventLogger: nil)
+
+        await scheduler.scheduleTranslations(in: &store)
+
+        XCTAssertNil(store.turns.first?.translatedText)
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
+        XCTAssertEqual(store.turns.first?.translationState, .pendingFinal)
+    }
+
     private func hardSealedTurn(
         text: String = "hello",
         sourceLocale: String,

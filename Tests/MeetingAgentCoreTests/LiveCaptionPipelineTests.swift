@@ -509,6 +509,51 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .live)
     }
 
+    func testStaleTranslationCompletionDoesNotOverwriteNewerReplayState() async throws {
+        let provider = SuspendedPipelineTranslationProvider()
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let oldDocument = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "old-segment",
+                text: "old text",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let newDocument = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "new-segment",
+                text: "new text",
+                language: "en-US",
+                isFinal: false,
+                speechFinal: false
+            )
+        ])
+
+        let oldReplay = Task {
+            await pipeline.replay(oldDocument)
+        }
+        try await waitForPipelineCondition { provider.pendingRequestCount == 1 }
+
+        let newSnapshot = await pipeline.replay(newDocument)
+
+        XCTAssertEqual(newSnapshot.turns.map(\.sourceSegmentID), ["new-segment"])
+        provider.completeRequest(at: 0, targetText: "旧翻译")
+        _ = await oldReplay.value
+
+        let currentSnapshot = await pipeline.flush(reason: .manualStop)
+
+        XCTAssertEqual(currentSnapshot.turns.map(\.sourceSegmentID), ["new-segment"])
+        XCTAssertEqual(currentSnapshot.turns.first?.originalText, "new text")
+        XCTAssertNil(currentSnapshot.turns.first?.translatedText)
+    }
+
     func testFlushSealsOpenCaptionChunk() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -532,6 +577,75 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
         XCTAssertEqual(snapshot.turns.first?.boundaryReason, .manualStop)
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+}
+
+private func waitForPipelineCondition(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let start = DispatchTime.now().uptimeNanoseconds
+    while await !condition() {
+        if DispatchTime.now().uptimeNanoseconds - start > timeoutNanoseconds {
+            XCTFail("Timed out waiting for pipeline condition")
+            return
+        }
+        try await Task.sleep(nanoseconds: 1_000_000)
+    }
+}
+
+private final class SuspendedPipelineTranslationProvider: TextTranslationProvider {
+    struct PendingRequest {
+        let transcript: TranscriptDocument
+        let options: TranslationOptions
+        let continuation: CheckedContinuation<TranslatedTranscript, Error>
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "suspended-pipeline-translation",
+        displayName: "Suspended Pipeline Translation",
+        capability: .textTranslation,
+        executionMode: .local,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    private(set) var pendingRequests: [PendingRequest] = []
+
+    var pendingRequestCount: Int {
+        pendingRequests.count
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingRequests.append(PendingRequest(
+                transcript: transcript,
+                options: options,
+                continuation: continuation
+            ))
+        }
+    }
+
+    func completeRequest(at index: Int, targetText: String) {
+        let request = pendingRequests[index]
+        let source = request.transcript.segments[0]
+        request.continuation.resume(returning: TranslatedTranscript(
+            sourceLocale: request.options.sourceLocale,
+            targetLocale: request.options.targetLocale,
+            segments: [
+                BilingualSubtitleSegment(
+                    id: source.id,
+                    speaker: source.speaker,
+                    sourceText: source.text,
+                    targetText: targetText,
+                    status: .complete,
+                    providerChain: [descriptor.id]
+                )
+            ],
+            provenance: PipelineProvenance(profileID: descriptor.id)
+        ))
     }
 }
 
