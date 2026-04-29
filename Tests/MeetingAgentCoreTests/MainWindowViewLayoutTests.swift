@@ -269,7 +269,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("translation unavailable"))
         XCTAssertTrue(source.contains("Translating"))
         XCTAssertTrue(source.contains("Button(\"Edit name\")"))
-        XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
+        XCTAssertFalse(source.contains("Image(systemName: \"pencil\")"))
     }
 
     func testUnifiedTranscriptRendersSpeakerGroupsInsteadOfOneLabelPerBlock() throws {
@@ -324,10 +324,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains(".id(group.turns.last?.id ?? group.id)"))
     }
 
-    func testBilingualTranscriptBlockDoesNotReserveBlankHeaderRowForCorrectionButton() throws {
+    func testBilingualTranscriptBlockDoesNotReserveBlankEditControlSpace() throws {
         let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
 
-        XCTAssertTrue(source.contains("HStack(alignment: .top, spacing: 8)"))
+        XCTAssertTrue(source.contains("transcriptText\n            .frame(maxWidth: .infinity, alignment: .leading)"))
         XCTAssertFalse(source.contains("""
             HStack(spacing: 8) {
                 Spacer()
@@ -349,22 +349,23 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Readiness Report"))
     }
 
-    func testLiveCaptionsExposeCorrectionControls() throws {
+    func testLiveCaptionsHideCaptionCorrectionWhileKeepingSpeakerEdit() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("updateSpeakerLabel"))
-        XCTAssertTrue(source.contains("updateTranscriptSegmentText"))
         XCTAssertTrue(source.contains("CaptionEditSheet"))
         XCTAssertTrue(source.contains("Menu {"))
         XCTAssertTrue(source.contains("Button(\"Edit name\")"))
         XCTAssertTrue(source.contains("Image(systemName: \"chevron.down\")"))
-        XCTAssertFalse(source.contains("person.crop.circle.badge.pencil"))
-        XCTAssertTrue(source.contains("Image(systemName: \"pencil\")"))
-        XCTAssertTrue(source.contains("Correct Caption"))
         XCTAssertTrue(source.contains("Save Speaker"))
-        XCTAssertTrue(source.contains("Save Caption"))
+
+        XCTAssertFalse(source.contains("updateTranscriptSegmentText"))
+        XCTAssertFalse(source.contains("Correct Caption"))
+        XCTAssertFalse(source.contains("Save Caption"))
+        XCTAssertFalse(source.contains("Image(systemName: \"pencil\")"))
+        XCTAssertFalse(source.contains("person.crop.circle.badge.pencil"))
     }
 
     func testUnifiedTranscriptRendersSpeakerGroupStartTimeBesideSpeakerName() throws {

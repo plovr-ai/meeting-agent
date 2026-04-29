@@ -182,15 +182,6 @@ struct MainWindowView: View {
                                 NSSound.beep()
                             }
                         }
-                    },
-                    updateTranscriptSegmentText: { meeting, segmentID, text in
-                        Task {
-                            do {
-                                try await viewModel.updateTranscriptSegmentText(for: meeting.id, segmentID: segmentID, text: text)
-                            } catch {
-                                NSSound.beep()
-                            }
-                        }
                     }
                 )
             }
@@ -310,7 +301,6 @@ private struct MeetingDetailView: View {
     let exportVTT: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
     let updateSpeakerLabel: (MeetingRecord, String, String) -> Void
-    let updateTranscriptSegmentText: (MeetingRecord, String, String) -> Void
 
     var body: some View {
         ZStack {
@@ -341,9 +331,6 @@ private struct MeetingDetailView: View {
                     retryTranscription: { retryTranscription(meeting) },
                     updateSpeakerLabel: { speakerID, label in
                         updateSpeakerLabel(meeting, speakerID, label)
-                    },
-                    updateTranscriptSegmentText: { segmentID, text in
-                        updateTranscriptSegmentText(meeting, segmentID, text)
                     }
                 )
             } else {
@@ -494,7 +481,6 @@ private struct MeetingCommandCenterView: View {
     let exportVTT: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
-    let updateTranscriptSegmentText: (String, String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -522,8 +508,7 @@ private struct MeetingCommandCenterView: View {
                     transcriptionStatusText: transcriptionStatusText,
                     stopRecording: stopRecording,
                     retryTranscription: retryTranscription,
-                    updateSpeakerLabel: updateSpeakerLabel,
-                    updateTranscriptSegmentText: updateTranscriptSegmentText
+                    updateSpeakerLabel: updateSpeakerLabel
                 )
                 .frame(minWidth: 520)
 
@@ -602,11 +587,8 @@ private struct TranscriptPaneView: View {
     let stopRecording: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
-    let updateTranscriptSegmentText: (String, String) -> Void
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
-    @State private var transcriptEditTarget: LiveCaptionTurn?
-    @State private var transcriptTextDraft = ""
     @State private var autoFollowsLatest = true
 
     var body: some View {
@@ -634,10 +616,6 @@ private struct TranscriptPaneView: View {
                             editSpeaker: { turn in
                                 speakerLabelDraft = turn.speaker.label ?? turn.speaker.identifier ?? ""
                                 speakerEditTarget = turn
-                            },
-                            editText: { turn in
-                                transcriptTextDraft = turn.originalText
-                                transcriptEditTarget = turn
                             }
                         )
                     }
@@ -665,18 +643,6 @@ private struct TranscriptPaneView: View {
                     speakerEditTarget = nil
                 },
                 cancel: { speakerEditTarget = nil }
-            )
-        }
-        .sheet(item: $transcriptEditTarget) { turn in
-            CaptionEditSheet(
-                title: "Correct Caption",
-                text: $transcriptTextDraft,
-                saveTitle: "Save Caption",
-                save: {
-                    updateTranscriptSegmentText(turn.id, transcriptTextDraft)
-                    transcriptEditTarget = nil
-                },
-                cancel: { transcriptEditTarget = nil }
             )
         }
     }
@@ -1034,7 +1000,6 @@ private struct UnifiedTranscriptView: View {
     let returnToLatest: () -> Void
     let pauseFollowing: () -> Void
     let editSpeaker: (LiveCaptionTurn) -> Void
-    let editText: (LiveCaptionTurn) -> Void
 
     var body: some View {
         CommandCenterPanel {
@@ -1064,8 +1029,7 @@ private struct UnifiedTranscriptView: View {
                                     if let firstTurn = group.turns.first {
                                         editSpeaker(firstTurn)
                                     }
-                                },
-                                editText: editText
+                                }
                             )
                             .id(group.id)
                         }
@@ -1105,7 +1069,6 @@ private struct BilingualTranscriptGroup: View {
     let sourceLocale: String
     let targetLocale: String
     var editSpeaker: (() -> Void)? = nil
-    var editText: (LiveCaptionTurn) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1113,10 +1076,7 @@ private struct BilingualTranscriptGroup: View {
             ForEach(group.turns) { turn in
                 BilingualTranscriptBlock(
                     turn: turn,
-                    secondLanguageEnabled: secondLanguageEnabled(for: turn),
-                    editText: {
-                        editText(turn)
-                    }
+                    secondLanguageEnabled: secondLanguageEnabled(for: turn)
                 )
                 .id(turn.id)
             }
@@ -1179,22 +1139,10 @@ private struct BilingualTranscriptGroup: View {
 private struct BilingualTranscriptBlock: View {
     let turn: LiveCaptionTurn
     let secondLanguageEnabled: Bool
-    var editText: (() -> Void)? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            transcriptText
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let editText {
-                Button {
-                    editText()
-                } label: {
-                    Image(systemName: "pencil")
-                }
-                .buttonStyle(CommandCenterIconButtonStyle())
-                .help("Correct caption")
-            }
-        }
+        transcriptText
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
