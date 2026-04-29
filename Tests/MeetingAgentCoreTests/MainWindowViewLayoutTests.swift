@@ -17,7 +17,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
+        XCTAssertTrue(source.contains(".frame(minWidth: 180, idealWidth: 210)"))
     }
 
     func testMainWindowRoutesThroughMeetingRecordBuckets() throws {
@@ -132,12 +132,11 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("resetDraftFromSelection()"))
     }
 
-    func testLiveWorkspaceShowsAgendaContextStrip() throws {
+    func testLiveWorkspaceKeepsAgendaContextInTopRow() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
-        XCTAssertTrue(source.contains("AgendaContextStrip("))
-        XCTAssertTrue(source.contains("meeting.attendees"))
-        XCTAssertTrue(source.contains("meeting.agendaTopics"))
+        XCTAssertFalse(source.contains("AgendaContextStrip("))
+        XCTAssertFalse(source.contains("private struct AgendaContextStrip"))
         XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
         XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
         XCTAssertTrue(source.contains("title: goalDisplay"))
@@ -208,10 +207,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         guard let workspaceRange = source.range(of: "private struct MeetingCommandCenterView") else {
             return XCTFail("Meeting workspace view is missing")
         }
-        guard let agendaRange = source.range(of: "private struct AgendaContextStrip", range: workspaceRange.upperBound..<source.endIndex) else {
+        guard let transcriptPaneRange = source.range(of: "private struct TranscriptPaneView", range: workspaceRange.upperBound..<source.endIndex) else {
             return XCTFail("Meeting workspace boundary is missing")
         }
-        let workspaceSource = source[workspaceRange.lowerBound..<agendaRange.lowerBound]
+        let workspaceSource = source[workspaceRange.lowerBound..<transcriptPaneRange.lowerBound]
 
         XCTAssertTrue(workspaceSource.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Stop Recording\", systemImage: \"stop.fill\")"))
@@ -341,13 +340,13 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("destination = .settings"))
     }
 
-    func testSidebarTitleUsesCommandCenterStylingInsteadOfSystemNavigationTitle() throws {
+    func testSidebarRemovesFixedApplicationTitleHeader() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("Text(\"Meeting Agent\")"))
-        XCTAssertTrue(source.contains(".commandCenterEyebrow()"))
+        XCTAssertFalse(source.contains("sidebarHeader"))
+        XCTAssertFalse(source.contains("Text(\"Meeting Agent\")"))
         XCTAssertFalse(source.contains(".navigationTitle(\"Meeting Agent\")"))
     }
 
@@ -431,6 +430,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
         XCTAssertFalse(source.contains("Text(turn.isFinal ? \"final\" : \"partial\")"))
         XCTAssertFalse(source.contains("\" turns\""))
+
+        guard let unifiedRange = source.range(of: "private struct UnifiedTranscriptView") else {
+            return XCTFail("UnifiedTranscriptView is missing")
+        }
+        guard let groupRange = source.range(of: "private struct BilingualTranscriptGroup", range: unifiedRange.upperBound..<source.endIndex) else {
+            return XCTFail("UnifiedTranscriptView boundary is missing")
+        }
+        let unifiedSource = source[unifiedRange.lowerBound..<groupRange.lowerBound]
+        XCTAssertFalse(unifiedSource.contains("CommandCenterPanel"))
     }
 
     func testUnifiedTranscriptPreservesFallbackAndQuietCorrectionControls() throws {
