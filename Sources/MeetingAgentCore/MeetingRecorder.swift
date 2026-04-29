@@ -189,7 +189,10 @@ public final class MeetingRecorder {
 
         if let transcriptURL = updatedRecord.transcriptURL {
             do {
-                let updateSink = try RecordingTranscriptUpdateSink(transcriptURL: transcriptURL)
+                let updateSink = try RecordingTranscriptUpdateSink(
+                    transcriptURL: transcriptURL,
+                    performanceEventLogger: performanceEventLogger
+                )
                 transcriptUpdateSink = updateSink
                 let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
@@ -360,17 +363,20 @@ public final class MeetingRecorder {
 
 private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
     private let writer: TranscriptFileWriter
+    private let performanceEventLogger: PerformanceEventLogger?
     private var accumulator = TranscriptSegmentAccumulator()
     private var pendingResults: [TranscriptSegmentAccumulationResult] = []
     private let lock = NSLock()
 
-    init(transcriptURL: URL) throws {
+    init(transcriptURL: URL, performanceEventLogger: PerformanceEventLogger?) throws {
         self.writer = try TranscriptFileWriter(url: transcriptURL)
+        self.performanceEventLogger = performanceEventLogger
     }
 
     func receive(_ update: TranscriptSegmentUpdate) {
         lock.lock()
         defer { lock.unlock() }
+        logEmitted(update)
         let result = accumulator.apply(update)
         pendingResults.append(result)
         persist(result)
@@ -390,9 +396,45 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
 
     private func persist(_ result: TranscriptSegmentAccumulationResult) {
         if let text = result.plainTextReplacement {
-            try? writer.replace(with: text)
+            do {
+                try writer.replace(with: text)
+                performanceEventLogger?.log(
+                    "transcript_segment_persisted",
+                    textLength: text.count,
+                    metadata: ["update": "replaceWithPlainText"]
+                )
+            } catch {
+                return
+            }
         } else {
-            try? writer.replace(with: result.document.segments)
+            do {
+                try writer.replace(with: result.document.segments)
+                for segment in result.document.segments where result.changedSegmentIDs.contains(segment.id) {
+                    performanceEventLogger?.logSegment(
+                        "transcript_segment_persisted",
+                        segment: segment
+                    )
+                }
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func logEmitted(_ update: TranscriptSegmentUpdate) {
+        switch update {
+        case .upsert(let segment):
+            performanceEventLogger?.logSegment("transcript_segment_emitted", segment: segment)
+        case .replaceAll(let segments):
+            for segment in segments {
+                performanceEventLogger?.logSegment("transcript_segment_emitted", segment: segment)
+            }
+        case .replaceWithPlainText(let text):
+            performanceEventLogger?.log(
+                "transcript_segment_emitted",
+                textLength: text.count,
+                metadata: ["update": "replaceWithPlainText"]
+            )
         }
     }
 }

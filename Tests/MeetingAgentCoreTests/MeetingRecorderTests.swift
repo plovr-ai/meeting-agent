@@ -308,6 +308,25 @@ final class MeetingRecorderTests: XCTestCase {
         let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
         XCTAssertEqual(document.segments.map(\.text), ["persist me"])
     }
+
+    func testTranscriptUpdatePipelineLogsEmittedAndPersistedEvents() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "hello",
+            sourceProvider: "fake",
+            isFinal: true
+        )))
+        _ = fixture.recorder.drainTranscriptUpdates()
+
+        let events = try performanceEventNames(at: XCTUnwrap(record.performanceEventsURL))
+        XCTAssertTrue(events.contains("transcript_segment_emitted"))
+        XCTAssertTrue(events.contains("transcript_segment_persisted"))
+    }
 }
 
 private struct RecorderFixture {
