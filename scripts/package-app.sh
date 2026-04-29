@@ -13,6 +13,8 @@ INFO_PLIST="$REPO_ROOT/Sources/MeetingAgentApp/Resources/Info.plist"
 RELEASE_EXECUTABLE="$REPO_ROOT/.build/release/$EXECUTABLE_NAME"
 ENV_FILE="$REPO_ROOT/.env"
 DEFAULT_CREDENTIALS="$RESOURCES_DIR/DefaultSpeechTranscriptionCredentials.json"
+WHISPER_MODELS_SOURCE="$REPO_ROOT/Resources/WhisperModels"
+WHISPER_MODELS_DESTINATION="$RESOURCES_DIR/WhisperModels"
 
 if [ ! -f "$INFO_PLIST" ]; then
     echo "Missing app Info.plist at $INFO_PLIST" >&2
@@ -29,6 +31,24 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$RELEASE_EXECUTABLE" "$MACOS_DIR/$EXECUTABLE_NAME"
 cp "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
+
+if [ -d "$WHISPER_MODELS_SOURCE" ]; then
+    mkdir -p "$WHISPER_MODELS_DESTINATION"
+    copied_models=0
+    for model_path in "$WHISPER_MODELS_SOURCE"/ggml-*.bin "$WHISPER_MODELS_SOURCE"/ggml-*.gguf; do
+        if [ -f "$model_path" ]; then
+            cp "$model_path" "$WHISPER_MODELS_DESTINATION"/
+            copied_models=$((copied_models + 1))
+        fi
+    done
+    if [ "$copied_models" -gt 0 ]; then
+        echo "Embedded $copied_models Whisper models from $WHISPER_MODELS_SOURCE"
+    else
+        echo "No Whisper models embedded; no ggml model files found in $WHISPER_MODELS_SOURCE"
+    fi
+else
+    echo "No Whisper models embedded; missing $WHISPER_MODELS_SOURCE"
+fi
 
 env_value() {
     key="$1"

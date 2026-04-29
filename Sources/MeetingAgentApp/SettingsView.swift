@@ -215,10 +215,8 @@ struct SettingsView: View {
         uniqueNonBlank([
             draft.whisperModelPath,
             configuration.whisperModelPath,
-            ProcessInfo.processInfo.environment["MEETING_AGENT_WHISPER_MODEL"],
-            "/Users/allan/models/ggml-small.bin",
-            "/Users/allan/models/ggml-medium.bin"
-        ])
+            ProcessInfo.processInfo.environment["MEETING_AGENT_WHISPER_MODEL"]
+        ] + WhisperConfigurationResolver.modelPathOptions())
     }
 
     private func uniqueNonBlank(_ values: [String?]) -> [String] {

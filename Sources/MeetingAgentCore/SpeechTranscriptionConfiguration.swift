@@ -177,7 +177,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public func validationStatus(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
     ) -> SpeechConfigurationValidationStatus {
         if usesOpenRouter {
             guard Self.normalized(openRouterAPIKey) != nil
@@ -220,7 +222,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         }
         guard let whisperModelPath = WhisperConfigurationResolver.modelPath(
             explicitPath: whisperModelPath,
-            environment: environment
+            environment: environment,
+            fileManager: fileManager,
+            bundledResourceURL: bundledResourceURL,
+            developmentResourceSearchRoots: developmentResourceSearchRoots
         ) else {
             return .unavailable("Whisper model path is not configured")
         }

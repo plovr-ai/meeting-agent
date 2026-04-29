@@ -7,7 +7,9 @@ struct WhisperConfiguration: Equatable {
     static func fromAppConfiguration(
         _ configuration: SpeechTranscriptionConfiguration,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
     ) throws -> WhisperConfiguration {
         guard let binaryPath = WhisperConfigurationResolver.binaryPath(
             explicitPath: configuration.whisperBinaryPath,
@@ -18,7 +20,10 @@ struct WhisperConfiguration: Equatable {
         }
         guard let modelPath = WhisperConfigurationResolver.modelPath(
             explicitPath: configuration.whisperModelPath,
-            environment: environment
+            environment: environment,
+            fileManager: fileManager,
+            bundledResourceURL: bundledResourceURL,
+            developmentResourceSearchRoots: developmentResourceSearchRoots
         ) else {
             throw unavailable("Whisper model path is not configured")
         }
@@ -38,7 +43,10 @@ struct WhisperConfiguration: Equatable {
         }
         guard let modelPath = WhisperConfigurationResolver.modelPath(
             explicitPath: nil,
-            environment: environment
+            environment: environment,
+            fileManager: fileManager,
+            bundledResourceURL: nil,
+            developmentResourceSearchRoots: []
         ) else {
             throw unavailable("MEETING_AGENT_WHISPER_MODEL is not set")
         }
@@ -82,7 +90,14 @@ struct WhisperConfiguration: Equatable {
     }
 }
 
-enum WhisperConfigurationResolver {
+public enum WhisperConfigurationResolver {
+    public static let modelsDirectoryName = "WhisperModels"
+    private static let preferredModelFileNames = [
+        "ggml-small.bin",
+        "ggml-small.en.bin",
+        "ggml-medium.bin"
+    ]
+
     static func binaryPath(
         explicitPath: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -99,9 +114,43 @@ enum WhisperConfigurationResolver {
 
     static func modelPath(
         explicitPath: String?,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
     ) -> String? {
-        nonBlank(explicitPath) ?? nonBlank(environment["MEETING_AGENT_WHISPER_MODEL"])
+        nonBlank(explicitPath)
+            ?? nonBlank(environment["MEETING_AGENT_WHISPER_MODEL"])
+            ?? modelPathOptions(
+                environment: environment,
+                fileManager: fileManager,
+                bundledResourceURL: bundledResourceURL,
+                developmentResourceSearchRoots: developmentResourceSearchRoots
+            ).first
+    }
+
+    public static func modelPathOptions(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
+    ) -> [String] {
+        var paths = [String?]()
+        paths.append(nonBlank(environment["MEETING_AGENT_WHISPER_MODEL"]))
+        if let bundledResourceURL {
+            paths.append(contentsOf: modelPaths(
+                in: bundledResourceURL.appendingPathComponent(modelsDirectoryName, isDirectory: true),
+                fileManager: fileManager
+            ))
+        }
+        for rootURL in developmentResourceSearchRoots {
+            paths.append(contentsOf: modelPaths(
+                in: rootURL.appendingPathComponent("Resources", isDirectory: true)
+                    .appendingPathComponent(modelsDirectoryName, isDirectory: true),
+                fileManager: fileManager
+            ))
+        }
+        return uniqueExistingModelPaths(paths, fileManager: fileManager)
     }
 
     private static func executablePath(
@@ -117,6 +166,40 @@ enum WhisperConfigurationResolver {
             }
         }
         return nil
+    }
+
+    private static func modelPaths(in directoryURL: URL, fileManager: FileManager) -> [String] {
+        guard let fileNames = try? fileManager.contentsOfDirectory(atPath: directoryURL.path) else {
+            return []
+        }
+        let candidates = fileNames
+            .filter { fileName in
+                fileName.hasPrefix("ggml-") && (fileName.hasSuffix(".bin") || fileName.hasSuffix(".gguf"))
+            }
+        return candidates
+            .sorted { lhs, rhs in
+                let leftRank = preferredModelFileNames.firstIndex(of: lhs) ?? preferredModelFileNames.count
+                let rightRank = preferredModelFileNames.firstIndex(of: rhs) ?? preferredModelFileNames.count
+                if leftRank != rightRank {
+                    return leftRank < rightRank
+                }
+                return lhs < rhs
+            }
+            .map { directoryURL.appendingPathComponent($0).path }
+    }
+
+    private static func uniqueExistingModelPaths(_ paths: [String?], fileManager: FileManager) -> [String] {
+        var seen = Set<String>()
+        return paths.compactMap { path in
+            guard let path = nonBlank(path),
+                  !seen.contains(path),
+                  fileManager.isReadableFile(atPath: URL(fileURLWithPath: path).path)
+            else {
+                return nil
+            }
+            seen.insert(path)
+            return path
+        }
     }
 
     private static func nonBlank(_ value: String?) -> String? {
@@ -139,6 +222,13 @@ enum WhisperLanguageMapper {
         "es-ES": "es"
     ]
 
+    static func languageCode(for localeIdentifier: String, modelURL: URL) -> String? {
+        if isEnglishOnlyModel(modelURL) {
+            return "en"
+        }
+        return languageCode(for: localeIdentifier)
+    }
+
     static func languageCode(for localeIdentifier: String) -> String? {
         let trimmed = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -147,6 +237,11 @@ enum WhisperLanguageMapper {
         }
         let separators = CharacterSet(charactersIn: "-_")
         return trimmed.components(separatedBy: separators).first.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    private static func isEnglishOnlyModel(_ modelURL: URL) -> Bool {
+        let fileName = modelURL.lastPathComponent.lowercased()
+        return fileName.hasSuffix(".en.bin") || fileName.hasSuffix(".en.gguf")
     }
 }
 
@@ -283,7 +378,7 @@ enum WhisperFileTranscriber {
             modelURL: configuration.modelURL,
             inputWavURL: inputAudioURL,
             outputBaseURL: outputBaseURL,
-            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier)
+            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier, modelURL: configuration.modelURL)
         )
         guard FileManager.default.fileExists(atPath: outputTextURL.path) else {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: expected output file was not created")
@@ -363,7 +458,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             configuration: configuration,
             processRunner: processRunner,
             localeIdentifier: localeIdentifier,
-            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier),
+            languageCode: WhisperLanguageMapper.languageCode(for: localeIdentifier, modelURL: configuration.modelURL),
             chunkDurationSeconds: chunkDurationSeconds
         )
     }
