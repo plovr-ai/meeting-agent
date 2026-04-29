@@ -693,6 +693,53 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.freezeReason, .speechFinal)
     }
 
+    func testSupersededDraftCaptionTranslationIsCancelledBeforeCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-utterance",
+                text: "Now we can select",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+
+        let latestText = "Now we can select German and hear what it sounds like in another automated voice while the interpreter keeps the meeting moving"
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "dg-utterance",
+                text: latestText,
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe",
+                isFinal: true,
+                speechFinal: false
+            )
+        ])
+        viewModel.drainRecordingFrames()
+
+        try await waitFor { provider.pendingRequestCount >= 1 }
+
+        XCTAssertEqual(provider.pendingRequestCount, 1)
+        XCTAssertEqual(provider.pendingRequestTexts, [[latestText]])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, latestText)
+    }
+
     func testInterimDeepgramSegmentDisplaysWithDraftTranslationBeforeFinalArrives() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2451,6 +2498,10 @@ private final class DelayedViewModelFakeTextTranslationProvider: TextTranslation
 
     var pendingRequestCount: Int {
         pendingRequests.count
+    }
+
+    var pendingRequestTexts: [[String]] {
+        pendingRequests.map { $0.transcript.segments.map(\.text) }
     }
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
