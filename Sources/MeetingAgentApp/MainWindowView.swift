@@ -13,6 +13,7 @@ private enum MainWindowDestination: Hashable {
 struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
     @State private var destination: MainWindowDestination = .today
+    @State private var workspaceReturnDestination: MainWindowDestination = .today
 
     var body: some View {
         NavigationSplitView {
@@ -81,18 +82,17 @@ struct MainWindowView: View {
                         viewModel.selectMeeting(meeting.id)
                     },
                     openWorkspace: { meeting in
-                        viewModel.selectMeeting(meeting.id)
-                        destination = .workspace
+                        openWorkspace(from: destination, selecting: meeting)
                     },
                     startRecording: { meeting in
                         guard let target = viewModel.pendingCandidate else {
-                            viewModel.selectMeeting(meeting.id)
-                            destination = .workspace
+                            openWorkspace(from: destination, selecting: meeting)
                             return
                         }
                         Task {
                             do {
                                 try await viewModel.startRecording(for: target, meetingID: meeting.id)
+                                workspaceReturnDestination = destination.agendaReturnDestination
                                 destination = .workspace
                             } catch {
                                 viewModel.setRecordingStartError(error)
@@ -116,6 +116,9 @@ struct MainWindowView: View {
                     isRecording: viewModel.isRecording,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
                     recommendedQuestions: viewModel.recommendedQuestions,
+                    backToMeetings: {
+                        destination = workspaceReturnDestination
+                    },
                     stopRecording: {
                         Task {
                             do {
@@ -194,6 +197,12 @@ struct MainWindowView: View {
         } message: { target in
             Text("\(target.displayName) detected. Start recording?")
         }
+    }
+
+    private func openWorkspace(from destination: MainWindowDestination, selecting meeting: MeetingRecord) {
+        workspaceReturnDestination = destination.agendaReturnDestination
+        viewModel.selectMeeting(meeting.id)
+        self.destination = .workspace
     }
 
     private var sidebarHeader: some View {
@@ -322,6 +331,17 @@ struct MainWindowView: View {
 
 }
 
+private extension MainWindowDestination {
+    var agendaReturnDestination: MainWindowDestination {
+        switch self {
+        case .today, .thisWeek, .history:
+            return self
+        case .workspace, .settings:
+            return .today
+        }
+    }
+}
+
 private struct SidebarNavigationButtonStyle: ButtonStyle {
     let isSelected: Bool
 
@@ -346,6 +366,7 @@ private struct MeetingDetailView: View {
     let isRecording: Bool
     let liveCaptionTurns: [LiveCaptionTurn]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let backToMeetings: () -> Void
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
@@ -361,6 +382,7 @@ private struct MeetingDetailView: View {
             if let meeting {
                 MeetingCommandCenterView(
                     meeting: meeting,
+                    backToMeetings: backToMeetings,
                     pipelineDisplayName: pipelineDisplayName(for: speechConfiguration),
                     transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
@@ -512,6 +534,7 @@ private struct MeetingDetailView: View {
 
 private struct MeetingCommandCenterView: View {
     let meeting: MeetingRecord
+    let backToMeetings: () -> Void
     let pipelineDisplayName: String
     let transcriptionLinkText: String
     let transcriptionModelText: String
@@ -537,6 +560,25 @@ private struct MeetingCommandCenterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Button(action: backToMeetings) {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .font(CommandCenterTypography.button)
+                .foregroundStyle(CommandCenterPalette.primary)
+
+                Spacer()
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
+            .background(CommandCenterPalette.surface)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(CommandCenterPalette.border)
+                    .frame(height: 1)
+            }
+
             AgendaContextStrip(
                 meeting: meeting,
                 attendees: meeting.attendees,
