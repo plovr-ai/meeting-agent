@@ -152,6 +152,117 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.turns.first?.displayState, .draft)
     }
 
+    func testApplyRemovalAfterProvisionalMergeRestoresFinalTurn() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        let finalSegment = TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "select German",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["final-1"],
+            plainTextReplacement: nil
+        ))
+
+        let interimSegment = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            speechFinal: false
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, interimSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.originalText, "select German")
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1"])
+        XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
+        XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+
+    func testApplyFinalAfterProvisionalMergeUpdatesMergedTurnWithoutDuplicate() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        let finalSegment = TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "select German",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["final-1"],
+            plainTextReplacement: nil
+        ))
+
+        let interimSegment = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            speechFinal: false
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, interimSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        let finalizedInterim = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear the customer",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, finalizedInterim]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.originalText, "select German and hear the customer")
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1", "interim-1"])
+        XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
+        XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+
     func testReplayBuildsDraftTurnFromInterimTranscriptSegment() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",

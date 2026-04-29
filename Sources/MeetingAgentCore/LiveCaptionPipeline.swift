@@ -51,7 +51,10 @@ public final class LiveCaptionPipeline {
         }
 
         let currentSegmentIDs = Set(result.document.segments.map(\.id))
-        applyEvents(turnAssembler.removeSegments(notIn: currentSegmentIDs))
+        applyEvents(
+            turnAssembler.removeSegments(notIn: currentSegmentIDs),
+            currentSegments: result.document.segments
+        )
 
         let changedSegmentIDs = Set(result.changedSegmentIDs)
         for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
@@ -91,21 +94,44 @@ public final class LiveCaptionPipeline {
         self.targetLocale = targetLocale
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        interimSegmentsByID = [:]
     }
 
     private func applyEvents(
         _ events: [CaptionTurnEvent],
-        sourceSegment: TranscriptSegment? = nil
+        sourceSegment: TranscriptSegment? = nil,
+        currentSegments: [TranscriptSegment] = []
     ) {
         for event in events {
             switch event {
-            case .draftUpdated(let turn), .sealed(let turn):
+            case .draftUpdated(let turn):
                 if let sourceSegment,
-                   !turn.isFinal,
                    let previousSegment = interimSegmentsByID[sourceSegment.id] {
-                    let updated = store.replaceInterimSegment(previousSegment, with: sourceSegment)
+                    let updated = store.replaceRepresentedSegment(
+                        previousSegment,
+                        with: sourceSegment,
+                        applying: turn
+                    )
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
                     interimSegmentsByID[sourceSegment.id] = sourceSegment
+                    continue
+                }
+                store.upsert(turn)
+                if let sourceSegment {
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
+                }
+            case .sealed(let turn):
+                if let sourceSegment,
+                   let previousSegment = interimSegmentsByID[sourceSegment.id] {
+                    let updated = store.replaceRepresentedSegment(
+                        previousSegment,
+                        with: sourceSegment,
+                        applying: turn
+                    )
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    if sourceSegment.isFinal {
+                        interimSegmentsByID[sourceSegment.id] = nil
+                    }
                     continue
                 }
                 store.upsert(turn)
@@ -120,7 +146,7 @@ public final class LiveCaptionPipeline {
                 hydrateCachedTranslation(from: segment, toTurnID: turn.id)
                 interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
-                store.remove(turnID: turnID)
+                store.removeSourceSegment(turnID, remainingSegments: currentSegments)
                 interimSegmentsByID[turnID] = nil
             }
         }

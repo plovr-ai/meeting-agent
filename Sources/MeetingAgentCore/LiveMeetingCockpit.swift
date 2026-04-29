@@ -423,6 +423,42 @@ public struct LiveCaptionStore: Equatable {
         turns.removeAll { $0.id == turnID }
     }
 
+    public mutating func removeSourceSegment(
+        _ segmentID: String,
+        remainingSegments: [TranscriptSegment]
+    ) {
+        var matchingIndex: Int?
+        for index in turns.indices where turns[index].sourceSegmentIDs.contains(segmentID) {
+            matchingIndex = index
+            break
+        }
+        guard let index = matchingIndex else {
+            remove(turnID: segmentID)
+            return
+        }
+
+        var segmentsByID: [String: TranscriptSegment] = [:]
+        for segment in remainingSegments {
+            segmentsByID[segment.id] = segment
+        }
+
+        var representedSegments: [TranscriptSegment] = []
+        for sourceSegmentID in turns[index].sourceSegmentIDs where sourceSegmentID != segmentID {
+            if let segment = segmentsByID[sourceSegmentID] {
+                representedSegments.append(segment)
+            }
+        }
+        guard !representedSegments.isEmpty else {
+            turns.remove(at: index)
+            return
+        }
+        turns[index] = rebuiltTurn(
+            from: representedSegments,
+            preservingID: turns[index].id,
+            previous: turns[index]
+        )
+    }
+
     @discardableResult
     public mutating func replaceInterimSegment(
         _ previousSegment: TranscriptSegment,
@@ -457,6 +493,55 @@ public struct LiveCaptionStore: Equatable {
         updated.translationState = .draft
         updated.boundaryReason = nil
         updated.boundaryStrength = nil
+        turns[index] = updated
+        return updated
+    }
+
+    @discardableResult
+    public mutating func replaceRepresentedSegment(
+        _ previousSegment: TranscriptSegment,
+        with segment: TranscriptSegment,
+        applying turn: LiveCaptionTurn
+    ) -> LiveCaptionTurn {
+        var matchingIndex: Int?
+        for index in turns.indices
+            where turns[index].sourceSegmentIDs.contains(segment.id)
+                && turns[index].sourceSegmentIDs.count > 1 {
+            matchingIndex = index
+            break
+        }
+        guard let index = matchingIndex else {
+            if segment.isFinal {
+                return upsert(turn)
+            }
+            return replaceInterimSegment(previousSegment, with: segment)
+        }
+
+        var updated = turns[index]
+        let previousText = updated.originalText
+        updated.sourceSegmentID = segment.id
+        if !updated.sourceSegmentIDs.contains(segment.id) {
+            updated.sourceSegmentIDs.append(segment.id)
+        }
+        updated.originalText = replacedTranscriptText(
+            in: updated.originalText,
+            previous: previousSegment.text,
+            replacement: segment.text
+        )
+        updated.sourceLocale = turn.sourceLocale
+        updated.targetLocale = turn.targetLocale
+        updated.isFinal = turn.isFinal
+        updated.captionHealth = turn.captionHealth
+        updated.translationHealth = turn.translationHealth
+        updated.chunkState = turn.chunkState
+        if previousText != updated.originalText {
+            updated.translationRevision += 1
+        }
+        updated.freezeReason = turn.freezeReason
+        updated.displayState = turn.displayState
+        updated.translationState = turn.translationState
+        updated.boundaryReason = turn.boundaryReason
+        updated.boundaryStrength = turn.boundaryStrength
         turns[index] = updated
         return updated
     }
@@ -544,6 +629,49 @@ public struct LiveCaptionStore: Equatable {
             return "\(trimmedFirst) \(secondRemainder)"
         }
         return "\(trimmedFirst) \(trimmedSecond)"
+    }
+
+    private func rebuiltTurn(
+        from segments: [TranscriptSegment],
+        preservingID id: String,
+        previous: LiveCaptionTurn
+    ) -> LiveCaptionTurn {
+        var originalText = ""
+        var sourceSegmentIDs: [String] = []
+        var allSegmentsFinal = true
+        for segment in segments {
+            originalText = joinedTranscriptText(originalText, segment.text)
+            sourceSegmentIDs.append(segment.id)
+            if !segment.isFinal {
+                allSegmentsFinal = false
+            }
+        }
+        let lastSegment = segments[segments.count - 1]
+        let boundaryReason: LiveCaptionFreezeReason? = lastSegment.speechFinal ? .speechFinal : nil
+        let boundaryStrength = boundaryReason?.boundaryStrength
+        let isSealed = boundaryStrength != nil
+        let textChanged = originalText != previous.originalText
+        return LiveCaptionTurn(
+            id: id,
+            sourceSegmentID: lastSegment.id,
+            sourceSegmentIDs: sourceSegmentIDs,
+            speaker: lastSegment.speaker,
+            originalText: originalText,
+            translatedText: textChanged ? nil : previous.translatedText,
+            sourceLocale: lastSegment.language ?? sourceLocale,
+            targetLocale: targetLocale,
+            isFinal: allSegmentsFinal,
+            captionHealth: .live,
+            translationHealth: textChanged ? .pending : previous.translationHealth,
+            createdAt: previous.createdAt,
+            chunkState: isSealed ? .frozen : .draft,
+            translationRevision: textChanged ? previous.translationRevision + 1 : previous.translationRevision,
+            freezeReason: boundaryReason,
+            displayState: isSealed ? .sealed : .draft,
+            translationState: boundaryStrength == .hard ? .final : .draft,
+            boundaryReason: boundaryReason,
+            boundaryStrength: boundaryStrength
+        )
     }
 
     private func replacedTranscriptText(in text: String, previous: String, replacement: String) -> String {
