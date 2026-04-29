@@ -931,9 +931,17 @@ public final class MeetingAgentViewModel: ObservableObject {
             } else {
                 signatureSpeakerLabel = ""
             }
+            let signatureFinalState = "final"
+            let signatureSpeechState: String
+            if segment.speechFinal {
+                signatureSpeechState = "speechFinal"
+            } else {
+                signatureSpeechState = "open"
+            }
             let signature = [
                 segment.text,
-                segment.speechFinal ? "speechFinal" : "open",
+                signatureFinalState,
+                signatureSpeechState,
                 signatureSpeakerID,
                 signatureSpeakerLabel
             ].joined(separator: "\u{1F}")
@@ -950,6 +958,34 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
         }
         for segment in document.segments where !segment.isFinal {
+            let signatureSpeakerID: String
+            if let speakerID = segment.speakerID {
+                signatureSpeakerID = speakerID
+            } else {
+                signatureSpeakerID = ""
+            }
+            let signatureSpeakerLabel: String
+            if let speakerLabel = segment.speakerLabel {
+                signatureSpeakerLabel = speakerLabel
+            } else {
+                signatureSpeakerLabel = ""
+            }
+            let signatureFinalState = "interim"
+            let signatureSpeechState: String
+            if segment.speechFinal {
+                signatureSpeechState = "speechFinal"
+            } else {
+                signatureSpeechState = "open"
+            }
+            let signature = [
+                segment.text,
+                signatureFinalState,
+                signatureSpeechState,
+                signatureSpeakerID,
+                signatureSpeakerLabel
+            ].joined(separator: "\u{1F}")
+            guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
+            processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
             currentPerformanceEventLogger()?.logSegment(
                 "caption_segment_ingested",
                 segment: segment,
