@@ -270,7 +270,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
     }
 
-    func testStreamingProviderPublishesGrowingFinalBufferBeforeSpeechFinal() async throws {
+    func testStreamingProviderPreservesFinalSegmentsBeforeSpeechFinal() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-buffer-\(UUID().uuidString)")
             .appendingPathExtension("txt")
@@ -348,10 +348,19 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments.map(\.text), ["my credit card number is two two two three three three."])
-        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-0.0"])
-        XCTAssertEqual(document.segments.map(\.speakerID), ["deepgram-speaker-0"])
-        XCTAssertEqual(document.segments.map(\.speechFinal), [true])
+        XCTAssertEqual(document.segments.map(\.text), [
+            "my credit card number is two two",
+            "two three three three."
+        ])
+        XCTAssertEqual(document.segments.map(\.id), [
+            "deepgram-transcribe-stream-0.0",
+            "deepgram-transcribe-stream-1.8"
+        ])
+        XCTAssertEqual(document.segments.map(\.speakerID), [
+            "deepgram-speaker-0",
+            "deepgram-speaker-0"
+        ])
+        XCTAssertEqual(document.segments.map(\.speechFinal), [false, true])
     }
 
     func testStreamingProviderFlushesBufferedFinalSegmentsWithoutWordTimingsOnFinish() async throws {
@@ -402,8 +411,12 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments.map(\.text), ["first final second final"])
-        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+        XCTAssertEqual(document.segments.map(\.text), ["first final", "second final"])
+        XCTAssertEqual(document.segments.map(\.id), [
+            "deepgram-transcribe-stream-active-0",
+            "deepgram-transcribe-stream-active-1"
+        ])
+        XCTAssertEqual(document.segments.map(\.isFinal), [true, true])
     }
 
     func testStreamingTranscriberSendsAudioFramesSerially() async throws {

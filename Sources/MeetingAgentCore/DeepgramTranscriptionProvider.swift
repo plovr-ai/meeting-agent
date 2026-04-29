@@ -428,7 +428,6 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private var receiveTask: Task<Void, Never>?
     private var sendFailure: String?
     private var fallbackSegmentIndex = 0
-    private var finalSegmentBuffer: [TranscriptSegment] = []
 
     var failureReason: String? {
         failureLock.lock()
@@ -457,7 +456,6 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
                 )
                 try? self?.write(segment)
             }
-            try? self?.flushFinalSegmentBuffer(markSpeechFinal: true)
             try? self?.writer.close()
         }
     }
@@ -480,74 +478,9 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
             performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
             return
         }
-        finalSegmentBuffer.append(segment)
-        try writeFinalSegmentBuffer(markSpeechFinal: segment.speechFinal)
+        try writer.upsert(segment)
+        performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
         advanceFallbackSegmentIndexIfNeeded(for: segment)
-        if segment.speechFinal {
-            finalSegmentBuffer.removeAll()
-        }
-    }
-
-    private func flushFinalSegmentBuffer(markSpeechFinal: Bool) throws {
-        guard !finalSegmentBuffer.isEmpty else { return }
-        try writeFinalSegmentBuffer(markSpeechFinal: markSpeechFinal)
-        finalSegmentBuffer.removeAll()
-    }
-
-    private func writeFinalSegmentBuffer(markSpeechFinal: Bool) throws {
-        let committedSegments = committedUtteranceSegments(
-            from: finalSegmentBuffer,
-            markSpeechFinal: markSpeechFinal
-        )
-        for segment in committedSegments {
-            try writer.upsert(segment)
-            performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
-        }
-    }
-
-    private func committedUtteranceSegments(
-        from segments: [TranscriptSegment],
-        markSpeechFinal: Bool
-    ) -> [TranscriptSegment] {
-        var groups: [[TranscriptSegment]] = []
-        for segment in segments {
-            if let lastIndex = groups.indices.last,
-               groups[lastIndex].last?.speaker == segment.speaker {
-                groups[lastIndex].append(segment)
-            } else {
-                groups.append([segment])
-            }
-        }
-        return groups.enumerated().compactMap { index, group in
-            guard let first = group.first, let last = group.last else { return nil }
-            let text = group
-                .map(\.text)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-            guard !text.isEmpty else { return nil }
-            return TranscriptSegment(
-                id: first.id,
-                speaker: first.speaker,
-                startTimeSeconds: group.compactMap(\.startTimeSeconds).min(),
-                endTimeSeconds: group.compactMap(\.endTimeSeconds).max(),
-                text: text,
-                language: group.compactMap(\.language).last,
-                sourceProvider: first.sourceProvider,
-                isFinal: true,
-                speechFinal: markSpeechFinal && index == groups.count - 1,
-                confidence: last.confidence,
-                createdAt: last.createdAt,
-                timingSource: timingSource(for: group)
-            )
-        }
-    }
-
-    private func timingSource(for segments: [TranscriptSegment]) -> TranscriptTimingSource {
-        let hasStart = segments.contains { $0.startTimeSeconds != nil }
-        let hasEnd = segments.contains { $0.endTimeSeconds != nil }
-        guard hasStart || hasEnd else { return .unavailable }
-        return hasStart && hasEnd ? .precise : .approximate
     }
 
     private func stableFallbackSegment(_ segment: TranscriptSegment) -> TranscriptSegment {

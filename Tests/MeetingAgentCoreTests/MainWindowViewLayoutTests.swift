@@ -301,6 +301,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertLessThan(sourceTextRange.lowerBound, primaryTextRange.lowerBound)
     }
 
+    func testTranscriptBlocksKeepSourceTextWhiteWhileTranslationIsPending() throws {
+        let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
+
+        guard let pendingCaseRange = source.range(of: "case .pending(let sourceText):") else {
+            return XCTFail("Pending transcript branch is missing")
+        }
+        guard let failedCaseRange = source.range(of: "case .failed", range: pendingCaseRange.upperBound..<source.endIndex) else {
+            return XCTFail("Pending transcript branch end is missing")
+        }
+
+        let pendingBranch = source[pendingCaseRange.lowerBound..<failedCaseRange.lowerBound]
+        XCTAssertTrue(pendingBranch.contains("Text(sourceText)"))
+        XCTAssertTrue(pendingBranch.contains(".foregroundStyle(CommandCenterPalette.text)"))
+    }
+
     func testUnifiedTranscriptUsesStableSpeakerGroupIDsAndTurnScrollAnchors() throws {
         let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
 
