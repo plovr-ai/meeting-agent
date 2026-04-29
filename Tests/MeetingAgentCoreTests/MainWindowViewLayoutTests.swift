@@ -33,6 +33,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Text(\"Meetings\")"))
     }
 
+    func testSidebarNavigationRowsDefineFullWidthHitArea() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let styleRange = source.range(of: "private struct SidebarNavigationButtonStyle") else {
+            return XCTFail("Sidebar navigation button style is missing")
+        }
+        guard let nextViewRange = source.range(of: "private struct MeetingDetailView", range: styleRange.upperBound..<source.endIndex) else {
+            return XCTFail("Sidebar navigation button style boundary is missing")
+        }
+
+        let styleSource = source[styleRange.lowerBound..<nextViewRange.lowerBound]
+        XCTAssertTrue(styleSource.contains(".frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)"))
+        XCTAssertTrue(styleSource.contains(".contentShape(Rectangle())"))
+    }
+
     func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
