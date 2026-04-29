@@ -763,13 +763,21 @@ public struct MeetingProgressState: Codable, Equatable {
 public protocol MeetingProgressAnalyzing {
     func analyze(
         goal: MeetingGoal,
+        recentCaptions: [LiveCaptionTurn],
+        previousState: MeetingProgressState?
+    ) async throws -> MeetingProgressState
+}
+
+public protocol AgendaAwareMeetingProgressAnalyzing: MeetingProgressAnalyzing {
+    func analyze(
+        goal: MeetingGoal,
         agendaTopics: [MeetingAgendaTopic],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState
 }
 
-public final class DeterministicMeetingProgressAnalyzer: MeetingProgressAnalyzing {
+public final class DeterministicMeetingProgressAnalyzer: AgendaAwareMeetingProgressAnalyzing {
     private let meetingID: UUID
     private let now: () -> Date
 
@@ -780,7 +788,20 @@ public final class DeterministicMeetingProgressAnalyzer: MeetingProgressAnalyzin
 
     public func analyze(
         goal: MeetingGoal,
-        agendaTopics: [MeetingAgendaTopic] = [],
+        recentCaptions: [LiveCaptionTurn],
+        previousState: MeetingProgressState?
+    ) async throws -> MeetingProgressState {
+        try await analyze(
+            goal: goal,
+            agendaTopics: [],
+            recentCaptions: recentCaptions,
+            previousState: previousState
+        )
+    }
+
+    public func analyze(
+        goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState {
@@ -927,12 +948,21 @@ public final class MeetingProgressCoordinator {
         }
         analysisHealth = .pending
         do {
-            let nextState = try await analyzer.analyze(
-                goal: goal,
-                agendaTopics: agendaTopics,
-                recentCaptions: newTurns,
-                previousState: state
-            )
+            let nextState: MeetingProgressState
+            if let agendaAwareAnalyzer = analyzer as? AgendaAwareMeetingProgressAnalyzing {
+                nextState = try await agendaAwareAnalyzer.analyze(
+                    goal: goal,
+                    agendaTopics: agendaTopics,
+                    recentCaptions: newTurns,
+                    previousState: state
+                )
+            } else {
+                nextState = try await analyzer.analyze(
+                    goal: goal,
+                    recentCaptions: newTurns,
+                    previousState: state
+                )
+            }
             state = nextState
             lastAnalyzedAt = currentTime
             analysisHealth = .live
