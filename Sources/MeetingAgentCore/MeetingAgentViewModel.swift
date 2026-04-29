@@ -49,6 +49,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
     private var liveCaptionPipeline: LiveCaptionPipeline
     private var liveCaptionPipelineUsesCaptionTranslationProvider = false
+    private var activeCaptionApplySequence = 0
+    private var activeCaptionApplyTask: Task<Void, Never>?
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
@@ -79,6 +81,12 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeTarget: AudioCaptureTarget?
+
+    struct ActiveCaptionApplyContext: Equatable {
+        let sequence: Int
+        let activeMeetingID: UUID?
+        let selectedMeetingID: UUID?
+    }
 
     public init(
         store: MeetingStore = MeetingStore(),
@@ -359,16 +367,22 @@ public final class MeetingAgentViewModel: ObservableObject {
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
         if transcriptResults.isEmpty {
-            refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
+            if isRecording || activeMeetingID != nil {
+                refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe()
+            } else {
+                refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
+            }
             if meetingProgressCoordinator != nil {
                 Task { [weak self] in
                     await self?.refreshMeetingProgress()
                 }
             }
         } else {
-            Task { [weak self] in
+            let context = beginActiveCaptionApply()
+            activeCaptionApplyTask?.cancel()
+            activeCaptionApplyTask = Task { [weak self] in
                 guard let self else { return }
-                await applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults)
+                await applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults, context: context)
                 if meetingProgressCoordinator != nil {
                     await refreshMeetingProgress()
                 }
@@ -382,6 +396,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
         }
+        invalidateActiveCaptionApplyTasks()
         freezeOpenLiveCaptionChunk(reason: .manualStop)
         allowActiveTargetReprompt()
         activeTarget = nil
@@ -401,6 +416,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
+        invalidateActiveCaptionApplyTasks()
         allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
@@ -851,6 +867,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
         liveCaptionPipeline = makeLiveCaptionPipeline()
         liveCaptionPipelineUsesCaptionTranslationProvider = false
+        invalidateActiveCaptionApplyTasks()
         processedLiveCaptionSegmentSignaturesByID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
         draftTranslationInFlightByTurnID.removeAll()
@@ -934,6 +951,24 @@ public final class MeetingAgentViewModel: ObservableObject {
         applyTranscriptDocumentToLiveCaptions(document)
     }
 
+    private func refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe() {
+        guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
+            return
+        }
+        guard !liveCaptionTurns.isEmpty else {
+            applyTranscriptDocumentToLiveCaptions(document)
+            return
+        }
+        let currentSegmentIDs = Set(liveCaptionTurns.flatMap(\.sourceSegmentIDs))
+        let documentSegmentIDs = Set(document.segments.map(\.id))
+        guard currentSegmentIDs.isSubset(of: documentSegmentIDs),
+              !documentSegmentIDs.isSubset(of: currentSegmentIDs)
+        else {
+            return
+        }
+        applyTranscriptDocumentToLiveCaptions(document)
+    }
+
     func waitForLiveCaptionReplayForTesting() async {
         await liveCaptionReplayTask?.value
     }
@@ -970,13 +1005,27 @@ public final class MeetingAgentViewModel: ObservableObject {
     func applyTranscriptAccumulationResultsForTesting(
         _ results: [TranscriptSegmentAccumulationResult]
     ) async {
-        await applyTranscriptAccumulationResultsToLiveCaptions(results)
+        let context = beginActiveCaptionApply()
+        await applyTranscriptAccumulationResultsToLiveCaptions(results, context: context)
+    }
+
+    func beginActiveCaptionApplyForTesting() -> ActiveCaptionApplyContext {
+        beginActiveCaptionApply()
+    }
+
+    func applyTranscriptAccumulationResultsForTesting(
+        _ results: [TranscriptSegmentAccumulationResult],
+        context: ActiveCaptionApplyContext
+    ) async {
+        await applyTranscriptAccumulationResultsToLiveCaptions(results, context: context)
     }
 
     private func applyTranscriptAccumulationResultsToLiveCaptions(
-        _ results: [TranscriptSegmentAccumulationResult]
+        _ results: [TranscriptSegmentAccumulationResult],
+        context: ActiveCaptionApplyContext
     ) async {
         guard let latest = results.last else { return }
+        guard isCurrentActiveCaptionApply(context) else { return }
         if !liveCaptionPipelineUsesCaptionTranslationProvider {
             liveCaptionPipeline = makeLiveCaptionPipeline(
                 translationProvider: captionTranslationProviderFactory(speechConfiguration)
@@ -984,10 +1033,32 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionPipelineUsesCaptionTranslationProvider = true
         }
         let snapshot = await liveCaptionPipeline.apply(latest)
+        guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishLiveCaptionPipelineSnapshot(snapshot)
         processedLiveCaptionSegmentSignaturesByID = latest.document.segments.reduce(into: [:]) { signatures, segment in
             signatures[segment.id] = liveCaptionSegmentSignature(for: segment)
         }
+    }
+
+    private func beginActiveCaptionApply() -> ActiveCaptionApplyContext {
+        activeCaptionApplySequence += 1
+        return ActiveCaptionApplyContext(
+            sequence: activeCaptionApplySequence,
+            activeMeetingID: activeMeetingID,
+            selectedMeetingID: selectedMeetingID
+        )
+    }
+
+    private func invalidateActiveCaptionApplyTasks() {
+        activeCaptionApplySequence += 1
+        activeCaptionApplyTask?.cancel()
+        activeCaptionApplyTask = nil
+    }
+
+    private func isCurrentActiveCaptionApply(_ context: ActiveCaptionApplyContext) -> Bool {
+        context.sequence == activeCaptionApplySequence
+            && context.activeMeetingID == activeMeetingID
+            && context.selectedMeetingID == selectedMeetingID
     }
 
     private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {

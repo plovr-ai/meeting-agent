@@ -508,6 +508,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["stream-1"])
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Streamed without polling")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, false)
+
+        viewModel.drainRecordingFrames()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["stream-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Streamed without polling")
     }
 
     func testActiveTranscriptUpdatesAreAppliedThroughPipeline() async throws {
@@ -533,6 +538,40 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "We should localize this rollout")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.displayState, .draft)
         XCTAssertEqual(viewModel.meetingProgressHealth.caption, .live)
+    }
+
+    func testStaleActiveTranscriptApplyDoesNotOverwriteNewerCaption() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var oldAccumulator = TranscriptSegmentAccumulator()
+        let oldResult = oldAccumulator.apply(.upsert(TranscriptSegment(
+            id: "active-1",
+            text: "Older caption",
+            language: "en-US",
+            isFinal: false
+        )))
+        var newAccumulator = TranscriptSegmentAccumulator()
+        let newResult = newAccumulator.apply(.upsert(TranscriptSegment(
+            id: "active-2",
+            text: "Newer caption",
+            language: "en-US",
+            isFinal: false
+        )))
+
+        let staleContext = viewModel.beginActiveCaptionApplyForTesting()
+        let currentContext = viewModel.beginActiveCaptionApplyForTesting()
+
+        await viewModel.applyTranscriptAccumulationResultsForTesting([newResult], context: currentContext)
+        await viewModel.applyTranscriptAccumulationResultsForTesting([oldResult], context: staleContext)
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["active-2"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Newer caption")
     }
 
     func testDrainRecordingFramesTranslatesFinalCaptionsWithConfiguredOpenRouterModel() async throws {
