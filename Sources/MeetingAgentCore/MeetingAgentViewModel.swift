@@ -245,6 +245,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 record: record,
                 speechConfiguration: recordingConfiguration
             )
+            refreshMeetingFromStore(record.id)
         } catch {
             if let stopped = try? recorder.stopRecording(),
                let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
@@ -255,6 +256,14 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw error
         }
         statusText = "Recording \(record.name)"
+    }
+
+    private func refreshMeetingFromStore(_ id: UUID) {
+        guard let refreshed = try? store.loadMeetings().first(where: { $0.id == id }),
+              let index = meetings.firstIndex(where: { $0.id == id })
+        else { return }
+
+        meetings[index] = refreshed
     }
 
     public func setRecordingStartError(_ error: Error) {
