@@ -68,6 +68,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var summaryJSONURL: URL?
     public var summaryMarkdownURL: URL?
     public var diagnosticsURL: URL?
+    public var performanceEventsURL: URL?
     public var transcriptionStatus: TranscriptionStatus
     public var transcriptionFailureReason: String?
     public var speechProvider: SpeechProvider
@@ -92,6 +93,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         summaryJSONURL: URL? = nil,
         summaryMarkdownURL: URL? = nil,
         diagnosticsURL: URL? = nil,
+        performanceEventsURL: URL? = nil,
         transcriptionStatus: TranscriptionStatus = .notStarted,
         transcriptionFailureReason: String? = nil,
         speechProvider: SpeechProvider = .whisper,
@@ -115,6 +117,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.summaryJSONURL = summaryJSONURL
         self.summaryMarkdownURL = summaryMarkdownURL ?? summaryURL
         self.diagnosticsURL = diagnosticsURL
+        self.performanceEventsURL = performanceEventsURL
         self.transcriptionStatus = transcriptionStatus
         self.transcriptionFailureReason = transcriptionFailureReason
         self.speechProvider = speechProvider
@@ -143,6 +146,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case summaryJSONURL
         case summaryMarkdownURL
         case diagnosticsURL
+        case performanceEventsURL
         case transcriptionStatus
         case transcriptionFailureReason
         case speechProvider
@@ -169,6 +173,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         summaryJSONURL = try container.decodeIfPresent(URL.self, forKey: .summaryJSONURL)
         summaryMarkdownURL = try container.decodeIfPresent(URL.self, forKey: .summaryMarkdownURL) ?? summaryURL
         diagnosticsURL = try container.decodeIfPresent(URL.self, forKey: .diagnosticsURL)
+        performanceEventsURL = try container.decodeIfPresent(URL.self, forKey: .performanceEventsURL)
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
         transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)
         speechProvider = try container.decodeIfPresent(SpeechProvider.self, forKey: .speechProvider) ?? .whisper

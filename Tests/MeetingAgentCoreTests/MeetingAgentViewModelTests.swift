@@ -2222,7 +2222,8 @@ private final class ViewModelFakeTranscriberFactory {
         configuration: SpeechTranscriptionConfiguration,
         transcriptURL: URL,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(localeIdentifier: configuration.localeIdentifier))
         return transcriber
