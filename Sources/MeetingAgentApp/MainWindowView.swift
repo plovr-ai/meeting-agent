@@ -278,6 +278,7 @@ private struct SidebarNavigationButtonStyle: ButtonStyle {
             .font(CommandCenterTypography.button)
             .foregroundStyle(isSelected ? CommandCenterPalette.primary : CommandCenterPalette.text)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
             .padding(.horizontal, 12)
             .background(isSelected ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
