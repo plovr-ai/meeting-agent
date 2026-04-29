@@ -341,6 +341,20 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
     }
 
+    func testMeetingDetailAllowsEditingAgendaGoalThroughSaveAgenda() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("saveAgenda: { meetingID, update in"))
+        XCTAssertTrue(source.contains("editAgenda: beginDetailAgendaEdit"))
+        XCTAssertTrue(source.contains("editAgendaTarget = meeting"))
+        XCTAssertTrue(source.contains("AgendaEditorView("))
+        XCTAssertTrue(source.contains("try saveAgenda(meetingID, draft.update())"))
+        XCTAssertTrue(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
+
+        let agendaSource = try appSource(named: "TodayAgendaView.swift")
+        XCTAssertTrue(agendaSource.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
+    }
+
     func testMainWindowRemovesUnimplementedMeetingGoalDashboardStructure() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
