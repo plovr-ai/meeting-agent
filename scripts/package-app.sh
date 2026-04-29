@@ -13,6 +13,12 @@ INFO_PLIST="$REPO_ROOT/Sources/MeetingAgentApp/Resources/Info.plist"
 RELEASE_EXECUTABLE="$REPO_ROOT/.build/release/$EXECUTABLE_NAME"
 ENV_FILE="$REPO_ROOT/.env"
 DEFAULT_CREDENTIALS="$RESOURCES_DIR/DefaultSpeechTranscriptionCredentials.json"
+WHISPER_BIN_SOURCE="$REPO_ROOT/Resources/WhisperBin/whisper-cli"
+WHISPER_BIN_DESTINATION="$RESOURCES_DIR/WhisperBin/whisper-cli"
+WHISPER_LIB_SOURCE="$REPO_ROOT/Resources/WhisperLib"
+WHISPER_LIB_DESTINATION="$RESOURCES_DIR/lib"
+WHISPER_BACKENDS_SOURCE="$REPO_ROOT/Resources/WhisperLibexec"
+WHISPER_BACKENDS_DESTINATION="$RESOURCES_DIR/libexec"
 WHISPER_MODELS_SOURCE="$REPO_ROOT/Resources/WhisperModels"
 WHISPER_MODELS_DESTINATION="$RESOURCES_DIR/WhisperModels"
 
@@ -31,6 +37,83 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$RELEASE_EXECUTABLE" "$MACOS_DIR/$EXECUTABLE_NAME"
 cp "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
+
+if [ -f "$WHISPER_BIN_SOURCE" ]; then
+    mkdir -p "$(dirname "$WHISPER_BIN_DESTINATION")"
+    cp "$WHISPER_BIN_SOURCE" "$WHISPER_BIN_DESTINATION"
+    chmod 755 "$WHISPER_BIN_DESTINATION"
+    echo "Embedded Whisper CLI from $WHISPER_BIN_SOURCE"
+else
+    echo "No Whisper CLI embedded; missing $WHISPER_BIN_SOURCE"
+fi
+
+if [ -d "$WHISPER_LIB_SOURCE" ]; then
+    mkdir -p "$WHISPER_LIB_DESTINATION"
+    copied_libraries=0
+    for library_path in "$WHISPER_LIB_SOURCE"/*.dylib; do
+        if [ -f "$library_path" ]; then
+            cp "$library_path" "$WHISPER_LIB_DESTINATION"/
+            chmod 755 "$WHISPER_LIB_DESTINATION/$(basename "$library_path")"
+            copied_libraries=$((copied_libraries + 1))
+        fi
+    done
+    if [ "$copied_libraries" -gt 0 ]; then
+        echo "Embedded $copied_libraries Whisper libraries from $WHISPER_LIB_SOURCE"
+    else
+        echo "No Whisper libraries embedded; no dylibs found in $WHISPER_LIB_SOURCE"
+    fi
+else
+    echo "No Whisper libraries embedded; missing $WHISPER_LIB_SOURCE"
+fi
+
+if [ -d "$WHISPER_BACKENDS_SOURCE" ]; then
+    mkdir -p "$WHISPER_BACKENDS_DESTINATION"
+    copied_backends=0
+    for backend_path in "$WHISPER_BACKENDS_SOURCE"/*.so; do
+        if [ -f "$backend_path" ]; then
+            cp "$backend_path" "$WHISPER_BACKENDS_DESTINATION"/
+            chmod 755 "$WHISPER_BACKENDS_DESTINATION/$(basename "$backend_path")"
+            copied_backends=$((copied_backends + 1))
+        fi
+    done
+    if [ "$copied_backends" -gt 0 ]; then
+        echo "Embedded $copied_backends Whisper backend plugins from $WHISPER_BACKENDS_SOURCE"
+    else
+        echo "No Whisper backend plugins embedded; no shared objects found in $WHISPER_BACKENDS_SOURCE"
+    fi
+else
+    echo "No Whisper backend plugins embedded; missing $WHISPER_BACKENDS_SOURCE"
+fi
+
+if [ -f "$WHISPER_BIN_DESTINATION" ] && [ -d "$WHISPER_LIB_DESTINATION" ] && command -v install_name_tool >/dev/null 2>&1; then
+    install_name_tool \
+        -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+        -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+        "$WHISPER_BIN_DESTINATION" 2>/dev/null || true
+    for library_path in "$WHISPER_LIB_DESTINATION"/*.dylib; do
+        if [ -f "$library_path" ]; then
+            install_name_tool -id "@rpath/$(basename "$library_path")" "$library_path" 2>/dev/null || true
+            install_name_tool \
+                -change /opt/homebrew/opt/ggml/lib/libggml.0.dylib @rpath/libggml.0.dylib \
+                -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+            "$library_path" 2>/dev/null || true
+        fi
+    done
+    if [ -d "$WHISPER_BACKENDS_DESTINATION" ]; then
+        for backend_path in "$WHISPER_BACKENDS_DESTINATION"/*.so; do
+            if [ -f "$backend_path" ]; then
+                install_name_tool \
+                    -change /opt/homebrew/opt/ggml/lib/libggml-base.0.dylib @rpath/libggml-base.0.dylib \
+                    -change /opt/homebrew/opt/libomp/lib/libomp.dylib @rpath/libomp.dylib \
+                    "$backend_path" 2>/dev/null || true
+            fi
+        done
+    fi
+fi
+
+if [ -f "$WHISPER_LIB_DESTINATION/libggml.0.dylib" ] && command -v perl >/dev/null 2>&1; then
+    perl -0pi -e 's#/opt/homebrew/Cellar/ggml/0\.10\.0/libexec#"/tmp/meeting-agent-no-ggml-libexec" . ("\0" x 6)#e' "$WHISPER_LIB_DESTINATION/libggml.0.dylib"
+fi
 
 if [ -d "$WHISPER_MODELS_SOURCE" ]; then
     mkdir -p "$WHISPER_MODELS_DESTINATION"
@@ -124,12 +207,13 @@ else
     echo "No default credentials embedded; .env did not include supported API key names"
 fi
 
-if command -v codesign >/dev/null 2>&1; then
-    codesign --force --sign - "$APP_BUNDLE"
-fi
-
 if command -v xattr >/dev/null 2>&1; then
     xattr -cr "$APP_BUNDLE"
+fi
+
+if command -v codesign >/dev/null 2>&1; then
+    find "$RESOURCES_DIR" -type f \( -name "*.dylib" -o -name "*.so" -o -name "whisper-cli" \) -exec codesign --force --sign - {} \;
+    codesign --force --deep --sign - "$APP_BUNDLE"
 fi
 
 ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"

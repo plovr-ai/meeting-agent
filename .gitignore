@@ -6,3 +6,6 @@ dist/
 .record/
 .superpowers
 Resources/WhisperModels/
+Resources/WhisperBin/
+Resources/WhisperLib/
+Resources/WhisperLibexec/

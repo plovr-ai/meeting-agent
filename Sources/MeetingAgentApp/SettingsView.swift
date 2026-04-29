@@ -57,12 +57,6 @@ struct SettingsView: View {
                         }
 
                         if draft.localTranscriptionProviderID == "whisper-local" {
-                            Picker("Whisper Binary Path", selection: whisperBinaryPathBinding) {
-                                ForEach(whisperBinaryPathOptions, id: \.self) { path in
-                                    Text(path).tag(path)
-                                }
-                            }
-
                             Picker("Whisper Model Path", selection: whisperModelPathBinding) {
                                 ForEach(whisperModelPathOptions, id: \.self) { path in
                                     Text(path).tag(path)
@@ -165,13 +159,6 @@ struct SettingsView: View {
         }
     }
 
-    private var whisperBinaryPathBinding: Binding<String> {
-        Binding(
-            get: { draft.whisperBinaryPath ?? "" },
-            set: { draft.whisperBinaryPath = SpeechTranscriptionConfiguration.normalized($0) }
-        )
-    }
-
     private var whisperModelPathBinding: Binding<String> {
         Binding(
             get: { draft.whisperModelPath ?? "" },
@@ -199,16 +186,6 @@ struct SettingsView: View {
 
     private var usesDeepgram: Bool {
         draft.usesDeepgram
-    }
-
-    private var whisperBinaryPathOptions: [String] {
-        uniqueNonBlank([
-            draft.whisperBinaryPath,
-            configuration.whisperBinaryPath,
-            ProcessInfo.processInfo.environment["MEETING_AGENT_WHISPER_BIN"],
-            "/opt/homebrew/bin/whisper-cli",
-            "/usr/local/bin/whisper-cli"
-        ])
     }
 
     private var whisperModelPathOptions: [String] {

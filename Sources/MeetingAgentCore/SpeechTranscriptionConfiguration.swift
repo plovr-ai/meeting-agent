@@ -216,7 +216,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         guard let whisperBinaryPath = WhisperConfigurationResolver.binaryPath(
             explicitPath: whisperBinaryPath,
             environment: environment,
-            fileManager: fileManager
+            fileManager: fileManager,
+            bundledResourceURL: bundledResourceURL,
+            developmentResourceSearchRoots: developmentResourceSearchRoots
         ) else {
             return .unavailable("Whisper binary path is not configured")
         }
