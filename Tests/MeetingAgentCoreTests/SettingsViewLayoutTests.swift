@@ -29,7 +29,8 @@ final class SettingsViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Hosted Translation Provider\""))
         XCTAssertFalse(source.contains("Picker(\"Bilingual Pipeline Profile\""))
         XCTAssertFalse(source.contains("Section(\"Bilingual Pipeline\")"))
-        XCTAssertTrue(source.contains("Picker(\"Whisper Binary Path\""))
+        XCTAssertFalse(source.contains("Picker(\"Whisper Binary Path\""))
+        XCTAssertFalse(source.contains("whisperBinaryPathOptions"))
         XCTAssertTrue(source.contains("Picker(\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("TextField("))
     }

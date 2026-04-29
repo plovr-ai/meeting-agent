@@ -14,7 +14,9 @@ struct WhisperConfiguration: Equatable {
         guard let binaryPath = WhisperConfigurationResolver.binaryPath(
             explicitPath: configuration.whisperBinaryPath,
             environment: environment,
-            fileManager: fileManager
+            fileManager: fileManager,
+            bundledResourceURL: bundledResourceURL,
+            developmentResourceSearchRoots: developmentResourceSearchRoots
         ) else {
             throw unavailable("Whisper binary path is not configured")
         }
@@ -37,7 +39,9 @@ struct WhisperConfiguration: Equatable {
         guard let binaryPath = WhisperConfigurationResolver.binaryPath(
             explicitPath: nil,
             environment: environment,
-            fileManager: fileManager
+            fileManager: fileManager,
+            bundledResourceURL: nil,
+            developmentResourceSearchRoots: []
         ) else {
             throw unavailable("MEETING_AGENT_WHISPER_BIN is not set")
         }
@@ -91,6 +95,7 @@ struct WhisperConfiguration: Equatable {
 }
 
 public enum WhisperConfigurationResolver {
+    public static let binDirectoryName = "WhisperBin"
     public static let modelsDirectoryName = "WhisperModels"
     private static let preferredModelFileNames = [
         "ggml-small.bin",
@@ -101,15 +106,52 @@ public enum WhisperConfigurationResolver {
     static func binaryPath(
         explicitPath: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
     ) -> String? {
         if let explicitPath = nonBlank(explicitPath) {
             return explicitPath
+        }
+        if let bundledPath = binaryPathOptions(
+            environment: environment,
+            fileManager: fileManager,
+            bundledResourceURL: bundledResourceURL,
+            developmentResourceSearchRoots: developmentResourceSearchRoots
+        ).first {
+            return bundledPath
         }
         if let environmentPath = nonBlank(environment["MEETING_AGENT_WHISPER_BIN"]) {
             return environmentPath
         }
         return executablePath(named: "whisper-cli", pathValue: environment["PATH"], fileManager: fileManager)
+    }
+
+    static func binaryPathOptions(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        bundledResourceURL: URL? = Bundle.main.resourceURL,
+        developmentResourceSearchRoots: [URL] = [URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
+    ) -> [String] {
+        var paths = [String?]()
+        if let bundledResourceURL {
+            paths.append(
+                bundledResourceURL
+                    .appendingPathComponent(binDirectoryName, isDirectory: true)
+                    .appendingPathComponent("whisper-cli")
+                    .path
+            )
+        }
+        for rootURL in developmentResourceSearchRoots {
+            paths.append(
+                rootURL.appendingPathComponent("Resources", isDirectory: true)
+                    .appendingPathComponent(binDirectoryName, isDirectory: true)
+                    .appendingPathComponent("whisper-cli")
+                    .path
+            )
+        }
+        paths.append(nonBlank(environment["MEETING_AGENT_WHISPER_BIN"]))
+        return uniqueExistingExecutablePaths(paths, fileManager: fileManager)
     }
 
     static func modelPath(
@@ -202,6 +244,20 @@ public enum WhisperConfigurationResolver {
         }
     }
 
+    private static func uniqueExistingExecutablePaths(_ paths: [String?], fileManager: FileManager) -> [String] {
+        var seen = Set<String>()
+        return paths.compactMap { path in
+            guard let path = nonBlank(path),
+                  !seen.contains(path),
+                  fileManager.isExecutableFile(atPath: URL(fileURLWithPath: path).path)
+            else {
+                return nil
+            }
+            seen.insert(path)
+            return path
+        }
+    }
+
     private static func nonBlank(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
@@ -271,6 +327,7 @@ struct WhisperProcessRunner: WhisperProcessRunning {
             outputBaseURL: outputBaseURL,
             languageCode: languageCode
         )
+        process.environment = Self.environment(for: binaryURL)
 
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
@@ -309,6 +366,38 @@ struct WhisperProcessRunner: WhisperProcessRunning {
             "-of", outputBaseURL.path
         ]
         return arguments
+    }
+
+    static func environment(
+        for binaryURL: URL,
+        base: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> [String: String] {
+        var environment = base
+        let resourcesURL = binaryURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let backendURLs = [
+            resourcesURL.appendingPathComponent("libexec", isDirectory: true),
+            resourcesURL.appendingPathComponent("WhisperLibexec", isDirectory: true)
+        ]
+        let backendFileNames = [
+            "libggml-cpu-apple_m1.so",
+            "libggml-cpu-apple_m2_m3.so",
+            "libggml-cpu-apple_m4.so",
+            "libggml-metal.so",
+            "libggml-blas.so"
+        ]
+        for backendURL in backendURLs {
+            for fileName in backendFileNames {
+                let fileURL = backendURL.appendingPathComponent(fileName)
+                if fileManager.fileExists(atPath: fileURL.path) {
+                    environment["GGML_BACKEND_PATH"] = fileURL.path
+                    return environment
+                }
+            }
+        }
+        return environment
     }
 }
 

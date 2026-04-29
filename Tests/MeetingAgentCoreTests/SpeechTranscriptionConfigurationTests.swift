@@ -40,7 +40,12 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            configuration.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "test-key"], fileManager: .default),
+            configuration.validationStatus(
+                environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "test-key"],
+                fileManager: .default,
+                bundledResourceURL: nil,
+                developmentResourceSearchRoots: []
+            ),
             .unavailable("Whisper binary path is not configured")
         )
     }
@@ -96,16 +101,69 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            configuration.validationStatus(environment: environment, fileManager: .default),
+            configuration.validationStatus(
+                environment: environment,
+                fileManager: .default,
+                bundledResourceURL: nil,
+                developmentResourceSearchRoots: []
+            ),
             .available
         )
         XCTAssertEqual(
             try WhisperConfiguration.fromAppConfiguration(
                 configuration,
                 environment: environment,
-                fileManager: .default
+                fileManager: .default,
+                bundledResourceURL: nil,
+                developmentResourceSearchRoots: []
             ).binaryURL,
             binaryURL
+        )
+    }
+
+    func testWhisperValidationFindsPackagedBinaryWhenNotExplicitlyConfigured() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("speech-config-packaged-bin-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let resourcesURL = directory.appendingPathComponent("Resources", isDirectory: true)
+        let binURL = resourcesURL
+            .appendingPathComponent("WhisperBin", isDirectory: true)
+            .appendingPathComponent("whisper-cli")
+        let modelsURL = resourcesURL.appendingPathComponent("WhisperModels", isDirectory: true)
+        try FileManager.default.createDirectory(at: binURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
+        let modelURL = modelsURL.appendingPathComponent("ggml-small.en.bin")
+        FileManager.default.createFile(atPath: binURL.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binURL.path)
+
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            translationExecutionMode: .local
+        )
+
+        XCTAssertEqual(
+            configuration.validationStatus(
+                environment: [:],
+                fileManager: .default,
+                bundledResourceURL: resourcesURL,
+                developmentResourceSearchRoots: []
+            ),
+            .available
+        )
+        XCTAssertEqual(
+            try WhisperConfiguration.fromAppConfiguration(
+                configuration,
+                environment: [:],
+                fileManager: .default,
+                bundledResourceURL: resourcesURL,
+                developmentResourceSearchRoots: []
+            ).binaryURL,
+            binURL
         )
     }
 

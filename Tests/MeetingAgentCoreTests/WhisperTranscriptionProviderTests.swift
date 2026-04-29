@@ -138,6 +138,42 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(configuration.modelURL, modelURL)
     }
 
+    func testAppConfigurationFindsPackagedBinaryBeforePath() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-config-packaged-bin-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let resourcesURL = directory.appendingPathComponent("Resources", isDirectory: true)
+        let packagedBinURL = resourcesURL
+            .appendingPathComponent("WhisperBin", isDirectory: true)
+            .appendingPathComponent("whisper-cli")
+        let pathBinURL = directory.appendingPathComponent("whisper-cli")
+        let modelURL = directory.appendingPathComponent("ggml-small.en.bin")
+        try FileManager.default.createDirectory(at: packagedBinURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: packagedBinURL.path, contents: Data())
+        FileManager.default.createFile(atPath: pathBinURL.path, contents: Data())
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: packagedBinURL.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pathBinURL.path)
+
+        let appConfiguration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "en-US",
+            whisperBinaryPath: nil,
+            whisperModelPath: modelURL.path
+        )
+
+        let configuration = try WhisperConfiguration.fromAppConfiguration(
+            appConfiguration,
+            environment: ["PATH": directory.path],
+            fileManager: .default,
+            bundledResourceURL: resourcesURL,
+            developmentResourceSearchRoots: []
+        )
+
+        XCTAssertEqual(configuration.binaryURL, packagedBinURL)
+    }
+
     func testProcessRunnerBuildsExpectedArgumentsWithLanguage() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -186,6 +222,53 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         )
 
         XCTAssertFalse(runner.recordedArguments.contains("-l"))
+    }
+
+    func testProcessRunnerUsesPackagedBackendDirectoryWhenAvailable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-backend-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binaryURL = directory
+            .appendingPathComponent("WhisperBin", isDirectory: true)
+            .appendingPathComponent("whisper-cli")
+        let backendURL = directory.appendingPathComponent("libexec", isDirectory: true)
+        let backendFileURL = backendURL.appendingPathComponent("libggml-cpu-apple_m1.so")
+        try FileManager.default.createDirectory(at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backendURL, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: backendFileURL.path, contents: Data())
+
+        let environment = WhisperProcessRunner.environment(
+            for: binaryURL,
+            base: ["PATH": "/usr/bin"],
+            fileManager: .default
+        )
+
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        XCTAssertEqual(environment["GGML_BACKEND_PATH"], backendFileURL.path)
+    }
+
+    func testProcessRunnerUsesDevelopmentBackendDirectoryWhenAvailable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-backend-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binaryURL = directory
+            .appendingPathComponent("WhisperBin", isDirectory: true)
+            .appendingPathComponent("whisper-cli")
+        let backendURL = directory.appendingPathComponent("WhisperLibexec", isDirectory: true)
+        let backendFileURL = backendURL.appendingPathComponent("libggml-cpu-apple_m2_m3.so")
+        try FileManager.default.createDirectory(at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backendURL, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: backendFileURL.path, contents: Data())
+
+        let environment = WhisperProcessRunner.environment(
+            for: binaryURL,
+            base: [:],
+            fileManager: .default
+        )
+
+        XCTAssertEqual(environment["GGML_BACKEND_PATH"], backendFileURL.path)
     }
 
     func testProcessRunnerThrowsWhenExitCodeIsNonZero() {
