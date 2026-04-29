@@ -1,8 +1,14 @@
 import MeetingAgentCore
 import SwiftUI
 
+enum AgendaListMode {
+    case today
+    case meetings
+    case library
+}
+
 struct TodayAgendaView: View {
-    private let recentHistoryDays = 7
+    let mode: AgendaListMode
     let title: String
     let emptyTitle: String
     let emptyDescription: String
@@ -31,17 +37,19 @@ struct TodayAgendaView: View {
             }
             .frame(minWidth: 520)
 
-            Divider()
-                .overlay(CommandCenterPalette.border)
+            if showsAgendaEditor {
+                Divider()
+                    .overlay(CommandCenterPalette.border)
 
-            AgendaEditorView(
-                meeting: selectedMeeting,
-                draft: $draft,
-                saveError: saveError,
-                save: saveSelectedAgenda,
-                cancel: resetDraftFromSelection
-            )
-            .frame(minWidth: 360, idealWidth: 400, maxWidth: 440)
+                AgendaEditorView(
+                    meeting: selectedMeeting,
+                    draft: $draft,
+                    saveError: saveError,
+                    save: saveSelectedAgenda,
+                    cancel: resetDraftFromSelection
+                )
+                .frame(minWidth: 360, idealWidth: 400, maxWidth: 440)
+            }
         }
         .background(CommandCenterPalette.window)
         .onAppear(perform: resetDraftFromSelection)
@@ -87,8 +95,10 @@ struct TodayAgendaView: View {
 
     @ViewBuilder
     private var agendaList: some View {
-        if showsSingleFeed {
+        if mode == .today {
             agendaFeed
+        } else if mode == .library {
+            artifactList
         } else {
             bucketAgendaList
         }
@@ -110,13 +120,36 @@ struct TodayAgendaView: View {
                     todayFeedContent
                 }
 
-                if !recentGroups.isEmpty {
-                    AgendaFeedSection(title: "Recent", count: recentGroups.reduce(0) { $0 + $1.1.count }) {
-                        recentFeedContent
+                if !completedTodayMeetings.isEmpty {
+                    AgendaFeedSection(title: "Completed Today", count: completedTodayMeetings.count) {
+                        completedTodayFeedContent
                     }
                 }
             }
             .padding(22)
+        }
+    }
+
+    @ViewBuilder
+    private var artifactList: some View {
+        if sortedMeetings.isEmpty {
+            emptyState
+        } else {
+            CommandCenterScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(sortedMeetings) { meeting in
+                        MeetingArtifactCard(
+                            meeting: meeting,
+                            isSelected: meeting.id == selectedMeetingID,
+                            open: {
+                                selectMeeting(meeting)
+                                openWorkspace(meeting)
+                            }
+                        )
+                    }
+                }
+                .padding(22)
+            }
         }
     }
 
@@ -169,24 +202,17 @@ struct TodayAgendaView: View {
         }
     }
 
-    private var recentFeedContent: some View {
+    private var completedTodayFeedContent: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(recentGroups, id: \.0) { day, meetings in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(day.formatted(date: .abbreviated, time: .omitted))
-                        .font(CommandCenterTypography.sectionTitle)
-                        .foregroundStyle(CommandCenterPalette.text)
-                    ForEach(meetings) { meeting in
-                        RecentAgendaMeetingCard(
-                            meeting: meeting,
-                            isSelected: meeting.id == selectedMeetingID,
-                            open: {
-                                selectMeeting(meeting)
-                                openWorkspace(meeting)
-                            }
-                        )
+            ForEach(completedTodayMeetings) { meeting in
+                MeetingArtifactCard(
+                    meeting: meeting,
+                    isSelected: meeting.id == selectedMeetingID,
+                    open: {
+                        selectMeeting(meeting)
+                        openWorkspace(meeting)
                     }
-                }
+                )
             }
         }
     }
@@ -227,35 +253,29 @@ struct TodayAgendaView: View {
     }
 
     private var todayMeetings: [MeetingRecord] {
-        meetings.filter { Calendar.current.isDate(displayDate(for: $0), inSameDayAs: Date()) }
+        meetings.filter { meeting in
+            Calendar.current.isDate(displayDate(for: meeting), inSameDayAs: Date()) && !isCompleted(meeting)
+        }
             .sorted { lhs, rhs in
                 displayDate(for: lhs) < displayDate(for: rhs)
             }
     }
 
-    private var recentGroups: [(Date, [MeetingRecord])] {
-        let calendar = Calendar.current
-        let startOfToday = calendar.startOfDay(for: Date())
-        let recentHistoryStart = calendar.date(byAdding: .day, value: -recentHistoryDays, to: startOfToday) ?? startOfToday
-        let recentMeetings = meetings.filter { meeting in
-            let day = calendar.startOfDay(for: displayDate(for: meeting))
-            return day >= recentHistoryStart && day < startOfToday
+    private var completedTodayMeetings: [MeetingRecord] {
+        meetings.filter { meeting in
+            Calendar.current.isDate(displayDate(for: meeting), inSameDayAs: Date()) && isCompleted(meeting)
         }
-        let grouped = Dictionary(grouping: recentMeetings) { meeting in
-            calendar.startOfDay(for: displayDate(for: meeting))
-        }
-        return grouped.keys.sorted(by: >).map { day in
-            let meetings = grouped[day]?.sorted { displayDate(for: $0) > displayDate(for: $1) } ?? []
-            return (day, meetings)
+        .sorted { lhs, rhs in
+            displayDate(for: lhs) > displayDate(for: rhs)
         }
     }
 
     private var editableMeetings: [MeetingRecord] {
-        showsSingleFeed ? todayMeetings : sortedMeetings
+        mode == .today ? todayMeetings : sortedMeetings
     }
 
-    private var showsSingleFeed: Bool {
-        createMeeting != nil
+    private var showsAgendaEditor: Bool {
+        mode != .library
     }
 
     private var selectedMeeting: MeetingRecord? {
@@ -291,6 +311,18 @@ struct TodayAgendaView: View {
     private func hasReadableTranscript(_ meeting: MeetingRecord) -> Bool {
         guard let transcriptURL = meeting.transcriptURL else { return false }
         return FileManager.default.isReadableFile(atPath: transcriptURL.path)
+    }
+
+    private func isCompleted(_ meeting: MeetingRecord) -> Bool {
+        if meeting.endedAt != nil {
+            return true
+        }
+        switch meeting.transcriptionStatus {
+        case .transcribed, .failed, .retryRequested:
+            return true
+        case .notStarted, .transcribing:
+            return false
+        }
     }
 
     private func resetDraftFromSelection() {
@@ -424,7 +456,7 @@ private struct AgendaRowView: View {
     }
 }
 
-private struct RecentAgendaMeetingCard: View {
+private struct MeetingArtifactCard: View {
     let meeting: MeetingRecord
     let isSelected: Bool
     let open: () -> Void

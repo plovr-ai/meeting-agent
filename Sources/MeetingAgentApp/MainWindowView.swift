@@ -4,8 +4,8 @@ import SwiftUI
 
 private enum MainWindowDestination: Hashable {
     case today
-    case thisWeek
-    case history
+    case meetings
+    case library
     case workspace
     case settings
 }
@@ -25,15 +25,15 @@ struct MainWindowView: View {
                     }
                     .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .today))
 
-                    Button("This Week") {
-                        destination = .thisWeek
+                    Button("Meetings") {
+                        destination = .meetings
                     }
-                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .thisWeek))
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .meetings))
 
-                    Button("History") {
-                        destination = .history
+                    Button("Library") {
+                        destination = .library
                     }
-                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .history))
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .library))
                 }
                 .padding(12)
 
@@ -67,12 +67,13 @@ struct MainWindowView: View {
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
-            case .today, .thisWeek, .history:
+            case .today, .meetings, .library:
                 TodayAgendaView(
+                    mode: agendaMode(for: destination),
                     title: agendaTitle(for: destination),
                     emptyTitle: agendaEmptyTitle(for: destination),
                     emptyDescription: agendaEmptyDescription(for: destination),
-                    meetings: destination == .today ? viewModel.meetings : meetings(for: destination),
+                    meetings: meetings(for: destination),
                     selectedMeetingID: viewModel.selectedMeetingID,
                     activeMeetingID: viewModel.activeMeetingID,
                     pendingCandidate: viewModel.pendingCandidate,
@@ -216,10 +217,10 @@ struct MainWindowView: View {
         switch destination {
         case .today:
             return viewModel.meetings.filter { isToday($0) }
-        case .thisWeek:
-            return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }
-        case .history:
-            return viewModel.meetings.filter { !isThisWeek($0) }
+        case .meetings:
+            return viewModel.meetings.filter { !isCompleted($0) }
+        case .library:
+            return viewModel.meetings.filter { isCompleted($0) }
         case .workspace:
             return viewModel.meetings
         case .settings:
@@ -231,10 +232,10 @@ struct MainWindowView: View {
         switch destination {
         case .today:
             return "Today"
-        case .thisWeek:
-            return "This Week"
-        case .history:
-            return "History"
+        case .meetings:
+            return "Meetings"
+        case .library:
+            return "Library"
         case .workspace:
             return "All Meetings"
         case .settings:
@@ -242,14 +243,27 @@ struct MainWindowView: View {
         }
     }
 
+    private func agendaMode(for destination: MainWindowDestination) -> AgendaListMode {
+        switch destination {
+        case .today:
+            return .today
+        case .meetings:
+            return .meetings
+        case .library:
+            return .library
+        case .workspace, .settings:
+            return .meetings
+        }
+    }
+
     private func agendaEmptyTitle(for destination: MainWindowDestination) -> String {
         switch destination {
         case .today:
             return "No meetings scheduled today"
-        case .thisWeek:
-            return "No meetings scheduled this week"
-        case .history:
-            return "No meeting history"
+        case .meetings:
+            return "No scheduled meetings"
+        case .library:
+            return "No meeting library items"
         case .workspace:
             return "No meetings"
         case .settings:
@@ -261,10 +275,10 @@ struct MainWindowView: View {
         switch destination {
         case .today:
             return "Create a local agenda item to prepare attendees, topics, and meeting goals before recording."
-        case .thisWeek:
-            return "Meetings scheduled later this week will appear here with their agenda details."
-        case .history:
-            return "Completed and past meetings will appear here with their saved agenda details."
+        case .meetings:
+            return "Scheduled meetings will appear here with their agenda details."
+        case .library:
+            return "Completed meetings will appear here with their transcripts, summaries, and exports."
         case .workspace, .settings:
             return ""
         }
@@ -279,6 +293,18 @@ struct MainWindowView: View {
         let meetingDate = meetingDisplayDate(meeting)
         return calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)
             && calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)
+    }
+
+    private func isCompleted(_ meeting: MeetingRecord) -> Bool {
+        if meeting.endedAt != nil {
+            return true
+        }
+        switch meeting.transcriptionStatus {
+        case .transcribed, .failed, .retryRequested:
+            return true
+        case .notStarted, .transcribing:
+            return false
+        }
     }
 
     private func meetingDisplayDate(_ meeting: MeetingRecord) -> Date {

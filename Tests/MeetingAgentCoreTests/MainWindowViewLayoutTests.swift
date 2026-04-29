@@ -25,26 +25,30 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("enum MainWindowDestination"))
         XCTAssertTrue(source.contains("case today"))
-        XCTAssertTrue(source.contains("case thisWeek"))
-        XCTAssertTrue(source.contains("case history"))
+        XCTAssertTrue(source.contains("case meetings"))
+        XCTAssertTrue(source.contains("case library"))
         XCTAssertTrue(source.contains("TodayAgendaView("))
         XCTAssertTrue(source.contains("Button(\"Today\")"))
-        XCTAssertTrue(source.contains("Button(\"This Week\")"))
-        XCTAssertTrue(source.contains("Button(\"History\")"))
+        XCTAssertTrue(source.contains("Button(\"Meetings\")"))
+        XCTAssertTrue(source.contains("Button(\"Library\")"))
         XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
         XCTAssertTrue(source.contains("meetings(for: destination)"))
         XCTAssertTrue(source.contains("TodayAgendaView("))
-        XCTAssertTrue(source.contains("case .today, .thisWeek, .history:"))
+        XCTAssertTrue(source.contains("mode: agendaMode(for: destination)"))
+        XCTAssertTrue(source.contains("case .today, .meetings, .library:"))
+        XCTAssertTrue(source.contains("case .library:"))
+        XCTAssertTrue(source.contains("return .library"))
         XCTAssertTrue(source.contains("agendaEmptyTitle(for: destination)"))
         XCTAssertTrue(source.contains("agendaEmptyDescription(for: destination)"))
         XCTAssertTrue(source.contains("meetingDisplayDate(_ meeting: MeetingRecord)"))
         XCTAssertTrue(source.contains("meeting.scheduledStartAt ?? meeting.startedAt"))
         XCTAssertTrue(source.contains("No meetings scheduled today"))
-        XCTAssertTrue(source.contains("No meetings scheduled this week"))
-        XCTAssertTrue(source.contains("No meeting history"))
+        XCTAssertTrue(source.contains("No scheduled meetings"))
+        XCTAssertTrue(source.contains("No meeting library items"))
         XCTAssertFalse(source.contains("Button(\"Recordings\")"))
         XCTAssertFalse(source.contains("Text(\"Recent Recordings\")"))
-        XCTAssertFalse(source.contains("Text(\"Meetings\")"))
+        XCTAssertFalse(source.contains("Button(\"This Week\")"))
+        XCTAssertFalse(source.contains("Button(\"History\")"))
     }
 
     func testSidebarBucketNavigationDoesNotRenderMeetingSelectionList() throws {
@@ -74,17 +78,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try appSource(named: "MainWindowView.swift")
 
         XCTAssertTrue(source.contains("TodayAgendaView("))
-        XCTAssertTrue(source.contains("meetings: destination == .today ? viewModel.meetings : meetings(for: destination)"))
+        XCTAssertTrue(source.contains("meetings: meetings(for: destination)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, inSameDayAs: now)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)"))
-        XCTAssertTrue(source.contains("return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }"))
+        XCTAssertTrue(source.contains("return viewModel.meetings.filter { !isCompleted($0) }"))
+        XCTAssertTrue(source.contains("return viewModel.meetings.filter { isCompleted($0) }"))
     }
 
     func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
         XCTAssertTrue(source.contains("struct TodayAgendaView"))
+        XCTAssertTrue(source.contains("enum AgendaListMode"))
         XCTAssertTrue(source.contains("AgendaRowView"))
         XCTAssertTrue(source.contains("AgendaEditorView"))
         XCTAssertTrue(source.contains("Open Workspace"))
@@ -96,14 +102,20 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
     }
 
-    func testTodayAgendaRestoresSingleFeedSections() throws {
+    func testTodayAgendaUsesTodayWorkflowSections() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
         XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Today\""))
-        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Recent\""))
-        XCTAssertTrue(source.contains("recentGroups"))
-        XCTAssertTrue(source.contains("recentHistoryDays"))
-        XCTAssertTrue(source.contains("RecentAgendaMeetingCard"))
+        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Completed Today\""))
+        XCTAssertTrue(source.contains("completedTodayMeetings"))
+        XCTAssertTrue(source.contains("MeetingArtifactCard"))
+        XCTAssertTrue(source.contains("mode == .today"))
+        XCTAssertTrue(source.contains("mode == .library"))
+        XCTAssertTrue(source.contains("artifactList"))
+        XCTAssertTrue(source.contains("if showsAgendaEditor"))
+        XCTAssertFalse(source.contains("recentGroups"))
+        XCTAssertFalse(source.contains("recentHistoryDays"))
+        XCTAssertFalse(source.contains("RecentAgendaMeetingCard"))
         XCTAssertTrue(source.contains("Meeting schedule and metadata"))
         XCTAssertTrue(source.contains("let selected = editableMeetings.first(where: { $0.id == selectedMeetingID })"))
         XCTAssertTrue(source.contains("Summary ready"))
