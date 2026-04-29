@@ -139,6 +139,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("meeting.attendees"))
         XCTAssertTrue(source.contains("meeting.agendaTopics"))
         XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
+        XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
+        XCTAssertTrue(source.contains("title: goalDisplay"))
+        XCTAssertTrue(source.contains("title: attendeesDisplay"))
+        XCTAssertFalse(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
     }
 
     func testMeetingWorkspaceBackButtonReturnsToSourceBucket() throws {
@@ -370,11 +374,13 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try appSource(named: "MainWindowView.swift")
 
         XCTAssertTrue(source.contains("saveAgenda: { meetingID, update in"))
-        XCTAssertTrue(source.contains("editAgenda: beginDetailAgendaEdit"))
+        XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
+        XCTAssertTrue(source.contains(".help(\"Edit meeting goal\")"))
+        XCTAssertTrue(source.contains(".help(\"Edit attendees\")"))
         XCTAssertTrue(source.contains("editAgendaTarget = meeting"))
         XCTAssertTrue(source.contains("AgendaEditorView("))
         XCTAssertTrue(source.contains("try saveAgenda(meetingID, draft.update())"))
-        XCTAssertTrue(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
+        XCTAssertFalse(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
 
         let agendaSource = try appSource(named: "TodayAgendaView.swift")
         XCTAssertTrue(agendaSource.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
