@@ -10,9 +10,7 @@ private let excludedFiles: Set<String> = [
     "AudioIOReader.swift",
     "AudioTapManager.swift",
     "DeepgramTranscriptionProvider.swift",
-    "LocalAudioPlaybackSink.swift",
     "OpenAIRealtimeTranscriptionProvider.swift",
-    "OpenAIRealtimeTranslationProvider.swift",
     "OpenRouterBilingualProviders.swift",
     "OpenRouterMeetingSummaryProvider.swift",
     "RunningProcessDiscovery.swift",
@@ -21,9 +19,7 @@ private let excludedFiles: Set<String> = [
     "SpeechTranscriptionConfiguration.swift",
     "MeetingRecorder.swift",
     "MeetingExportService.swift",
-    "RealtimeTranslationController.swift",
     "SpeechTranscriptionProvider.swift",
-    "RealtimeTranslation.swift",
     "Models.swift",
     "BilingualProvider.swift"
 ]

@@ -28,8 +28,6 @@ public final class MeetingAgentViewModel: ObservableObject {
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
     @Published public private(set) var statusText: String = "Idle"
     @Published public private(set) var speechConfiguration: SpeechTranscriptionConfiguration
-    @Published public private(set) var realtimeTranslationStatus: RealtimeTranslationStatus = .idle
-    @Published public private(set) var liveTranslationTurns: [LiveTranslationTurn] = []
     @Published public private(set) var liveCaptionTurns: [LiveCaptionTurn] = []
     @Published public private(set) var meetingProgressState: MeetingProgressState?
     @Published public private(set) var meetingProgressHealth = MeetingProgressHealth(
@@ -47,7 +45,6 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
-    private let realtimeTranslationController: RealtimeTranslationController
     private var liveCaptionStore = LiveCaptionStore()
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
     private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
@@ -56,8 +53,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         Array((meetingProgressState?.suggestedQuestions ?? []).prefix(2))
     }
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
-    private var attachedRealtimeTranslationTurnIDs = Set<String>()
-    private var realtimeTranslationAttachmentCountsByCaptionID: [String: Int] = [:]
     private var draftTranslationKeysByTurnID: [String: String] = [:]
     private var draftTranslationInFlightByTurnID: [String: Int] = [:]
     private var draftTranslationTasksByTurnID: [String: Task<Void, Never>] = [:]
@@ -90,9 +85,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
         exportService: MeetingExportService = MeetingExportService(),
-        realtimeTranslationController: RealtimeTranslationController = RealtimeTranslationController(
-            playbackSink: LocalAudioPlaybackSink()
-        ),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
@@ -101,13 +93,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.speechConfigurationStore = speechConfigurationStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
-        self.realtimeTranslationController = realtimeTranslationController
         self.captionTranslationProviderFactory = captionTranslationProviderFactory
         self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
             Self.summaryProvider(for: configuration)
         }
         self.processTargetsProvider = processTargetsProvider
-        self.recorder.realtimeFrameConsumer = realtimeTranslationController
         if let speechConfiguration {
             self.speechConfiguration = speechConfiguration
         } else if speechProvider != .whisper || speechLocaleIdentifier != Locale.current.identifier {
@@ -283,33 +273,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         statusText = "Recording failed: \(error)"
     }
 
-    public func startRealtimeTranslation(targetLocale: String) async {
-        guard isRecording else {
-            realtimeTranslationStatus = .failed("Start recording before live translation")
-            return
-        }
-        let configuredAPIKey = SpeechTranscriptionConfiguration.normalized(speechConfiguration.openAIRealtimeAPIKey)
-        let configuration: RealtimeTranslationConfiguration
-        if let configuredAPIKey {
-            configuration = RealtimeTranslationConfiguration(apiKey: configuredAPIKey, targetLocale: targetLocale)
-        } else {
-            configuration = RealtimeTranslationConfiguration(targetLocale: targetLocale)
-        }
-        await realtimeTranslationController.start(configuration: configuration)
-        syncRealtimeTranslationState()
-    }
-
-    public func stopRealtimeTranslation() async {
-        await realtimeTranslationController.stop()
-        syncRealtimeTranslationState()
-    }
-
-    public func syncRealtimeTranslationState() {
-        realtimeTranslationStatus = realtimeTranslationController.status
-        liveTranslationTurns = realtimeTranslationController.liveTranslationTurns
-        attachRealtimeTranslationsToLiveCaptions()
-    }
-
     public func setMeetingGoal(_ goal: MeetingGoal?) {
         meetingGoal = goal
         resetMeetingProgressState()
@@ -391,7 +354,6 @@ public final class MeetingAgentViewModel: ObservableObject {
                 await self?.refreshMeetingProgress()
             }
         }
-        syncRealtimeTranslationState()
         objectWillChange.send()
     }
 
@@ -402,7 +364,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         freezeOpenLiveCaptionChunk(reason: .manualStop)
         allowActiveTargetReprompt()
-        Task { await stopRealtimeTranslation() }
         activeTarget = nil
         activeMeetingID = nil
         statusText = "Idle"
@@ -420,7 +381,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
-        await stopRealtimeTranslation()
         allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
@@ -847,8 +807,6 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
         processedLiveCaptionSegmentSignaturesByID.removeAll()
-        attachedRealtimeTranslationTurnIDs.removeAll()
-        realtimeTranslationAttachmentCountsByCaptionID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
         draftTranslationInFlightByTurnID.removeAll()
         draftTranslationTasksByTurnID.values.forEach { $0.cancel() }
@@ -1000,7 +958,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
-        attachRealtimeTranslationsToLiveCaptions()
         scheduleCaptionTextTranslationIfNeeded()
     }
 
@@ -1177,7 +1134,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         guard completedAny else { return }
         liveCaptionTurns = liveCaptionStore.turns
-        updateTranslationHealthFromRealtimeStatus()
+        updateCaptionTranslationHealth()
     }
 
     private func shouldScheduleDraftTranslation(for turn: LiveCaptionTurn) -> Bool {
@@ -1280,7 +1237,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func translateCaptionTurn(_ request: CaptionTranslationRequest, using provider: TextTranslationProvider) async {
         defer {
-            updateTranslationHealthFromRealtimeStatus()
+            updateCaptionTranslationHealth()
             pumpCaptionTranslationQueue(using: provider)
         }
         let turn = request.turn
@@ -1565,46 +1522,17 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
-    private func attachRealtimeTranslationsToLiveCaptions() {
-        let unattachedFinalTranslations = liveTranslationTurns
-            .filter { $0.isFinal && !attachedRealtimeTranslationTurnIDs.contains($0.id) }
-        guard !unattachedFinalTranslations.isEmpty else {
-            updateTranslationHealthFromRealtimeStatus()
-            return
-        }
-        for translation in unattachedFinalTranslations {
-            guard let caption = liveCaptionStore.turns.first(where: {
-                $0.isFinal && realtimeTranslationAttachmentCount(for: $0) < $0.sourceSegmentIDs.count
-            }) else {
-                break
-            }
-            liveCaptionStore.appendTranslation(translation.text, toTurnID: caption.id)
-            realtimeTranslationAttachmentCountsByCaptionID[caption.id, default: 0] += 1
-            attachedRealtimeTranslationTurnIDs.insert(translation.id)
-        }
-        liveCaptionTurns = liveCaptionStore.turns
-        updateTranslationHealthFromRealtimeStatus()
-    }
-
-    private func realtimeTranslationAttachmentCount(for caption: LiveCaptionTurn) -> Int {
-        realtimeTranslationAttachmentCountsByCaptionID[caption.id, default: 0]
-    }
-
-    private func updateTranslationHealthFromRealtimeStatus() {
+    private func updateCaptionTranslationHealth() {
         if liveCaptionTurns.contains(where: { $0.translationHealth == .live }) {
             meetingProgressHealth.translation = .live
-            return
-        }
-        switch realtimeTranslationStatus {
-        case .connected:
+        } else if let failed = liveCaptionTurns.first(where: {
+            if case .failed = $0.translationHealth { return true }
+            return false
+        }) {
+            meetingProgressHealth.translation = failed.translationHealth
+        } else if liveCaptionTurns.contains(where: { $0.translationHealth == .pending }) {
             meetingProgressHealth.translation = .pending
-        case .connecting:
-            meetingProgressHealth.translation = .pending
-        case .degraded(let message):
-            meetingProgressHealth.translation = .degraded(message)
-        case .failed(let message):
-            meetingProgressHealth.translation = .failed(message)
-        case .idle:
+        } else {
             meetingProgressHealth.translation = .idle
         }
     }
