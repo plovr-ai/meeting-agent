@@ -736,7 +736,6 @@ private struct TranscriptPaneView: View {
                 if let endedAt = meeting.endedAt {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
                 }
-                CommandCenterChip(title: pipelineDisplayName, tint: CommandCenterPalette.primary)
             }
         }
     }
@@ -788,11 +787,96 @@ private struct TranscriptPaneView: View {
 
     private var pipelineDebugHelpText: String {
         [
+            "Pipeline: \(pipelineDisplayName)",
             "Actual STT Source: \(actualTranscriptionSourceText)",
             "Transcription Link: \(transcriptionLinkText)",
             "Transcription Model: \(transcriptionModelText)",
-            "Preflight: \(preflightText)"
+            "Preflight: \(preflightText)",
+            "Transcript Latency: \(transcriptLatencyText)",
+            "Translation Latency: \(translationLatencyText)"
         ].joined(separator: "\n")
+    }
+
+    private var transcriptLatencyText: String {
+        PipelineLatencySummary(meeting: meeting).transcriptLatencyText
+    }
+
+    private var translationLatencyText: String {
+        PipelineLatencySummary(meeting: meeting).translationLatencyText
+    }
+}
+
+private struct PipelineLatencySummary {
+    let meeting: MeetingRecord
+
+    var transcriptLatencyText: String {
+        guard let event = latestTranscriptEvent,
+              let latency = latencySeconds(for: event) else {
+            return "unavailable"
+        }
+        return format(seconds: latency)
+    }
+
+    var translationLatencyText: String {
+        let events = performanceEvents
+        if let attached = events.last(where: { $0.event == "caption_translation_attached" }),
+           let latency = translationLatencySeconds(for: attached, in: events) {
+            return format(seconds: latency)
+        }
+        if events.contains(where: { $0.event.hasPrefix("caption_translation_") }) {
+            return "attach latency unavailable"
+        }
+        return "unavailable"
+    }
+
+    private var latestTranscriptEvent: PerformanceEvent? {
+        performanceEvents.last(where: { $0.event == "transcript_segment_written" && $0.audioTimeSeconds != nil })
+            ?? performanceEvents.last(where: { $0.event == "stt_segment_received" && $0.audioTimeSeconds != nil })
+    }
+
+    private var performanceEvents: [PerformanceEvent] {
+        guard let url = meeting.performanceEventsURL,
+              let content = try? String(contentsOf: url, encoding: .utf8) else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return content
+            .split(whereSeparator: \.isNewline)
+            .compactMap { line in
+                try? decoder.decode(PerformanceEvent.self, from: Data(line.utf8))
+            }
+    }
+
+    private func latencySeconds(for event: PerformanceEvent) -> TimeInterval? {
+        guard let audioTimeSeconds = event.audioTimeSeconds else {
+            return nil
+        }
+        let expectedWallTime = meeting.startedAt.addingTimeInterval(audioTimeSeconds)
+        return max(0, event.wallTime.timeIntervalSince(expectedWallTime))
+    }
+
+    private func translationLatencySeconds(for attached: PerformanceEvent, in events: [PerformanceEvent]) -> TimeInterval? {
+        let matchingEvents = translationRequestEvents(matching: attached, in: events)
+        guard let start = matchingEvents.last(where: { $0.event == "caption_translation_scheduled" })
+                ?? matchingEvents.last(where: { $0.event == "caption_translation_started" }) else {
+            return nil
+        }
+        return max(0, attached.wallTime.timeIntervalSince(start.wallTime))
+    }
+
+    private func translationRequestEvents(matching attached: PerformanceEvent, in events: [PerformanceEvent]) -> [PerformanceEvent] {
+        guard let requestID = attached.metadata["translationRequestID"] else {
+            return events.filter { $0.wallTime <= attached.wallTime }
+        }
+        return events.filter { $0.metadata["translationRequestID"] == requestID }
+    }
+
+    private func format(seconds: TimeInterval) -> String {
+        if seconds < 1 {
+            return "\(Int((seconds * 1_000).rounded())) ms"
+        }
+        return String(format: "%.1f s", seconds)
     }
 }
 
