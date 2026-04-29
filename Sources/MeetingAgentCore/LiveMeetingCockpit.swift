@@ -423,10 +423,11 @@ public struct LiveCaptionStore: Equatable {
         turns.removeAll { $0.id == turnID }
     }
 
+    @discardableResult
     public mutating func removeSourceSegment(
         _ segmentID: String,
         remainingSegments: [TranscriptSegment]
-    ) {
+    ) -> LiveCaptionTurn? {
         var matchingIndex: Int?
         for index in turns.indices where turns[index].sourceSegmentIDs.contains(segmentID) {
             matchingIndex = index
@@ -434,7 +435,7 @@ public struct LiveCaptionStore: Equatable {
         }
         guard let index = matchingIndex else {
             remove(turnID: segmentID)
-            return
+            return nil
         }
 
         var segmentsByID: [String: TranscriptSegment] = [:]
@@ -450,51 +451,14 @@ public struct LiveCaptionStore: Equatable {
         }
         guard !representedSegments.isEmpty else {
             turns.remove(at: index)
-            return
+            return nil
         }
         turns[index] = rebuiltTurn(
             from: representedSegments,
             preservingID: turns[index].id,
             previous: turns[index]
         )
-    }
-
-    @discardableResult
-    public mutating func replaceInterimSegment(
-        _ previousSegment: TranscriptSegment,
-        with segment: TranscriptSegment
-    ) -> LiveCaptionTurn {
-        guard !segment.isFinal,
-              let index = turns.firstIndex(where: {
-                  $0.sourceSegmentIDs.contains(segment.id) && $0.sourceSegmentIDs.count > 1
-              })
-        else {
-            return append(segment)
-        }
-
-        var updated = turns[index]
-        let previousText = updated.originalText
-        updated.originalText = replacedTranscriptText(
-            in: updated.originalText,
-            previous: previousSegment.text,
-            replacement: segment.text
-        )
-        updated.sourceLocale = segment.language ?? sourceLocale
-        updated.targetLocale = targetLocale
-        updated.isFinal = false
-        updated.captionHealth = .live
-        updated.translationHealth = .pending
-        updated.chunkState = .draft
-        if previousText != updated.originalText {
-            updated.translationRevision += 1
-        }
-        updated.freezeReason = nil
-        updated.displayState = .draft
-        updated.translationState = .draft
-        updated.boundaryReason = nil
-        updated.boundaryStrength = nil
-        turns[index] = updated
-        return updated
+        return turns[index]
     }
 
     @discardableResult
@@ -514,7 +478,7 @@ public struct LiveCaptionStore: Equatable {
             if segment.isFinal {
                 return upsert(turn)
             }
-            return replaceInterimSegment(previousSegment, with: segment)
+            return append(segment)
         }
 
         var updated = turns[index]

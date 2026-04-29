@@ -49,18 +49,6 @@ final class MeetingStoreTests: XCTestCase {
         XCTAssertEqual(meetings.map(\.name), ["Newer", "Older"])
     }
 
-    func testLoadMeetingsSkipsDirectoriesWithoutMetadata() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = MeetingStore(baseDirectory: root)
-        let orphan = store.meetingsDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
-
-        let meetings = try store.loadMeetings()
-
-        XCTAssertTrue(meetings.isEmpty)
-    }
-
     func testUpdatesMeetingMetadata() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-store-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

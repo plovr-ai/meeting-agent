@@ -152,6 +152,69 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(updatedSnapshot.turns.first?.displayState, .draft)
     }
 
+    func testApplySameIDInterimUpdateDoesNotHydrateSingleSegmentTranslationOntoMergedTurn() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        let finalSegment = TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "select German",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["final-1"],
+            plainTextReplacement: nil
+        ))
+
+        let interimSegment = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            speechFinal: false
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, interimSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        let translatedInterimUpdate = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear the customer",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            speechFinal: false,
+            translatedText: "并听客户讲话",
+            translationTargetLocale: "zh-CN",
+            translationIsFinal: false
+        )
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, translatedInterimUpdate]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1", "interim-1"])
+        XCTAssertEqual(snapshot.turns.first?.originalText, "select German and hear the customer")
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .pending)
+    }
+
     func testApplyRemovalAfterProvisionalMergeRestoresFinalTurn() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -201,6 +264,69 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1"])
         XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+
+    func testApplyRemovalAfterProvisionalMergeRestoresRemainingCachedTranslation() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        let finalSegment = TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "select German",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["final-1"],
+            plainTextReplacement: nil
+        ))
+
+        let interimSegment = TranscriptSegment(
+            id: "interim-1",
+            speaker: speaker,
+            text: "select German and hear",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false,
+            speechFinal: false
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment, interimSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        let translatedFinalSegment = TranscriptSegment(
+            id: "final-1",
+            speaker: speaker,
+            text: "select German",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true,
+            translatedText: "选择德语",
+            translationTargetLocale: "zh-CN",
+            translationIsFinal: true
+        )
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [translatedFinalSegment]),
+            changedSegmentIDs: ["interim-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1"])
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "选择德语")
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertEqual(snapshot.turns.first?.translationState, .final)
     }
 
     func testApplyFinalAfterProvisionalMergeUpdatesMergedTurnWithoutDuplicate() async {

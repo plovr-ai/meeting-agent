@@ -146,8 +146,14 @@ public final class LiveCaptionPipeline {
                 hydrateCachedTranslation(from: segment, toTurnID: turn.id)
                 interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
-                store.removeSourceSegment(turnID, remainingSegments: currentSegments)
+                let updatedTurn = store.removeSourceSegment(turnID, remainingSegments: currentSegments)
                 interimSegmentsByID[turnID] = nil
+                if let updatedTurn,
+                   updatedTurn.sourceSegmentIDs.count == 1,
+                   let sourceSegmentID = updatedTurn.sourceSegmentIDs.first,
+                   let remainingSegment = currentSegments.first(where: { $0.id == sourceSegmentID }) {
+                    hydrateCachedTranslation(from: remainingSegment, toTurnID: updatedTurn.id)
+                }
             }
         }
     }
@@ -157,6 +163,7 @@ public final class LiveCaptionPipeline {
               !translatedText.isEmpty,
               let targetLocale = segment.translationTargetLocale?.trimmingCharacters(in: .whitespacesAndNewlines),
               let current = store.turns.first(where: { $0.id == turnID }),
+              current.sourceSegmentIDs == [segment.id],
               targetLocale == current.targetLocale
         else {
             return

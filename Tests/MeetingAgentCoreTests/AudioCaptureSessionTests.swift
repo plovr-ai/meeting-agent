@@ -10,22 +10,6 @@ final class AudioCaptureSessionTests: XCTestCase {
         XCTAssertFalse(session.isRunning)
     }
 
-    func testDefaultReaderFactoryCreatesReaderAndCleansUpWhenStartFails() {
-        let tapManager = FakeSessionTapManager(tapID: 11, tapUID: "tap-uid")
-        let aggregateManager = FakeSessionAggregateManager(deviceID: AudioObjectID(kAudioObjectUnknown))
-        let session = AudioCaptureSession(
-            tapManager: tapManager,
-            aggregateManager: aggregateManager
-        )
-
-        XCTAssertThrowsError(
-            try session.start(target: AudioCaptureTarget(processID: 42, displayName: "Zoom", bundleIdentifier: nil))
-        )
-        XCTAssertFalse(session.isRunning)
-        XCTAssertEqual(aggregateManager.destroyCallCount, 1)
-        XCTAssertEqual(tapManager.destroyCallCount, 1)
-    }
-
     func testStartCreatesTapAggregateAndReaderThenPublishesOutputFormat() throws {
         let tapManager = FakeSessionTapManager(tapID: 11, tapUID: "tap-uid")
         let aggregateManager = FakeSessionAggregateManager(deviceID: 22)

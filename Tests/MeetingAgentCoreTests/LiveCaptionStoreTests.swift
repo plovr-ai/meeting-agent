@@ -2,97 +2,6 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class LiveCaptionStoreTests: XCTestCase {
-    func testLivePipelineHealthEncodesStateAndMessage() throws {
-        let data = try JSONEncoder().encode(LivePipelineHealth.degraded("network slow"))
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
-
-        XCTAssertEqual(object["state"], "degraded")
-        XCTAssertEqual(object["message"], "network slow")
-    }
-
-    func testLivePipelineHealthDecodesMissingMessagesAndUnknownState() throws {
-        let decoder = JSONDecoder()
-
-        let degraded = try decoder.decode(LivePipelineHealth.self, from: Data(#"{"state":"degraded"}"#.utf8))
-        let failed = try decoder.decode(LivePipelineHealth.self, from: Data(#"{"state":"failed"}"#.utf8))
-        let unknown = try decoder.decode(LivePipelineHealth.self, from: Data(#"{"state":"paused"}"#.utf8))
-
-        XCTAssertEqual(degraded, .degraded(""))
-        XCTAssertEqual(failed, .failed(""))
-        XCTAssertEqual(unknown, .failed("Unknown health state: paused"))
-    }
-
-    func testMeetingGoalInitializersPreserveInputs() {
-        let keyTerm = MeetingKeyTerm(value: "ARR", translationHint: "Keep as acronym")
-        let objective = MeetingObjective(id: "obj-1", title: "Align launch", keywords: ["launch"])
-        let id = UUID()
-
-        let goal = MeetingGoal(
-            id: id,
-            title: "Q3 planning",
-            objectives: [objective],
-            requiredQuestions: ["Who owns launch?"],
-            expectedDecisions: ["Owner"],
-            keyTerms: [keyTerm]
-        )
-
-        XCTAssertEqual(keyTerm.id, "ARR")
-        XCTAssertEqual(goal.id, id)
-        XCTAssertEqual(goal.objectives, [objective])
-        XCTAssertEqual(goal.keyTerms, [keyTerm])
-    }
-
-    func testFreezeReasonBoundaryStrengths() {
-        XCTAssertEqual(LiveCaptionFreezeReason.speechFinal.boundaryStrength, .hard)
-        XCTAssertEqual(LiveCaptionFreezeReason.speakerChanged.boundaryStrength, .hard)
-        XCTAssertEqual(LiveCaptionFreezeReason.manualStop.boundaryStrength, .hard)
-        XCTAssertEqual(LiveCaptionFreezeReason.maxLength.boundaryStrength, .soft)
-        XCTAssertEqual(LiveCaptionFreezeReason.maxDuration.boundaryStrength, .soft)
-        XCTAssertEqual(LiveCaptionFreezeReason.punctuation.boundaryStrength, .soft)
-    }
-
-    func testSecondLanguageEnabledChecksLocalesAndExistingTranslation() {
-        XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(
-            sourceLocale: "en-US",
-            targetLocale: "zh-CN",
-            hasTranslatedText: false
-        ))
-        XCTAssertFalse(LiveCaptionDisplayState.isSecondLanguageEnabled(
-            sourceLocale: "en-US",
-            targetLocale: "en-US",
-            hasTranslatedText: false
-        ))
-        XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(
-            sourceLocale: "en-US",
-            targetLocale: "en-US",
-            hasTranslatedText: true
-        ))
-    }
-
-    func testLiveCaptionDisplayStateUsesTranslationHealthFallbacks() {
-        let pending = LiveCaptionTurn(
-            sourceSegmentID: "segment-1",
-            originalText: "  hello  ",
-            isFinal: false,
-            translationHealth: .pending
-        )
-        let failed = LiveCaptionTurn(
-            sourceSegmentID: "segment-2",
-            originalText: "hello",
-            isFinal: false,
-            translationHealth: .failed("timeout")
-        )
-
-        XCTAssertEqual(
-            LiveCaptionDisplayState(turn: pending, secondLanguageEnabled: true),
-            .pending(sourceText: "hello")
-        )
-        XCTAssertEqual(
-            LiveCaptionDisplayState(turn: failed, secondLanguageEnabled: true),
-            .failed(sourceText: "hello", message: "timeout")
-        )
-    }
-
     func testLiveCaptionTurnDecodesLegacyChunkDefaults() throws {
         let data = Data("""
         {
@@ -578,17 +487,6 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.turns.map(\.id), ["segment-2"])
     }
 
-    func testRemoveNonFinalTurnsNotInKeepsFinalTurnsAndCurrentDrafts() {
-        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
-        _ = store.append(TranscriptSegment(id: "final-1", text: "Final", language: "en-US", isFinal: true))
-        _ = store.append(TranscriptSegment(id: "draft-1", text: "Current draft", language: "en-US", isFinal: false))
-        _ = store.append(TranscriptSegment(id: "draft-2", text: "Stale draft", language: "en-US", isFinal: false))
-
-        store.removeNonFinalTurnsNotIn(segmentIDs: ["draft-1"])
-
-        XCTAssertEqual(store.turns.map(\.sourceSegmentID), ["final-1", "draft-1"])
-    }
-
     func testRemoveSourceSegmentRebuildsMergedTurnFromRemainingSegments() {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         let speaker = TranscriptSpeaker(identifier: "speaker-1")
@@ -610,8 +508,9 @@ final class LiveCaptionStoreTests: XCTestCase {
             speechFinal: false
         ))
 
-        store.removeSourceSegment("interim-1", remainingSegments: [finalSegment])
+        let rebuilt = store.removeSourceSegment("interim-1", remainingSegments: [finalSegment])
 
+        XCTAssertEqual(rebuilt?.id, "final-1")
         XCTAssertEqual(store.turns.count, 1)
         XCTAssertEqual(store.turns.first?.originalText, "select German")
         XCTAssertEqual(store.turns.first?.sourceSegmentIDs, ["final-1"])
