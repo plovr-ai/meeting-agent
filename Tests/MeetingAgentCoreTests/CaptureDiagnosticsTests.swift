@@ -31,10 +31,37 @@ final class CaptureDiagnosticsTests: XCTestCase {
         XCTAssertEqual(diagnostics.silentDurationSeconds, 0)
         XCTAssertEqual(diagnostics.bufferBacklog, 3)
         XCTAssertEqual(diagnostics.droppedFrameCount, 2)
+        XCTAssertEqual(diagnostics.startupReplayFrameCount, 0)
+        XCTAssertEqual(diagnostics.startupReplayDurationSeconds, 0)
+        XCTAssertEqual(diagnostics.startupReplayDroppedFrameCount, 0)
         XCTAssertEqual(diagnostics.targetProcessID, 42)
         XCTAssertEqual(diagnostics.targetDisplayName, "Google Chrome")
         XCTAssertEqual(diagnostics.endedReason, .saved)
         XCTAssertEqual(diagnostics.status, .recordingSaved)
+    }
+
+    func testDiagnosticsTrackStartupReplayFrames() {
+        let tracker = CaptureDiagnosticsTracker(
+            target: AudioCaptureTarget(
+                processID: 42,
+                displayName: "Google Chrome",
+                bundleIdentifier: "com.google.Chrome"
+            )
+        )
+        let frame = AudioFrame(
+            pcm: int16PCM([1, 2, 3, 4]),
+            sampleRate: 8_000,
+            channelCount: 2,
+            timestampNanos: 1
+        )
+
+        tracker.recordStartupReplay(frames: [frame])
+        tracker.recordDroppedStartupReplayFrames(3)
+
+        let diagnostics = tracker.snapshot()
+        XCTAssertEqual(diagnostics.startupReplayFrameCount, 1)
+        XCTAssertEqual(diagnostics.startupReplayDurationSeconds, 2.0 / 8_000.0, accuracy: 0.000001)
+        XCTAssertEqual(diagnostics.startupReplayDroppedFrameCount, 3)
     }
 
     func testDiagnosticsMarkSilentCapturedAudio() {
@@ -129,6 +156,32 @@ final class CaptureDiagnosticsTests: XCTestCase {
         let data = try Data(contentsOf: url)
         let decoded = try JSONDecoder.meetingAgent.decode(CaptureDiagnostics.self, from: data)
         XCTAssertEqual(decoded, diagnostics)
+    }
+
+    func testDiagnosticsDecodesLegacyJSONWithoutStartupReplayFields() throws {
+        let data = Data("""
+        {
+          "framesCaptured": 10,
+          "durationSeconds": 0.1,
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "averageLevel": 0.2,
+          "peakLevel": 0.8,
+          "silentDurationSeconds": 0,
+          "bufferBacklog": 0,
+          "droppedFrameCount": 0,
+          "targetProcessID": 99,
+          "targetDisplayName": "Google Chrome",
+          "endedReason": "saved",
+          "status": "recordingSaved"
+        }
+        """.utf8)
+
+        let decoded = try JSONDecoder.meetingAgent.decode(CaptureDiagnostics.self, from: data)
+
+        XCTAssertEqual(decoded.startupReplayFrameCount, 0)
+        XCTAssertEqual(decoded.startupReplayDurationSeconds, 0)
+        XCTAssertEqual(decoded.startupReplayDroppedFrameCount, 0)
     }
 
     private func int16PCM(_ samples: [Int16]) -> Data {

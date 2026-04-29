@@ -27,6 +27,9 @@ public struct CaptureDiagnostics: Codable, Equatable {
     public let silentDurationSeconds: Double
     public let bufferBacklog: Int
     public let droppedFrameCount: Int
+    public let startupReplayFrameCount: Int
+    public let startupReplayDurationSeconds: Double
+    public let startupReplayDroppedFrameCount: Int
     public let targetProcessID: pid_t
     public let targetDisplayName: String
     public let endedReason: CaptureEndedReason?
@@ -43,6 +46,9 @@ public struct CaptureDiagnostics: Codable, Equatable {
         silentDurationSeconds: Double,
         bufferBacklog: Int,
         droppedFrameCount: Int,
+        startupReplayFrameCount: Int = 0,
+        startupReplayDurationSeconds: Double = 0,
+        startupReplayDroppedFrameCount: Int = 0,
         targetProcessID: pid_t,
         targetDisplayName: String,
         endedReason: CaptureEndedReason?,
@@ -58,10 +64,56 @@ public struct CaptureDiagnostics: Codable, Equatable {
         self.silentDurationSeconds = silentDurationSeconds
         self.bufferBacklog = bufferBacklog
         self.droppedFrameCount = droppedFrameCount
+        self.startupReplayFrameCount = startupReplayFrameCount
+        self.startupReplayDurationSeconds = startupReplayDurationSeconds
+        self.startupReplayDroppedFrameCount = startupReplayDroppedFrameCount
         self.targetProcessID = targetProcessID
         self.targetDisplayName = targetDisplayName
         self.endedReason = endedReason
         self.status = status
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case framesCaptured
+        case durationSeconds
+        case lastFrameAt
+        case sampleRate
+        case channelCount
+        case averageLevel
+        case peakLevel
+        case silentDurationSeconds
+        case bufferBacklog
+        case droppedFrameCount
+        case startupReplayFrameCount
+        case startupReplayDurationSeconds
+        case startupReplayDroppedFrameCount
+        case targetProcessID
+        case targetDisplayName
+        case endedReason
+        case status
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            framesCaptured: try container.decode(Int.self, forKey: .framesCaptured),
+            durationSeconds: try container.decode(Double.self, forKey: .durationSeconds),
+            lastFrameAt: try container.decodeIfPresent(Date.self, forKey: .lastFrameAt),
+            sampleRate: try container.decode(Double.self, forKey: .sampleRate),
+            channelCount: try container.decode(Int.self, forKey: .channelCount),
+            averageLevel: try container.decode(Double.self, forKey: .averageLevel),
+            peakLevel: try container.decode(Double.self, forKey: .peakLevel),
+            silentDurationSeconds: try container.decode(Double.self, forKey: .silentDurationSeconds),
+            bufferBacklog: try container.decode(Int.self, forKey: .bufferBacklog),
+            droppedFrameCount: try container.decode(Int.self, forKey: .droppedFrameCount),
+            startupReplayFrameCount: try container.decodeIfPresent(Int.self, forKey: .startupReplayFrameCount) ?? 0,
+            startupReplayDurationSeconds: try container.decodeIfPresent(Double.self, forKey: .startupReplayDurationSeconds) ?? 0,
+            startupReplayDroppedFrameCount: try container.decodeIfPresent(Int.self, forKey: .startupReplayDroppedFrameCount) ?? 0,
+            targetProcessID: try container.decode(pid_t.self, forKey: .targetProcessID),
+            targetDisplayName: try container.decode(String.self, forKey: .targetDisplayName),
+            endedReason: try container.decodeIfPresent(CaptureEndedReason.self, forKey: .endedReason),
+            status: try container.decode(CaptureStatus.self, forKey: .status)
+        )
     }
 
     public func write(to url: URL) throws {
@@ -85,6 +137,9 @@ public final class CaptureDiagnosticsTracker {
     private var silentDurationSeconds = 0.0
     private var bufferBacklog = 0
     private var droppedFrameCount = 0
+    private var startupReplayFrameCount = 0
+    private var startupReplayDurationSeconds = 0.0
+    private var startupReplayDroppedFrameCount = 0
     private var endedReason: CaptureEndedReason?
     private var status: CaptureStatus = .preparingCapture
 
@@ -132,6 +187,20 @@ public final class CaptureDiagnosticsTracker {
         }
     }
 
+    public func recordStartupReplay(frames: [AudioFrame]) {
+        startupReplayFrameCount += frames.count
+        for frame in frames {
+            let sampleCount = frame.pcm.count / MemoryLayout<Int16>.size
+            guard sampleCount > 0, frame.sampleRate > 0 else { continue }
+            let sampleFrames = sampleCount / max(1, frame.channelCount)
+            startupReplayDurationSeconds += Double(sampleFrames) / frame.sampleRate
+        }
+    }
+
+    public func recordDroppedStartupReplayFrames(_ count: Int) {
+        startupReplayDroppedFrameCount += max(0, count)
+    }
+
     public func finish(endedReason: CaptureEndedReason) {
         guard self.endedReason == nil else { return }
         self.endedReason = endedReason
@@ -163,6 +232,9 @@ public final class CaptureDiagnosticsTracker {
             silentDurationSeconds: silentDurationSeconds,
             bufferBacklog: bufferBacklog,
             droppedFrameCount: droppedFrameCount,
+            startupReplayFrameCount: startupReplayFrameCount,
+            startupReplayDurationSeconds: startupReplayDurationSeconds,
+            startupReplayDroppedFrameCount: startupReplayDroppedFrameCount,
             targetProcessID: target.processID,
             targetDisplayName: target.displayName,
             endedReason: endedReason,

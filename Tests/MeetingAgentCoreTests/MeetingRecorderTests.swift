@@ -197,6 +197,58 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(fixture.transcriber.appendedFrames, [frame])
     }
 
+    func testDrainDuringWriterSetupDoesNotDropStartupAudio() async throws {
+        let fixture = try RecorderFixture()
+        let frame = AudioFrame(pcm: Data([8, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
+        fixture.writerFactory.onMakeWriter = {
+            fixture.session.frameBuffer.push(frame)
+            try? fixture.recorder.drainFrames()
+        }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        try fixture.recorder.drainFrames()
+
+        XCTAssertEqual(fixture.writer.writtenFrames, [frame])
+        XCTAssertEqual(fixture.transcriber.appendedFrames, [frame])
+    }
+
+    func testStartupTranscriptionReplayOverflowIsRecordedInDiagnostics() async throws {
+        let fixture = try RecorderFixture()
+        fixture.transcriberFactory.shouldSuspend = true
+        let record = try fixture.recorder.prepareRecord(for: fixture.target)
+        let frames = (0..<3_008).map { index in
+            AudioFrame(
+                pcm: Data([UInt8(index % 255), 0]),
+                sampleRate: 16_000,
+                channelCount: 1,
+                timestampNanos: UInt64(index + 1)
+            )
+        }
+
+        let startTask = Task {
+            try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        }
+        try await waitFor { fixture.transcriberFactory.requests.count == 1 }
+        for frame in frames {
+            fixture.session.frameBuffer.push(frame)
+            try fixture.recorder.drainFrames()
+        }
+
+        fixture.transcriberFactory.resume()
+        try await startTask.value
+        _ = try fixture.recorder.stopRecording()
+
+        let diagnostics = try JSONDecoder.meetingAgent.decode(
+            CaptureDiagnostics.self,
+            from: Data(contentsOf: XCTUnwrap(record.diagnosticsURL))
+        )
+        XCTAssertEqual(fixture.writer.writtenFrames.count, 3_008)
+        XCTAssertEqual(fixture.transcriber.appendedFrames.count, 3_000)
+        XCTAssertEqual(diagnostics.startupReplayFrameCount, 3_000)
+        XCTAssertEqual(diagnostics.startupReplayDroppedFrameCount, 8)
+    }
+
     func testStartRecordingWritesDiagnosticsWhenCaptureStartFails() async throws {
         let fixture = try RecorderFixture()
         fixture.session.startError = ProbeError.coreAudio("start failed")
@@ -307,6 +359,7 @@ private final class FakeAudioFrameWriterFactory {
     }
 
     var requests: [Request] = []
+    var onMakeWriter: (() -> Void)?
     private let writer: FakeAudioFrameWriter
 
     init(writer: FakeAudioFrameWriter) {
@@ -315,6 +368,7 @@ private final class FakeAudioFrameWriterFactory {
 
     func makeWriter(url: URL, sampleRate: UInt32, channelCount: UInt16) throws -> AudioFrameWriting {
         requests.append(Request(url: url, sampleRate: sampleRate, channelCount: channelCount))
+        onMakeWriter?()
         return writer
     }
 }
