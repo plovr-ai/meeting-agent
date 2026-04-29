@@ -1020,6 +1020,10 @@ private struct BilingualTranscriptGroup: View {
         group.speaker.label ?? group.speaker.identifier ?? "Speaker"
     }
 
+    private var speakerStartTimeText: String {
+        group.startedAt.formatted(date: .omitted, time: .standard)
+    }
+
     @ViewBuilder
     private var speakerLabel: some View {
         if let editSpeaker {
@@ -1029,8 +1033,13 @@ private struct BilingualTranscriptGroup: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Text(speakerDisplayName)
-                        .commandCenterMono()
+                    HStack(spacing: 6) {
+                        Text(speakerDisplayName)
+                            .commandCenterMono()
+                        Text(speakerStartTimeText)
+                            .font(CommandCenterTypography.caption)
+                            .foregroundStyle(CommandCenterPalette.secondaryText)
+                    }
                     Image(systemName: "chevron.down")
                         .font(CommandCenterTypography.caption)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
@@ -1040,8 +1049,13 @@ private struct BilingualTranscriptGroup: View {
             .buttonStyle(.plain)
             .help("Edit speaker name")
         } else {
-            Text(speakerDisplayName)
-                .commandCenterMono()
+            HStack(spacing: 6) {
+                Text(speakerDisplayName)
+                    .commandCenterMono()
+                Text(speakerStartTimeText)
+                    .font(CommandCenterTypography.caption)
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+            }
         }
     }
 }

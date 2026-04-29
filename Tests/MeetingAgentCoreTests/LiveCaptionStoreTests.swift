@@ -86,6 +86,21 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(groups[1].turns.map(\.sourceSegmentID), ["s3"])
     }
 
+    func testSpeakerGroupStartedAtUsesFirstTurnTimestamp() {
+        let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
+        let firstTime = Date(timeIntervalSince1970: 100)
+        let secondTime = Date(timeIntervalSince1970: 140)
+
+        let groups = LiveCaptionSpeakerGroup.groups(from: [
+            LiveCaptionTurn(sourceSegmentID: "s1", speaker: speaker, originalText: "First block.", isFinal: true, createdAt: firstTime),
+            LiveCaptionTurn(sourceSegmentID: "s2", speaker: speaker, originalText: "Second block.", isFinal: true, createdAt: secondTime)
+        ])
+
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].startedAt, firstTime)
+        XCTAssertEqual(groups[0].turns.map(\.createdAt), [firstTime, secondTime])
+    }
+
     func testSpeakerGroupsStartNewGroupWhenSameSpeakerReturnsAfterDifferentSpeaker() {
         let userA = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
         let userB = TranscriptSpeaker(identifier: "speaker-2", label: "User B")
