@@ -4,7 +4,8 @@ import SwiftUI
 
 private enum MainWindowDestination: Hashable {
     case today
-    case recordings
+    case thisWeek
+    case history
     case workspace
     case settings
 }
@@ -24,10 +25,15 @@ struct MainWindowView: View {
                     }
                     .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .today))
 
-                    Button("Recordings") {
-                        destination = .recordings
+                    Button("This Week") {
+                        destination = .thisWeek
                     }
-                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .recordings))
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .thisWeek))
+
+                    Button("History") {
+                        destination = .history
+                    }
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .history))
                 }
                 .padding(12)
 
@@ -39,20 +45,27 @@ struct MainWindowView: View {
                     }
                 )) {
                     Section {
-                        ForEach(viewModel.meetings) { meeting in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(meeting.name)
-                                    .font(CommandCenterTypography.title)
-                                    .foregroundStyle(CommandCenterPalette.text)
-                                Text(meeting.startedAt, style: .date)
-                                    .font(CommandCenterTypography.caption)
-                                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                        if meetings(for: destination).isEmpty {
+                            Text(emptyMeetingListText(for: destination))
+                                .font(CommandCenterTypography.caption)
+                                .foregroundStyle(CommandCenterPalette.secondaryText)
+                                .padding(.vertical, 4)
+                        } else {
+                            ForEach(meetings(for: destination)) { meeting in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(meeting.name)
+                                        .font(CommandCenterTypography.title)
+                                        .foregroundStyle(CommandCenterPalette.text)
+                                    Text(meeting.startedAt, style: .date)
+                                        .font(CommandCenterTypography.caption)
+                                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                                }
+                                .padding(.vertical, 4)
+                                .tag(Optional(meeting.id))
                             }
-                            .padding(.vertical, 4)
-                            .tag(Optional(meeting.id))
                         }
                     } header: {
-                        Text("Recent Recordings")
+                        Text(meetingListTitle(for: destination))
                             .foregroundStyle(CommandCenterPalette.secondaryText)
                     }
                 }
@@ -93,7 +106,7 @@ struct MainWindowView: View {
                 )
             case .today:
                 TodayAgendaView(
-                    meetings: viewModel.meetings,
+                    meetings: meetings(for: .today),
                     selectedMeetingID: viewModel.selectedMeetingID,
                     activeMeetingID: viewModel.activeMeetingID,
                     pendingCandidate: viewModel.pendingCandidate,
@@ -128,7 +141,7 @@ struct MainWindowView: View {
                         viewModel.selectMeeting(created.id)
                     }
                 )
-            case .recordings, .workspace:
+            case .thisWeek, .history, .workspace:
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
                     speechConfiguration: viewModel.speechConfiguration,
@@ -231,6 +244,66 @@ struct MainWindowView: View {
                 .fill(CommandCenterPalette.border)
                 .frame(height: 1)
         }
+    }
+
+    private func meetings(for destination: MainWindowDestination) -> [MeetingRecord] {
+        switch destination {
+        case .today:
+            return viewModel.meetings.filter { isToday($0) }
+        case .thisWeek:
+            return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }
+        case .history:
+            return viewModel.meetings.filter { !isThisWeek($0) }
+        case .workspace:
+            return viewModel.meetings
+        case .settings:
+            return []
+        }
+    }
+
+    private func meetingListTitle(for destination: MainWindowDestination) -> String {
+        switch destination {
+        case .today:
+            return "Today"
+        case .thisWeek:
+            return "This Week"
+        case .history:
+            return "History"
+        case .workspace:
+            return "All Meetings"
+        case .settings:
+            return "Meetings"
+        }
+    }
+
+    private func emptyMeetingListText(for destination: MainWindowDestination) -> String {
+        switch destination {
+        case .today:
+            return "No meetings today"
+        case .thisWeek:
+            return "No meetings this week"
+        case .history:
+            return "No meeting history"
+        case .workspace:
+            return "No meetings"
+        case .settings:
+            return ""
+        }
+    }
+
+    private func isToday(_ meeting: MeetingRecord, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let meetingDate = meetingDisplayDate(meeting)
+        return calendar.isDate(meetingDate, inSameDayAs: now)
+    }
+
+    private func isThisWeek(_ meeting: MeetingRecord, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let meetingDate = meetingDisplayDate(meeting)
+        return calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)
+            && calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)
+    }
+
+    private func meetingDisplayDate(_ meeting: MeetingRecord) -> Date {
+        meeting.scheduledStartAt ?? meeting.startedAt
     }
 
     private func copySummary(for meeting: MeetingRecord) {
