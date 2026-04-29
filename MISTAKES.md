@@ -413,3 +413,19 @@ After async recorder startup completes, refresh the affected meeting from the st
 When a lower-level service mutates persisted model state during an async operation, update the caller's in-memory model before returning to the UI.
 
 ---
+
+## [73] Match latency calculations to event time bases
+
+**Date**: 2026-04-29
+**Category**: wrong-assumption
+
+### What went wrong
+The first pipeline hover latency summary reused the transcript audio-time latency calculation for caption translation events, but caption translation events only carry wall-clock times and request metadata.
+
+### Correct approach
+Transcript latency can compare event wall time against meeting start plus audio time. Translation latency should match events by `translationRequestID` and calculate scheduled or started wall-clock time to attached wall-clock time.
+
+### How to avoid
+Before summarizing performance events, inspect each event family for its actual timestamp fields and correlation keys instead of applying one latency formula globally.
+
+---
