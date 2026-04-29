@@ -38,7 +38,7 @@ public final class TranscriptFileWriter {
         guard !isClosed else { return }
         var document = try Self.readDocument(from: structuredURL)
         if let index = document.segments.firstIndex(where: { $0.id == segment.id }) {
-            document.segments[index] = segment
+            document.segments[index] = Self.segment(segment, preservingTranslationFrom: document.segments[index])
             document.segments.removeAll {
                 $0.id != segment.id && Self.shouldReplaceExistingSegment($0, with: segment)
             }
@@ -121,7 +121,10 @@ public final class TranscriptFileWriter {
                 speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
-                timingSource: segment.timingSource
+                timingSource: segment.timingSource,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal
             )
         }
         let updatedDocument = TranscriptDocument(version: document.version, segments: updatedSegments)
@@ -163,7 +166,61 @@ public final class TranscriptFileWriter {
                 speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
-                timingSource: segment.timingSource
+                timingSource: segment.timingSource,
+                translatedText: nil,
+                translationTargetLocale: nil,
+                translationIsFinal: nil
+            )
+        }
+        guard didUpdateSegment else {
+            throw ProbeError.invalidArguments("Transcript segment not found")
+        }
+        let updatedDocument = TranscriptDocument(version: document.version, segments: updatedSegments)
+        let data = try JSONEncoder.meetingAgent.encode(updatedDocument)
+        try data.write(to: structuredURL, options: .atomic)
+        if let textURL {
+            try (TranscriptFormatter.render(updatedSegments) + "\n").write(to: textURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    public static func updateSegmentTranslation(
+        segmentID: String,
+        text: String,
+        targetLocale: String,
+        isFinal: Bool,
+        textURL: URL?,
+        structuredURL: URL?
+    ) throws {
+        guard let structuredURL else {
+            throw MeetingExportError.missingArtifact("structured transcript")
+        }
+        let normalizedSegmentID = segmentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTargetLocale = targetLocale.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSegmentID.isEmpty, !normalizedText.isEmpty, !normalizedTargetLocale.isEmpty else {
+            throw ProbeError.invalidArguments("Segment ID, translated text, and target locale are required")
+        }
+        let document = try readDocument(from: structuredURL)
+        var didUpdateSegment = false
+        let updatedSegments = document.segments.map { segment in
+            guard segment.id == normalizedSegmentID else { return segment }
+            didUpdateSegment = true
+            return TranscriptSegment(
+                id: segment.id,
+                speaker: segment.speaker,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                text: segment.text,
+                language: segment.language,
+                sourceProvider: segment.sourceProvider,
+                isFinal: segment.isFinal,
+                speechFinal: segment.speechFinal,
+                confidence: segment.confidence,
+                createdAt: segment.createdAt,
+                timingSource: segment.timingSource,
+                translatedText: normalizedText,
+                translationTargetLocale: normalizedTargetLocale,
+                translationIsFinal: isFinal
             )
         }
         guard didUpdateSegment else {
@@ -346,7 +403,10 @@ public final class TranscriptFileWriter {
                     speechFinal: current.speechFinal,
                     confidence: current.confidence,
                     createdAt: current.createdAt,
-                    timingSource: current.timingSource
+                    timingSource: current.timingSource,
+                    translatedText: current.translatedText,
+                    translationTargetLocale: current.translationTargetLocale,
+                    translationIsFinal: current.translationIsFinal
                 )
             }
             output.append(current)
@@ -469,8 +529,41 @@ public final class TranscriptFileWriter {
                 speechFinal: segment.speechFinal,
                 confidence: segment.confidence,
                 createdAt: segment.createdAt,
-                timingSource: segment.timingSource
+                timingSource: segment.timingSource,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal
             )
         }
+    }
+
+    private static func segment(
+        _ incoming: TranscriptSegment,
+        preservingTranslationFrom existing: TranscriptSegment
+    ) -> TranscriptSegment {
+        guard incoming.text == existing.text,
+              incoming.translatedText == nil,
+              incoming.translationTargetLocale == nil,
+              incoming.translationIsFinal == nil
+        else {
+            return incoming
+        }
+        return TranscriptSegment(
+            id: incoming.id,
+            speaker: incoming.speaker,
+            startTimeSeconds: incoming.startTimeSeconds,
+            endTimeSeconds: incoming.endTimeSeconds,
+            text: incoming.text,
+            language: incoming.language,
+            sourceProvider: incoming.sourceProvider,
+            isFinal: incoming.isFinal,
+            speechFinal: incoming.speechFinal,
+            confidence: incoming.confidence,
+            createdAt: incoming.createdAt,
+            timingSource: incoming.timingSource,
+            translatedText: existing.translatedText,
+            translationTargetLocale: existing.translationTargetLocale,
+            translationIsFinal: existing.translationIsFinal
+        )
     }
 }

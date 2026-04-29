@@ -459,6 +459,94 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requests.count, 1)
     }
 
+    func testReopenedMeetingHydratesPersistedCaptionTranslationWithoutProviderRequest() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+                text: "Alex is the launch owner.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let firstProvider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "Alex 是上线负责人。"])
+        let firstViewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in firstProvider },
+            processTargetsProvider: { [] }
+        )
+        try firstViewModel.loadMeetings()
+        firstViewModel.selectMeeting(record.id)
+
+        firstViewModel.drainRecordingFrames()
+        try await waitFor { firstViewModel.liveCaptionTurns.first?.translatedText == "Alex 是上线负责人。" }
+
+        var document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(document.segments.first?.translatedText, "Alex 是上线负责人。")
+        XCTAssertEqual(document.segments.first?.translationTargetLocale, "zh-CN")
+        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
+
+        let reopenProvider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "should not be requested"])
+        let reopenedViewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in reopenProvider },
+            processTargetsProvider: { [] }
+        )
+        try reopenedViewModel.loadMeetings()
+        reopenedViewModel.selectMeeting(record.id)
+        reopenedViewModel.drainRecordingFrames()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(reopenedViewModel.liveCaptionTurns.first?.translatedText, "Alex 是上线负责人。")
+        XCTAssertEqual(reopenedViewModel.liveCaptionTurns.first?.translationHealth, .live)
+        XCTAssertEqual(reopenedViewModel.liveCaptionTurns.first?.translationState, .final)
+        XCTAssertTrue(reopenProvider.requests.isEmpty)
+
+        document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(document.segments.first?.translatedText, "Alex 是上线负责人。")
+    }
+
+    func testReopenedHardFinalCaptionDoesNotTreatDraftCacheAsComplete() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+                text: "Alex is the launch owner.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true,
+                translatedText: "draft translation",
+                translationTargetLocale: "zh-CN",
+                translationIsFinal: false
+            )
+        ])
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "最终翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        viewModel.drainRecordingFrames()
+
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
+        XCTAssertEqual(provider.requests.count, 1)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationState, .final)
+    }
+
     func testCaptionTranslationPerformanceEventsShareRequestID() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
