@@ -109,6 +109,51 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
     }
 
+    func testWhisperValidationFindsPackagedModelWhenNotExplicitlyConfigured() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("speech-config-packaged-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let binaryURL = directory.appendingPathComponent("whisper-cli")
+        FileManager.default.createFile(atPath: binaryURL.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+
+        let resourcesURL = directory.appendingPathComponent("Resources", isDirectory: true)
+        let modelsURL = resourcesURL.appendingPathComponent("WhisperModels", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelsURL, withIntermediateDirectories: true)
+        let modelURL = modelsURL.appendingPathComponent("ggml-small.bin")
+        FileManager.default.createFile(atPath: modelURL.path, contents: Data())
+
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            translationExecutionMode: .local
+        )
+        let environment = ["PATH": directory.path]
+
+        XCTAssertEqual(
+            configuration.validationStatus(
+                environment: environment,
+                fileManager: .default,
+                bundledResourceURL: resourcesURL,
+                developmentResourceSearchRoots: []
+            ),
+            .available
+        )
+        XCTAssertEqual(
+            try WhisperConfiguration.fromAppConfiguration(
+                configuration,
+                environment: environment,
+                fileManager: .default,
+                bundledResourceURL: resourcesURL,
+                developmentResourceSearchRoots: []
+            ).modelURL,
+            modelURL
+        )
+    }
+
     func testLocalProviderDoesNotRequireWhisperPaths() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .local,

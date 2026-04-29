@@ -10,6 +10,25 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(WhisperLanguageMapper.languageCode(for: "ko-KR"), "ko")
     }
 
+    func testLanguageMapperForcesEnglishForEnglishOnlyModel() {
+        let directory = FileManager.default.temporaryDirectory
+
+        XCTAssertEqual(
+            WhisperLanguageMapper.languageCode(
+                for: "zh-CN",
+                modelURL: directory.appendingPathComponent("ggml-small.en.bin")
+            ),
+            "en"
+        )
+        XCTAssertEqual(
+            WhisperLanguageMapper.languageCode(
+                for: "zh-CN",
+                modelURL: directory.appendingPathComponent("ggml-small.bin")
+            ),
+            "zh"
+        )
+    }
+
     func testLanguageMapperFallsBackToPrimaryLanguageComponent() {
         XCTAssertEqual(WhisperLanguageMapper.languageCode(for: "pt-BR"), "pt")
         XCTAssertEqual(WhisperLanguageMapper.languageCode(for: "de_DE"), "de")
@@ -289,6 +308,39 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(runner.inputWavURL, audioURL)
     }
 
+    func testTranscribesExistingAudioFileWithEnglishLanguageWhenModelIsEnglishOnly() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-retry-en-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let audioURL = directory.appendingPathComponent("audio.wav")
+        let transcriptURL = directory.appendingPathComponent("transcript.txt")
+        FileManager.default.createFile(atPath: audioURL.path, contents: Data([0x52, 0x49, 0x46, 0x46]))
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.en.bin")
+        )
+        let runner = OutputWritingWhisperProcessRunner(outputText: "english transcript\n")
+
+        try await WhisperSpeechTranscriptionProvider(
+            configuration: configuration,
+            processRunner: runner
+        )
+        .transcribeExistingAudio(
+            context: SpeechTranscriptionContext(
+                inputAudioURL: audioURL,
+                transcriptURL: transcriptURL,
+                localeIdentifier: "zh-CN",
+                meetingID: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+                previousTranscript: nil
+            )
+        )
+
+        XCTAssertEqual(runner.languageCode, "en")
+        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        XCTAssertEqual(document.segments.first?.language, "zh-CN")
+    }
+
     func testTranscriberRunsWhisperAndWritesTranscript() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -324,6 +376,33 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.timingSource, .approximate)
         XCTAssertEqual(runner.languageCode, "en")
         XCTAssertNotNil(runner.inputWavURL)
+    }
+
+    func testTranscriberUsesEnglishLanguageWhenModelIsEnglishOnly() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-transcriber-en-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcriptURL = directory.appendingPathComponent("capture.txt")
+        let configuration = WhisperConfiguration(
+            binaryURL: directory.appendingPathComponent("whisper-cli"),
+            modelURL: directory.appendingPathComponent("ggml-small.en.bin")
+        )
+        let runner = OutputWritingWhisperProcessRunner(outputText: "hello from whisper\n")
+        let transcriber = try WhisperCLITranscriber.start(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "zh-CN",
+            configuration: configuration,
+            processRunner: runner,
+            workingDirectory: directory
+        )
+
+        try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
+        transcriber.finish()
+
+        XCTAssertEqual(runner.languageCode, "en")
+        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        XCTAssertEqual(document.segments.first?.language, "zh-CN")
     }
 
     func testTranscriberRunsWhisperBeforeFinishWhenChunkThresholdIsReached() throws {
