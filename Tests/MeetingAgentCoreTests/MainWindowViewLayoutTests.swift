@@ -318,6 +318,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("No recommended questions"))
     }
 
+    func testSummaryDetailsShowsEmptyStateWhenNoStructuredItemsExist() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let insightRange = source.range(of: "private struct InsightPaneView") else {
+            return XCTFail("InsightPaneView is missing")
+        }
+        guard let summaryListRange = source.range(of: "private struct SummaryListView", range: insightRange.upperBound..<source.endIndex) else {
+            return XCTFail("InsightPaneView boundary is missing")
+        }
+
+        let insightSource = source[insightRange.lowerBound..<summaryListRange.lowerBound]
+        XCTAssertTrue(insightSource.contains("hasStructuredSummaryDetails(summary)"))
+        XCTAssertTrue(insightSource.contains("No decisions, action items, open questions, or risks were found."))
+    }
+
     func testMainWindowHasSettingsDestinationAndNoInlineConfigurationFields() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

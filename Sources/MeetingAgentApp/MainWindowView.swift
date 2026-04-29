@@ -1116,6 +1116,10 @@ private struct InsightPaneView: View {
                         Text(summary.failureReason ?? "Summary generation failed.")
                             .commandCenterCaption(CommandCenterPalette.danger)
                             .textSelection(.enabled)
+                    } else if !hasStructuredSummaryDetails(summary) {
+                        Text("No decisions, action items, open questions, or risks were found.")
+                            .foregroundStyle(CommandCenterPalette.secondaryText)
+                            .textSelection(.enabled)
                     } else {
                         SummaryListView(title: "Decisions", items: summary.decisions.map(\.description))
                         SummaryListView(title: "Action Items", items: summary.actionItems.map(\.description))
@@ -1128,6 +1132,17 @@ private struct InsightPaneView: View {
                 }
             }
         }
+    }
+
+    private func hasStructuredSummaryDetails(_ summary: MeetingSummary) -> Bool {
+        !summary.decisions.map(\.description).allSatisfy(isBlank)
+            || !summary.actionItems.map(\.description).allSatisfy(isBlank)
+            || !summary.openQuestions.allSatisfy(isBlank)
+            || !summary.risks.allSatisfy(isBlank)
+    }
+
+    private func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
