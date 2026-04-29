@@ -22,6 +22,7 @@ public final class LiveCaptionPipeline {
     private var targetLocale: String
     private let translationProvider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
+    private var translationScheduler: CaptionTranslationScheduler
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
     private var interimSegmentsByID: [String: TranscriptSegment] = [:]
@@ -38,6 +39,10 @@ public final class LiveCaptionPipeline {
         self.performanceEventLogger = performanceEventLogger
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        translationScheduler = CaptionTranslationScheduler(
+            provider: translationProvider,
+            performanceEventLogger: performanceEventLogger
+        )
         interimSegmentsByID = [:]
     }
 
@@ -60,10 +65,11 @@ public final class LiveCaptionPipeline {
         for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
             applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
         }
+        await scheduleTranslations()
 
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
-            translationHealth: .idle
+            translationHealth: currentTranslationHealth()
         )
     }
 
@@ -75,17 +81,19 @@ public final class LiveCaptionPipeline {
         for segment in document.segments where !segment.isFinal {
             applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
         }
+        await scheduleTranslations()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
-            translationHealth: .idle
+            translationHealth: currentTranslationHealth()
         )
     }
 
     public func flush(reason: LiveCaptionFreezeReason) async -> LiveCaptionPipelineSnapshot {
         applyEvents(turnAssembler.flush(reason: reason))
+        await scheduleTranslations()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
-            translationHealth: .idle
+            translationHealth: currentTranslationHealth()
         )
     }
 
@@ -94,6 +102,10 @@ public final class LiveCaptionPipeline {
         self.targetLocale = targetLocale
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        translationScheduler = CaptionTranslationScheduler(
+            provider: translationProvider,
+            performanceEventLogger: performanceEventLogger
+        )
         interimSegmentsByID = [:]
     }
 
@@ -188,5 +200,32 @@ public final class LiveCaptionPipeline {
             captionHealth: captionHealth,
             translationHealth: translationHealth
         )
+    }
+
+    private func scheduleTranslations() async {
+        var updatedStore = store
+        await translationScheduler.scheduleTranslations(in: &updatedStore)
+        store = updatedStore
+    }
+
+    private func currentTranslationHealth() -> LivePipelineHealth {
+        guard !store.turns.isEmpty else {
+            return .idle
+        }
+        if let failed = store.turns.first(where: {
+            if case .failed = $0.translationHealth { return true }
+            return false
+        }) {
+            if case .failed(let message) = failed.translationHealth {
+                return .degraded(message)
+            }
+        }
+        if store.turns.contains(where: { $0.translationHealth == .pending }) {
+            return .pending
+        }
+        if store.turns.contains(where: { $0.translationHealth == .live }) {
+            return .live
+        }
+        return .idle
     }
 }

@@ -56,7 +56,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertEqual(snapshot.turns.map(\.originalText), ["We are aligned."])
         XCTAssertEqual(snapshot.captionHealth, .live)
-        XCTAssertEqual(snapshot.translationHealth, .idle)
+        XCTAssertEqual(snapshot.translationHealth, .pending)
     }
 
     func testApplyUsesChangedInterimSegmentsWithoutReloadingFiles() async {
@@ -482,6 +482,33 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.translationState, .final)
     }
 
+    func testReplaySchedulesFinalTranslationForHardSealedTurn() async {
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "你好"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "hello",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        let snapshot = await pipeline.replay(document)
+
+        XCTAssertEqual(provider.requests, ["hello"])
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "你好")
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertEqual(snapshot.turns.first?.translationState, .final)
+        XCTAssertEqual(snapshot.translationHealth, .live)
+    }
+
     func testFlushSealsOpenCaptionChunk() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -505,5 +532,46 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
         XCTAssertEqual(snapshot.turns.first?.boundaryReason, .manualStop)
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+}
+
+private final class PipelineRecordingTranslationProvider: TextTranslationProvider {
+    var translations: [String: String]
+    private(set) var requests: [String] = []
+
+    init(translations: [String: String]) {
+        self.translations = translations
+    }
+
+    var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: "pipeline-recording-translation",
+            displayName: "Pipeline Recording Translation",
+            capability: .textTranslation,
+            executionMode: .local,
+            supportedSourceLocales: ["*"],
+            supportedTargetLocales: ["*"],
+            requiresNetwork: false,
+            requiresAPIKey: false
+        )
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        requests.append(transcript.segments.map(\.text).joined(separator: " "))
+        return TranslatedTranscript(
+            sourceLocale: options.sourceLocale,
+            targetLocale: options.targetLocale,
+            segments: transcript.segments.map { segment in
+                BilingualSubtitleSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    sourceText: segment.text,
+                    targetText: translations[segment.id] ?? "",
+                    status: .complete,
+                    providerChain: [descriptor.id]
+                )
+            },
+            provenance: PipelineProvenance(profileID: "pipeline-recording")
+        )
     }
 }
