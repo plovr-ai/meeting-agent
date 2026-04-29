@@ -419,6 +419,10 @@ public struct LiveCaptionStore: Equatable {
         turns.removeAll { !$0.isFinal && !segmentIDs.contains($0.sourceSegmentID) }
     }
 
+    public mutating func remove(turnID: String) {
+        turns.removeAll { $0.id == turnID }
+    }
+
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
         guard turn.isFinal,
               let lastIndex = turns.indices.last,

@@ -23,7 +23,7 @@ public final class LiveCaptionPipeline {
     private let translationProvider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
     private var store: LiveCaptionStore
-    private var chunker: LiveCaptionChunker
+    private var turnAssembler: CaptionTurnAssembler
 
     public init(
         sourceLocale: String,
@@ -36,7 +36,7 @@ public final class LiveCaptionPipeline {
         self.translationProvider = translationProvider
         self.performanceEventLogger = performanceEventLogger
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        chunker = LiveCaptionChunker(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
     }
 
     public func apply(_ result: TranscriptSegmentAccumulationResult) async -> LiveCaptionPipelineSnapshot {
@@ -49,11 +49,10 @@ public final class LiveCaptionPipeline {
     public func replay(_ document: TranscriptDocument) async -> LiveCaptionPipelineSnapshot {
         reset(sourceLocale: sourceLocale, targetLocale: targetLocale)
         for segment in document.segments where segment.isFinal {
-            upsertUpdates(chunker.append(segment), sourceSegment: segment)
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
         }
         for segment in document.segments where !segment.isFinal {
-            _ = store.append(segment)
-            hydrateCachedTranslation(from: segment, toTurnID: segment.id)
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
         }
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
@@ -62,7 +61,7 @@ public final class LiveCaptionPipeline {
     }
 
     public func flush(reason: LiveCaptionFreezeReason) async -> LiveCaptionPipelineSnapshot {
-        upsertUpdates(chunker.flushOpenChunk(reason: reason))
+        applyEvents(turnAssembler.flush(reason: reason))
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: .idle
@@ -73,17 +72,22 @@ public final class LiveCaptionPipeline {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        chunker = LiveCaptionChunker(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
     }
 
-    private func upsertUpdates(
-        _ updates: [LiveCaptionChunkUpdate],
+    private func applyEvents(
+        _ events: [CaptionTurnEvent],
         sourceSegment: TranscriptSegment? = nil
     ) {
-        for update in updates {
-            store.upsert(update.turn)
-            if let sourceSegment {
-                hydrateCachedTranslation(from: sourceSegment, toTurnID: update.turn.id)
+        for event in events {
+            switch event {
+            case .draftUpdated(let turn), .sealed(let turn):
+                store.upsert(turn)
+                if let sourceSegment {
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
+                }
+            case .removed(let turnID):
+                store.remove(turnID: turnID)
             }
         }
     }

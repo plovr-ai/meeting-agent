@@ -476,4 +476,14 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(store.sourceLocale, "ja-JP")
         XCTAssertEqual(store.targetLocale, "en-US")
     }
+
+    func testRemoveTurnByID() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(LiveCaptionTurn(sourceSegmentID: "segment-1", originalText: "First", isFinal: false))
+        store.upsert(LiveCaptionTurn(sourceSegmentID: "segment-2", originalText: "Second", isFinal: false))
+
+        store.remove(turnID: "segment-1")
+
+        XCTAssertEqual(store.turns.map(\.id), ["segment-2"])
+    }
 }
