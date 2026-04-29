@@ -428,6 +428,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                     startedAt: meeting.startedAt,
                     endedAt: meeting.endedAt,
                     language: speechLocaleIdentifier,
+                    targetLanguage: speechConfiguration.targetLocaleIdentifier,
                     meetingGoal: nil,
                     segments: transcript.segments,
                     generatedAt: generatedAt
