@@ -141,6 +141,28 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
     }
 
+    func testMeetingWorkspaceBackButtonReturnsToSourceBucket() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("@State private var workspaceReturnDestination: MainWindowDestination = .today"))
+        XCTAssertTrue(source.contains("private func openWorkspace(from destination: MainWindowDestination, selecting meeting: MeetingRecord)"))
+        XCTAssertTrue(source.contains("workspaceReturnDestination = destination.agendaReturnDestination"))
+        XCTAssertTrue(source.contains("destination = .workspace"))
+        XCTAssertTrue(source.contains("var agendaReturnDestination: MainWindowDestination"))
+        XCTAssertTrue(source.contains("case .workspace, .settings:"))
+        XCTAssertTrue(source.contains("return .today"))
+    }
+
+    func testMeetingWorkspaceRendersBackButton() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("backToMeetings: {"))
+        XCTAssertTrue(source.contains("destination = workspaceReturnDestination"))
+        XCTAssertTrue(source.contains("let backToMeetings: () -> Void"))
+        XCTAssertTrue(source.contains("Button(action: backToMeetings)"))
+        XCTAssertTrue(source.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
+    }
+
     func testCurrentPipelineMovesDebugDetailsBehindHoverIcon() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
