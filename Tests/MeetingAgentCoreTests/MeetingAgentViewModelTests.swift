@@ -130,6 +130,47 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Meeting detected: zoom.us")
     }
 
+    func testSecondDetectedMeetingShowsTranscribingAfterFirstMeetingStops() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        var currentTarget = AudioCaptureTarget(
+            processID: 10,
+            displayName: "zoom.us",
+            bundleIdentifier: "us.zoom.xos",
+            isAudioOutputActive: true
+        )
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [currentTarget] }
+        )
+
+        XCTAssertEqual(viewModel.pollForMeetingCandidates(), currentTarget)
+        try await viewModel.startRecordingForPendingCandidate()
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        currentTarget = AudioCaptureTarget(
+            processID: 11,
+            displayName: "Google Meet",
+            bundleIdentifier: "com.google.Chrome",
+            isAudioOutputActive: true
+        )
+        XCTAssertEqual(viewModel.pollForMeetingCandidates(), currentTarget)
+        try await viewModel.startRecordingForPendingCandidate()
+
+        XCTAssertEqual(viewModel.selectedMeeting?.name, "Google Meet")
+        XCTAssertEqual(viewModel.selectedMeeting?.transcriptionStatus, .transcribing)
+        XCTAssertEqual(fixture.session.startedTargets, [
+            AudioCaptureTarget(
+                processID: 10,
+                displayName: "zoom.us",
+                bundleIdentifier: "us.zoom.xos",
+                isAudioOutputActive: true
+            ),
+            currentTarget
+        ])
+        XCTAssertEqual(fixture.transcriberFactory.requests.count, 2)
+    }
+
     func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
