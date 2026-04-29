@@ -399,6 +399,56 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(translationFactoryCallCount, 1)
     }
 
+    func testDrainRecordingFramesUsesRecorderTranscriptUpdatesForLiveCaptions() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "live-1",
+            text: "Live recorder transcript",
+            language: "en-US",
+            isFinal: true
+        )))
+        viewModel.drainRecordingFrames()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["live-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Live recorder transcript")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
+        XCTAssertEqual(viewModel.meetingProgressHealth.caption, .live)
+    }
+
+    func testActiveRecordingCaptionDoesNotRequireTranscriptFileReload() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "stream-1",
+            text: "Streamed without polling",
+            language: "en-US",
+            isFinal: false
+        )))
+        if let transcriptJSONURL = viewModel.selectedMeeting?.transcriptJSONURL {
+            try FileManager.default.removeItem(at: transcriptJSONURL)
+        }
+        viewModel.drainRecordingFrames()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["stream-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Streamed without polling")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, false)
+    }
+
     func testDrainRecordingFramesTranslatesFinalCaptionsWithConfiguredOpenRouterModel() async throws {
         let fixture = try ViewModelRecorderFixture()
         let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "Alex 是上线负责人。"])
