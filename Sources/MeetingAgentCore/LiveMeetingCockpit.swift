@@ -452,7 +452,6 @@ public struct LiveCaptionStore: Equatable {
         merged.isFinal = turn.isFinal
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
-        merged.createdAt = turn.createdAt
         merged.displayState = turn.displayState
         merged.translationState = turn.translationState
         merged.boundaryReason = turn.boundaryReason
@@ -469,7 +468,6 @@ public struct LiveCaptionStore: Equatable {
         merged.isFinal = false
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
-        merged.createdAt = turn.createdAt
         merged.chunkState = .draft
         merged.translationRevision += 1
         merged.freezeReason = nil

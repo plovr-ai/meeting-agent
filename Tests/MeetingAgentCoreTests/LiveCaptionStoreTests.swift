@@ -209,7 +209,7 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(merged.targetLocale, "en-US")
         XCTAssertTrue(merged.isFinal)
         XCTAssertEqual(merged.translationHealth, .pending)
-        XCTAssertEqual(merged.createdAt, Date(timeIntervalSince1970: 120))
+        XCTAssertEqual(merged.createdAt, Date(timeIntervalSince1970: 100))
     }
 
     func testAppendingFinalSegmentFromDifferentSpeakerCreatesNewTurn() {
