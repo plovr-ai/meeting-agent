@@ -495,7 +495,7 @@ enum WhisperFileTranscriber {
                 timingSource: .unavailable
             )
         }
-        try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceAll(segments))
+        try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(segments))
     }
 
     private static func normalizedTranscriptLines(_ text: String) -> [String] {
@@ -596,7 +596,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             if let transcriptUpdateSink {
                 transcriptUpdateSink.receive(.replaceWithPlainText(message))
             } else {
-                try? FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceWithPlainText(message))
+                try? FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceWithPlainText(message))
             }
         }
 
@@ -669,7 +669,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             if let transcriptUpdateSink {
                 transcriptUpdateSink.receive(.replaceAll(transcriptSegments))
             } else {
-                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceAll(transcriptSegments))
+                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(transcriptSegments))
             }
         }
 

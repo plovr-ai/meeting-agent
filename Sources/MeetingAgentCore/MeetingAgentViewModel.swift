@@ -586,7 +586,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                     audio: AudioInput(wavURL: audioURL, localeIdentifier: speechConfiguration.localeIdentifier),
                     options: TranscriptionOptions(sourceLocale: speechConfiguration.localeIdentifier)
                 )
-                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).receive(.replaceAll(document.segments))
+                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(document.segments))
             } else {
                 let provider = SpeechTranscriptionProviderFactory.provider(
                     for: speechConfiguration.provider,
