@@ -56,6 +56,26 @@ final class MeetingProgressCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.analysisHealth, .failed("test error 1"))
     }
 
+    func testPassesAgendaTopicsToAgendaAwareAnalyzer() async {
+        let progressURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-progress-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: progressURL) }
+        let analyzer = AgendaAwareSpyProgressAnalyzer()
+        let topics = [MeetingAgendaTopic(title: "Budget risk")]
+        let coordinator = MeetingProgressCoordinator(
+            goal: sampleGoal(),
+            agendaTopics: topics,
+            analyzer: analyzer,
+            progressURL: progressURL,
+            minimumAnalysisInterval: 0,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+
+        await coordinator.process(turns: [LiveCaptionTurn(sourceSegmentID: "final", originalText: "launch owner confirmed", isFinal: true)])
+
+        XCTAssertEqual(analyzer.agendaTopics, topics)
+    }
+
     private func sampleGoal() -> MeetingGoal {
         MeetingGoal(
             id: UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!,
@@ -73,7 +93,6 @@ final class MeetingProgressCoordinatorTests: XCTestCase {
 
 private final class SpyProgressAnalyzer: MeetingProgressAnalyzing {
     struct Call {
-        let agendaTopics: [MeetingAgendaTopic]
         let recentCaptions: [LiveCaptionTurn]
     }
 
@@ -82,11 +101,10 @@ private final class SpyProgressAnalyzer: MeetingProgressAnalyzing {
 
     func analyze(
         goal: MeetingGoal,
-        agendaTopics: [MeetingAgendaTopic],
         recentCaptions: [LiveCaptionTurn],
         previousState: MeetingProgressState?
     ) async throws -> MeetingProgressState {
-        calls.append(Call(agendaTopics: agendaTopics, recentCaptions: recentCaptions))
+        calls.append(Call(recentCaptions: recentCaptions))
         if let error {
             throw error
         }
@@ -98,6 +116,39 @@ private final class SpyProgressAnalyzer: MeetingProgressAnalyzing {
                 MeetingObjectiveProgress(objectiveID: $0.id, title: $0.title, status: .confirmed, evidenceSegmentIDs: recentCaptions.map(\.sourceSegmentID))
             },
             confirmedItems: ["launch owner confirmed"],
+            unresolvedItems: [],
+            suggestedQuestions: [],
+            health: MeetingProgressHealth(caption: .live, translation: .pending, analysis: .live),
+            lastAnalyzedSegmentID: recentCaptions.last?.sourceSegmentID,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+    }
+}
+
+private final class AgendaAwareSpyProgressAnalyzer: AgendaAwareMeetingProgressAnalyzing {
+    var agendaTopics: [MeetingAgendaTopic] = []
+
+    func analyze(
+        goal: MeetingGoal,
+        recentCaptions: [LiveCaptionTurn],
+        previousState: MeetingProgressState?
+    ) async throws -> MeetingProgressState {
+        try await analyze(goal: goal, agendaTopics: [], recentCaptions: recentCaptions, previousState: previousState)
+    }
+
+    func analyze(
+        goal: MeetingGoal,
+        agendaTopics: [MeetingAgendaTopic],
+        recentCaptions: [LiveCaptionTurn],
+        previousState: MeetingProgressState?
+    ) async throws -> MeetingProgressState {
+        self.agendaTopics = agendaTopics
+        return MeetingProgressState(
+            meetingID: UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc")!,
+            goal: goal,
+            status: .onTrack,
+            objectives: [],
+            confirmedItems: [],
             unresolvedItems: [],
             suggestedQuestions: [],
             health: MeetingProgressHealth(caption: .live, translation: .pending, analysis: .live),
