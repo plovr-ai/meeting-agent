@@ -397,3 +397,19 @@ Patch repeated test setup with nearby behavior-specific context, then inspect th
 When a test file repeats the same initializer shape, include the test name or adjacent setup lines in the patch context.
 
 ---
+
+## [69] Refresh view-model metadata after recorder startup persistence
+
+**Date**: 2026-04-29
+**Category**: logic-error
+
+### What went wrong
+Starting a detected meeting let `MeetingRecorder` persist the record as transcribing, but `MeetingAgentViewModel` kept the pre-start in-memory record, so the meeting page could still show transcription as not started.
+
+### Correct approach
+After async recorder startup completes, refresh the affected meeting from the store so UI state reflects recorder-owned transcription metadata, including startup failures.
+
+### How to avoid
+When a lower-level service mutates persisted model state during an async operation, update the caller's in-memory model before returning to the UI.
+
+---
