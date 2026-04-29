@@ -2,6 +2,7 @@ import Combine
 import Foundation
 
 private struct CaptionTranslationRequest {
+    let id: String
     let turn: LiveCaptionTurn
     let key: String
     let isDraft: Bool
@@ -979,17 +980,26 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func logTranslationScheduled(
-        _ turn: LiveCaptionTurn,
-        isDraft: Bool,
-        logger: PerformanceEventLogger?
+        _ request: CaptionTranslationRequest
     ) {
-        logger?.log(
+        request.performanceEventLogger?.log(
             "caption_translation_scheduled",
-            segmentID: turn.id,
-            isFinal: !isDraft,
-            textLength: turn.originalText.count,
-            metadata: translationMetadata(for: turn, isDraft: isDraft)
+            segmentID: request.turn.id,
+            isFinal: !request.isDraft,
+            textLength: request.turn.originalText.count,
+            metadata: translationMetadata(for: request)
         )
+    }
+
+    private func translationMetadata(
+        for request: CaptionTranslationRequest,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var metadata = translationMetadata(for: request.turn, isDraft: request.isDraft, extra: extra)
+        metadata["translationRequestID"] = request.id
+        metadata["translationRevision"] = String(request.revision)
+        metadata["translationKeyHash"] = String(request.key.hashValue)
+        return metadata
     }
 
     private func translationMetadata(
@@ -1048,36 +1058,32 @@ public final class MeetingAgentViewModel: ObservableObject {
             let key = draftCaptionTranslationKey(for: turn)
             draftTranslationInFlightByTurnID[turn.id] = turn.translationRevision
             draftTranslationAttemptDatesByTurnID[turn.id] = Date()
-            logTranslationScheduled(
-                turn,
-                isDraft: true,
-                logger: performanceEventLogger
-            )
-            return CaptionTranslationRequest(
+            let request = CaptionTranslationRequest(
+                id: "caption-translation-\(UUID().uuidString)",
                 turn: turn,
                 key: key,
                 isDraft: true,
                 revision: turn.translationRevision,
                 performanceEventLogger: performanceEventLogger
             )
+            logTranslationScheduled(request)
+            return request
         }
 
         let finalRequests = finalCandidates.map { turn -> CaptionTranslationRequest in
             let key = finalCaptionTranslationKey(for: turn)
             cancelDraftTranslationsSuperseded(by: turn)
             finalTranslationInFlightTurnIDs.insert(turn.id)
-            logTranslationScheduled(
-                turn,
-                isDraft: false,
-                logger: performanceEventLogger
-            )
-            return CaptionTranslationRequest(
+            let request = CaptionTranslationRequest(
+                id: "caption-translation-\(UUID().uuidString)",
                 turn: turn,
                 key: key,
                 isDraft: false,
                 revision: turn.translationRevision,
                 performanceEventLogger: performanceEventLogger
             )
+            logTranslationScheduled(request)
+            return request
         }
 
         let requests = draftRequests + finalRequests
@@ -1186,7 +1192,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 segmentID: turn.id,
                 isFinal: !request.isDraft,
                 textLength: sourceText.count,
-                metadata: translationMetadata(for: turn, isDraft: request.isDraft)
+                metadata: translationMetadata(for: request)
             )
             let translated = try await provider.translate(
                 transcript: TranscriptDocument(segments: [segment]),
@@ -1198,7 +1204,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 segmentID: turn.id,
                 isFinal: !request.isDraft,
                 textLength: translatedText.count,
-                metadata: translationMetadata(for: turn, isDraft: request.isDraft)
+                metadata: translationMetadata(for: request)
             )
             if request.isDraft {
                 acceptDraftTranslation(request, translatedText: translatedText)
@@ -1219,8 +1225,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 isFinal: !request.isDraft,
                 textLength: sourceText.count,
                 metadata: translationMetadata(
-                    for: turn,
-                    isDraft: request.isDraft,
+                    for: request,
                     extra: ["error": "\(nsError.domain) error \(nsError.code)"]
                 )
             )
@@ -1302,7 +1307,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             segmentID: request.turn.id,
             isFinal: false,
             textLength: translatedText.count,
-            metadata: translationMetadata(for: request.turn, isDraft: true)
+            metadata: translationMetadata(for: request)
         )
         draftTranslationKeysByTurnID[request.turn.id] = request.key
         draftTranslationCharacterCountsByTurnID[request.turn.id] = current.originalText.count
@@ -1325,7 +1330,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             segmentID: request.turn.id,
             isFinal: true,
             textLength: translatedText.count,
-            metadata: translationMetadata(for: request.turn, isDraft: false)
+            metadata: translationMetadata(for: request)
         )
         finalTranslationKeysByTurnID[request.turn.id] = request.key
         liveCaptionTurns = liveCaptionStore.turns

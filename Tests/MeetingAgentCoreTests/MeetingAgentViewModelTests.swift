@@ -459,6 +459,58 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requests.count, 1)
     }
 
+    func testCaptionTranslationPerformanceEventsShareRequestID() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "最终翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "That is the final caption.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
+
+        let events = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { event in
+                event.segmentID == "segment-1"
+                    && event.metadata["translationKind"] == "final"
+                    && [
+                        "caption_translation_scheduled",
+                        "caption_translation_started",
+                        "caption_translation_finished",
+                        "caption_translation_attached"
+                    ].contains(event.event)
+            }
+        let requestIDs = Set(events.compactMap { $0.metadata["translationRequestID"] })
+
+        XCTAssertEqual(Set(events.map(\.event)), [
+            "caption_translation_scheduled",
+            "caption_translation_started",
+            "caption_translation_finished",
+            "caption_translation_attached"
+        ])
+        XCTAssertEqual(requestIDs.count, 1)
+        XCTAssertFalse(try XCTUnwrap(requestIDs.first).isEmpty)
+    }
+
     func testDrainRecordingFramesSkipsCaptionTranslationWhenSourceAndTargetLanguagesMatch() async throws {
         let fixture = try ViewModelRecorderFixture()
         var providerFactoryCallCount = 0
@@ -2694,6 +2746,15 @@ private func XCTAssertThrowsErrorAsync(
     } catch {
         verify(error)
     }
+}
+
+private func readPerformanceEvents(from url: URL) throws -> [PerformanceEvent] {
+    guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+    return try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n")
+        .map { line in
+            try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data(line.utf8))
+        }
 }
 
 private final class ViewModelFakeRealtimeProvider: RealtimeSpeechTranslationProvider {
