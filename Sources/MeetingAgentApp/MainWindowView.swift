@@ -37,43 +37,6 @@ struct MainWindowView: View {
                 }
                 .padding(12)
 
-                List(selection: Binding(
-                    get: { destination == .settings ? nil : viewModel.selectedMeetingID },
-                    set: { id in
-                        destination = .workspace
-                        viewModel.selectMeeting(id)
-                    }
-                )) {
-                    Section {
-                        if meetings(for: destination).isEmpty {
-                            Text(emptyMeetingListText(for: destination))
-                                .font(CommandCenterTypography.caption)
-                                .foregroundStyle(CommandCenterPalette.secondaryText)
-                                .padding(.vertical, 4)
-                        } else {
-                            ForEach(meetings(for: destination)) { meeting in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(meeting.name)
-                                        .font(CommandCenterTypography.title)
-                                        .foregroundStyle(CommandCenterPalette.text)
-                                    Text(meeting.startedAt, style: .date)
-                                        .font(CommandCenterTypography.caption)
-                                        .foregroundStyle(CommandCenterPalette.secondaryText)
-                                }
-                                .padding(.vertical, 4)
-                                .tag(Optional(meeting.id))
-                            }
-                        }
-                    } header: {
-                        Text(meetingListTitle(for: destination))
-                            .foregroundStyle(CommandCenterPalette.secondaryText)
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .background(CommandCenterPalette.surface)
-                .environment(\.colorScheme, .dark)
-                .foregroundStyle(CommandCenterPalette.text)
-
                 Spacer()
 
                 Divider()
@@ -104,9 +67,12 @@ struct MainWindowView: View {
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
-            case .today:
+            case .today, .thisWeek, .history:
                 TodayAgendaView(
-                    meetings: meetings(for: .today),
+                    title: agendaTitle(for: destination),
+                    emptyTitle: agendaEmptyTitle(for: destination),
+                    emptyDescription: agendaEmptyDescription(for: destination),
+                    meetings: meetings(for: destination),
                     selectedMeetingID: viewModel.selectedMeetingID,
                     activeMeetingID: viewModel.activeMeetingID,
                     pendingCandidate: viewModel.pendingCandidate,
@@ -136,12 +102,12 @@ struct MainWindowView: View {
                     saveAgenda: { meetingID, update in
                         try viewModel.saveAgenda(for: meetingID, update: update)
                     },
-                    createMeeting: {
+                    createMeeting: destination == .today ? {
                         let created = try viewModel.createAgendaMeeting()
                         viewModel.selectMeeting(created.id)
-                    }
+                    } : nil
                 )
-            case .thisWeek, .history, .workspace:
+            case .workspace:
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
                     speechConfiguration: viewModel.speechConfiguration,
@@ -261,7 +227,7 @@ struct MainWindowView: View {
         }
     }
 
-    private func meetingListTitle(for destination: MainWindowDestination) -> String {
+    private func agendaTitle(for destination: MainWindowDestination) -> String {
         switch destination {
         case .today:
             return "Today"
@@ -276,17 +242,30 @@ struct MainWindowView: View {
         }
     }
 
-    private func emptyMeetingListText(for destination: MainWindowDestination) -> String {
+    private func agendaEmptyTitle(for destination: MainWindowDestination) -> String {
         switch destination {
         case .today:
-            return "No meetings today"
+            return "No meetings scheduled today"
         case .thisWeek:
-            return "No meetings this week"
+            return "No meetings scheduled this week"
         case .history:
             return "No meeting history"
         case .workspace:
             return "No meetings"
         case .settings:
+            return ""
+        }
+    }
+
+    private func agendaEmptyDescription(for destination: MainWindowDestination) -> String {
+        switch destination {
+        case .today:
+            return "Create a local agenda item to prepare attendees, topics, and meeting goals before recording."
+        case .thisWeek:
+            return "Meetings scheduled later this week will appear here with their agenda details."
+        case .history:
+            return "Completed and past meetings will appear here with their saved agenda details."
+        case .workspace, .settings:
             return ""
         }
     }
