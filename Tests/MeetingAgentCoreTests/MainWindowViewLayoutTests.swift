@@ -311,6 +311,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save Caption"))
     }
 
+    func testUnifiedTranscriptRendersSpeakerGroupStartTimeBesideSpeakerName() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("speakerStartTimeText"))
+        XCTAssertTrue(source.contains("group.startedAt.formatted(date: .omitted, time: .standard)"))
+        XCTAssertTrue(source.contains("Text(speakerStartTimeText)"))
+    }
+
     func testMainWindowRemovesUnimplementedMeetingGoalComposer() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

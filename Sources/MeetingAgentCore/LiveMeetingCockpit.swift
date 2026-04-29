@@ -271,11 +271,13 @@ public struct LiveCaptionSpeakerGroup: Equatable, Identifiable {
     public var id: String
     public var speaker: TranscriptSpeaker
     public var turns: [LiveCaptionTurn]
+    public var startedAt: Date
 
-    public init(id: String, speaker: TranscriptSpeaker, turns: [LiveCaptionTurn]) {
+    public init(id: String, speaker: TranscriptSpeaker, turns: [LiveCaptionTurn], startedAt: Date) {
         self.id = id
         self.speaker = speaker
         self.turns = turns
+        self.startedAt = startedAt
     }
 
     public static func groups(from turns: [LiveCaptionTurn]) -> [LiveCaptionSpeakerGroup] {
@@ -285,7 +287,7 @@ public struct LiveCaptionSpeakerGroup: Equatable, Identifiable {
                groups[lastIndex].speaker == turn.speaker {
                 groups[lastIndex].turns.append(turn)
             } else {
-                groups.append(LiveCaptionSpeakerGroup(id: turn.id, speaker: turn.speaker, turns: [turn]))
+                groups.append(LiveCaptionSpeakerGroup(id: turn.id, speaker: turn.speaker, turns: [turn], startedAt: turn.createdAt))
             }
         }
         return groups
