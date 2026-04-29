@@ -233,6 +233,9 @@ public final class TranscriptFileWriter {
         let coversTiming = finalStart <= interimStart + tolerance
             && finalEnd + tolerance >= interimEnd
         guard coversTiming else { return false }
+        if final.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID {
+            return true
+        }
         return speakersAreCompatible(final.speaker, interim.speaker)
             || normalizedTextsOverlap(final.text, interim.text)
     }
@@ -389,6 +392,9 @@ public final class TranscriptFileWriter {
             coveredEnd = max(coveredEnd, finalEnd)
         }
         guard coveredEnd + tolerance >= interimEnd else { return false }
+        if candidates.allSatisfy({ $0.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID }) {
+            return true
+        }
         let combinedFinalText = candidates.map(\.text).joined(separator: " ")
         return normalizedTextsOverlap(combinedFinalText, interim.text)
     }
