@@ -348,7 +348,12 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         updateRecordingStatus()
-        refreshLiveCaptionTurnsFromSelectedMeeting()
+        let transcriptResults = recorder.drainTranscriptUpdates()
+        if transcriptResults.isEmpty {
+            refreshLiveCaptionTurnsFromSelectedMeeting()
+        } else {
+            applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults)
+        }
         if meetingProgressCoordinator != nil {
             Task { [weak self] in
                 await self?.refreshMeetingProgress()
@@ -874,91 +879,78 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionTurns = []
             return
         }
+        applyTranscriptDocumentToLiveCaptions(document)
+    }
+
+    private func applyTranscriptAccumulationResultsToLiveCaptions(
+        _ results: [TranscriptSegmentAccumulationResult]
+    ) {
+        guard let latest = results.last else { return }
+        if latest.plainTextReplacement != nil {
+            liveCaptionStore = LiveCaptionStore(
+                sourceLocale: liveCaptionStore.sourceLocale,
+                targetLocale: liveCaptionStore.targetLocale
+            )
+            processedLiveCaptionSegmentSignaturesByID.removeAll()
+        }
+        applyTranscriptDocumentToLiveCaptions(latest.document)
+    }
+
+    private func applyTranscriptDocumentToLiveCaptions(_ document: TranscriptDocument) {
         let currentSegmentIDs = Set(document.segments.map(\.id))
         liveCaptionStore.removeNonFinalTurnsNotIn(segmentIDs: currentSegmentIDs)
         processedLiveCaptionSegmentSignaturesByID = processedLiveCaptionSegmentSignaturesByID.filter {
             currentSegmentIDs.contains($0.key)
         }
         for segment in document.segments where segment.isFinal {
-            let signatureSpeakerID: String
-            if let speakerID = segment.speakerID {
-                signatureSpeakerID = speakerID
-            } else {
-                signatureSpeakerID = ""
-            }
-            let signatureSpeakerLabel: String
-            if let speakerLabel = segment.speakerLabel {
-                signatureSpeakerLabel = speakerLabel
-            } else {
-                signatureSpeakerLabel = ""
-            }
-            let signatureFinalState = "final"
-            let signatureSpeechState: String
-            if segment.speechFinal {
-                signatureSpeechState = "speechFinal"
-            } else {
-                signatureSpeechState = "open"
-            }
-            let signature = [
-                segment.text,
-                signatureFinalState,
-                signatureSpeechState,
-                signatureSpeakerID,
-                signatureSpeakerLabel
-            ].joined(separator: "\u{1F}")
-            guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
-            processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
+            guard markProcessedLiveCaptionSegmentIfNeeded(segment) else { continue }
             currentPerformanceEventLogger()?.logSegment(
                 "caption_segment_ingested",
                 segment: segment,
                 metadata: ["path": "final"]
             )
-            for update in liveCaptionChunker.append(segment) {
-                liveCaptionStore.upsert(update.turn)
-                hydrateCachedTranslation(from: segment, toTurnID: update.turn.id)
-                logCaptionTurnUpdate(update.turn)
-            }
+            applyFinalLiveCaptionSegment(segment)
         }
         for segment in document.segments where !segment.isFinal {
-            let signatureSpeakerID: String
-            if let speakerID = segment.speakerID {
-                signatureSpeakerID = speakerID
-            } else {
-                signatureSpeakerID = ""
-            }
-            let signatureSpeakerLabel: String
-            if let speakerLabel = segment.speakerLabel {
-                signatureSpeakerLabel = speakerLabel
-            } else {
-                signatureSpeakerLabel = ""
-            }
-            let signatureFinalState = "interim"
-            let signatureSpeechState: String
-            if segment.speechFinal {
-                signatureSpeechState = "speechFinal"
-            } else {
-                signatureSpeechState = "open"
-            }
-            let signature = [
-                segment.text,
-                signatureFinalState,
-                signatureSpeechState,
-                signatureSpeakerID,
-                signatureSpeakerLabel
-            ].joined(separator: "\u{1F}")
-            guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else { continue }
-            processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
+            guard markProcessedLiveCaptionSegmentIfNeeded(segment) else { continue }
             currentPerformanceEventLogger()?.logSegment(
                 "caption_segment_ingested",
                 segment: segment,
                 metadata: ["path": "interim"]
             )
-            _ = liveCaptionStore.append(segment)
-            hydrateCachedTranslation(from: segment, toTurnID: segment.id)
+            applyInterimLiveCaptionSegment(segment)
         }
         liveCaptionTurns = liveCaptionStore.turns
         meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
         scheduleCaptionTextTranslationIfNeeded()
+    }
+
+    private func applyFinalLiveCaptionSegment(_ segment: TranscriptSegment) {
+        for update in liveCaptionChunker.append(segment) {
+            liveCaptionStore.upsert(update.turn)
+            hydrateCachedTranslation(from: segment, toTurnID: update.turn.id)
+            logCaptionTurnUpdate(update.turn)
+        }
+    }
+
+    private func applyInterimLiveCaptionSegment(_ segment: TranscriptSegment) {
+        _ = liveCaptionStore.append(segment)
+        hydrateCachedTranslation(from: segment, toTurnID: segment.id)
+    }
+
+    private func markProcessedLiveCaptionSegmentIfNeeded(_ segment: TranscriptSegment) -> Bool {
+        let signature = [
+            segment.text,
+            segment.isFinal ? "final" : "interim",
+            segment.speechFinal ? "speechFinal" : "open",
+            segment.speakerID ?? "",
+            segment.speakerLabel ?? ""
+        ].joined(separator: "\u{1F}")
+        guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else {
+            return false
+        }
+        processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
+        return true
     }
 
     private func freezeOpenLiveCaptionChunk(reason: LiveCaptionFreezeReason) {
