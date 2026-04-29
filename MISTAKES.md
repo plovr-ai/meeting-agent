@@ -461,3 +461,19 @@ Hydrate draft cached translations only for draft or soft-boundary caption state.
 When caching derived pipeline output, persist and check the lifecycle state that determines whether downstream work is truly complete.
 
 ---
+
+## [77] Update clean-state baselines after saving UI drafts
+
+**Date**: 2026-04-29
+**Category**: logic-error
+
+### What went wrong
+The first agenda title sync fix added a record-backed draft baseline for background refreshes, but did not update that baseline after a successful agenda save. That could leave a saved draft looking dirty and block later automatic title refreshes.
+
+### Correct approach
+When UI refresh logic compares a visible draft against a clean baseline, update the baseline both when loading from persisted state and after successful saves.
+
+### How to avoid
+For dirty-state guards, audit every path that transitions a draft from dirty back to clean, not only the initial load/reset path.
+
+---
