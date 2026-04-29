@@ -10,13 +10,13 @@ Meeting summaries should default to the current settings target language. If the
 - The summary provider input must keep transcript/source language separate from output target language.
 - OpenRouter summary prompts must explicitly ask for all returned JSON text fields to be written in the target language.
 - Existing summary model selection must remain independent from translation model selection.
-- Existing local/goal-oriented deterministic summaries are out of scope for this issue unless they already consume `MeetingSummaryInput`.
+- Existing meeting progress context must still be available to summary providers instead of forcing a fixed English deterministic summary path.
 
 ## Selected Approach
 
 Add a `targetLanguage` field to `MeetingSummaryInput`. `MeetingAgentViewModel.generateSummary(for:generatedAt:)` will pass `speechConfiguration.targetLocaleIdentifier` when it builds the summary input. `OpenRouterMeetingSummaryProvider` will include that target language in the user prompt and state that all generated JSON string content should use it.
 
-This preserves the existing `language` field as the transcript/source language. It also keeps the feature testable at the view-model boundary and reusable for any future summary provider.
+This preserves the existing `language` field as the transcript/source language. If a matching meeting progress snapshot exists, the view model will pass its goal/status/follow-up context through `meetingGoal` so the configured provider can generate a localized summary with that context.
 
 ## Alternatives Considered
 
@@ -34,5 +34,6 @@ This preserves the existing `language` field as the transcript/source language. 
 ## Testing
 
 - Add a view-model regression test proving the configured target locale is passed into `MeetingSummaryInput`.
+- Add a view-model regression test proving meeting progress context is still passed into `MeetingSummaryInput`.
 - Add an OpenRouter provider regression test proving the prompt includes the target output language instruction.
 - Run the focused XCTest filters and `make test`.

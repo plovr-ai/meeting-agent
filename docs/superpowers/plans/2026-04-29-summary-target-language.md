@@ -4,7 +4,7 @@
 
 **Goal:** Generate OpenRouter meeting summaries in the app settings target language by carrying target language through the summary input boundary.
 
-**Architecture:** Extend `MeetingSummaryInput` with a `targetLanguage` value while preserving `language` as the transcript/source language. `MeetingAgentViewModel` supplies the configured target locale, and `OpenRouterMeetingSummaryProvider` translates that into an explicit prompt instruction for JSON summary content.
+**Architecture:** Extend `MeetingSummaryInput` with a `targetLanguage` value while preserving `language` as the transcript/source language. `MeetingAgentViewModel` supplies the configured target locale and passes any meeting progress snapshot through `meetingGoal`; `OpenRouterMeetingSummaryProvider` translates that into an explicit prompt instruction for JSON summary content.
 
 **Tech Stack:** Swift 5.9, Swift Package Manager, XCTest, macOS 14.2+.
 
@@ -149,10 +149,11 @@ Add `public let targetLanguage: String?` after `language`, add the initializer p
 
 - [ ] **Step 2: Pass the configured target locale from the view model**
 
-In `MeetingAgentViewModel.generateSummary`, set:
+In `MeetingAgentViewModel.generateSummary`, always build `MeetingSummaryInput` through `summaryProviderFactory(speechConfiguration)`. Set:
 
 ```swift
 targetLanguage: speechConfiguration.targetLocaleIdentifier,
+meetingGoal: summaryGoalContext(for: progress),
 ```
 
 inside the `MeetingSummaryInput` initializer.
