@@ -59,6 +59,36 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .idle)
     }
 
+    func testApplyUsesChangedInterimSegmentsWithoutReloadingFiles() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+        let result = TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "deepgram-transcribe-stream-0.0",
+                    speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+                    text: "Live interim",
+                    language: "en-US",
+                    sourceProvider: "deepgram-transcribe",
+                    isFinal: false,
+                    speechFinal: false
+                )
+            ]),
+            changedSegmentIDs: ["deepgram-transcribe-stream-0.0"],
+            plainTextReplacement: nil
+        )
+
+        let snapshot = await pipeline.apply(result)
+
+        XCTAssertEqual(snapshot.turns.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.originalText, "Live interim")
+        XCTAssertEqual(snapshot.turns.first?.displayState, .draft)
+    }
+
     func testReplayBuildsDraftTurnFromInterimTranscriptSegment() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",

@@ -42,8 +42,24 @@ public final class LiveCaptionPipeline {
     public func apply(_ result: TranscriptSegmentAccumulationResult) async -> LiveCaptionPipelineSnapshot {
         if result.plainTextReplacement != nil {
             reset(sourceLocale: sourceLocale, targetLocale: targetLocale)
+            return snapshot(
+                captionHealth: .failed("Plain text transcript replacements are not supported by live captions."),
+                translationHealth: .idle
+            )
         }
-        return await replay(result.document)
+
+        let currentSegmentIDs = Set(result.document.segments.map(\.id))
+        applyEvents(turnAssembler.removeSegments(notIn: currentSegmentIDs))
+
+        let changedSegmentIDs = Set(result.changedSegmentIDs)
+        for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+        }
+
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: .idle
+        )
     }
 
     public func replay(_ document: TranscriptDocument) async -> LiveCaptionPipelineSnapshot {

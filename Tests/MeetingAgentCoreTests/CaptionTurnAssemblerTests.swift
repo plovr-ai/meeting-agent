@@ -69,6 +69,67 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         XCTAssertFalse(interim.isFinal)
     }
 
+    func testInterimUpdatesReplaceDraftForSameSegmentID() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        XCTAssertEqual(events.count, 1)
+        guard case .draftUpdated(let draft) = events.single else {
+            XCTFail("Expected same-ID interim to replace existing draft")
+            return
+        }
+        XCTAssertEqual(draft.originalText, "We should decide")
+        XCTAssertEqual(draft.sourceSegmentIDs, [id])
+        XCTAssertEqual(draft.displayState, .draft)
+    }
+
+    func testFinalSegmentReplacesMatchingInterimDraft() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            startTimeSeconds: 0,
+            endTimeSeconds: 1,
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            startTimeSeconds: 0,
+            endTimeSeconds: 1,
+            text: "We should decide today.",
+            isFinal: true,
+            speechFinal: true
+        ))
+
+        guard case .sealed(let sealed) = events.last else {
+            XCTFail("Expected final segment to seal matching interim draft")
+            return
+        }
+        XCTAssertEqual(sealed.originalText, "We should decide today.")
+        XCTAssertEqual(sealed.sourceSegmentIDs, [id])
+        XCTAssertEqual(sealed.boundaryStrength, .hard)
+    }
+
     func testRemoveSegmentsEmitsRemovedEventsForMissingInterimSegments() {
         var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = assembler.apply(segment(id: "segment-1", text: "First draft", isFinal: false, speechFinal: false))
@@ -98,6 +159,8 @@ final class CaptionTurnAssemblerTests: XCTestCase {
     private func segment(
         id: String,
         speaker: String = "speaker-1",
+        startTimeSeconds: Double? = nil,
+        endTimeSeconds: Double? = nil,
         text: String,
         language: String? = "en-US",
         isFinal: Bool = true,
@@ -106,6 +169,8 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         TranscriptSegment(
             id: id,
             speaker: TranscriptSpeaker(identifier: speaker),
+            startTimeSeconds: startTimeSeconds,
+            endTimeSeconds: endTimeSeconds,
             text: text,
             language: language,
             sourceProvider: "deepgram-transcribe",
