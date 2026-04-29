@@ -192,6 +192,7 @@ struct TodayAgendaView: View {
         do {
             try saveAgenda(meetingID, draft.update())
             saveError = nil
+            recordBackedDraft = draft
             draftMeetingID = meetingID
         } catch {
             saveError = "Could not save agenda: \(error)"

@@ -53,6 +53,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var recordBackedDraft = AgendaDraft()"))
         XCTAssertTrue(source.contains("draft == recordBackedDraft"))
+        XCTAssertTrue(source.contains("recordBackedDraft = draft"))
         XCTAssertTrue(source.contains("resetDraftFromSelection()"))
     }
 
