@@ -253,6 +253,25 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Button(\"Regenerate Summary\")"))
     }
 
+    func testInsightPaneDoesNotRenderSummaryStatusBadges() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let insightRange = source.range(of: "private struct InsightPaneView") else {
+            return XCTFail("InsightPaneView is missing")
+        }
+        guard let summaryListRange = source.range(of: "private struct SummaryListView", range: insightRange.upperBound..<source.endIndex) else {
+            return XCTFail("InsightPaneView boundary is missing")
+        }
+
+        let insightSource = source[insightRange.lowerBound..<summaryListRange.lowerBound]
+        XCTAssertTrue(insightSource.contains("Text(\"Summary\").commandCenterEyebrow()"))
+        XCTAssertTrue(insightSource.contains("Meeting summary will appear here after recording stops."))
+        XCTAssertFalse(insightSource.contains("\"ACTIVE\""))
+        XCTAssertFalse(insightSource.contains("\"RECORDED\""))
+        XCTAssertFalse(insightSource.contains("\"Summary pending\""))
+        XCTAssertFalse(insightSource.contains("\"Summary ready\""))
+    }
+
     func testInsightsPaneShowsRecommendedQuestionsOnlyWhenAvailable() throws {
         let source = try appSource(named: "MainWindowView.swift")
 

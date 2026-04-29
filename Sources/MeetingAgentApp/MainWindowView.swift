@@ -1110,10 +1110,6 @@ private struct InsightPaneView: View {
                     .commandCenterBody()
                     .lineSpacing(4)
                     .textSelection(.enabled)
-                HStack {
-                    CommandCenterChip(title: isRecording ? "ACTIVE" : "RECORDED", tint: CommandCenterPalette.primary, filled: true)
-                    CommandCenterChip(title: summary == nil ? "Summary pending" : "Summary ready", tint: summary == nil ? CommandCenterPalette.warning : CommandCenterPalette.primary)
-                }
             }
         }
     }
