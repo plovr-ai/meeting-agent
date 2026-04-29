@@ -370,11 +370,15 @@ public final class FileBackedTranscriptUpdateSink: TranscriptUpdateSink {
     }
 
     public func receive(_ update: TranscriptSegmentUpdate) {
+        try? persist(update)
+    }
+
+    public func persist(_ update: TranscriptSegmentUpdate) throws {
         let result = accumulator.apply(update)
         if let text = result.plainTextReplacement {
-            try? writer.replace(with: text)
+            try writer.replace(with: text)
         } else {
-            try? writer.replace(with: result.document.segments)
+            try writer.replace(with: result.document.segments)
         }
     }
 }

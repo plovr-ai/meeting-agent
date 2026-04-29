@@ -82,12 +82,13 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         sink.receive(.replaceAll([
             TranscriptSegment(id: "segment-1", text: "hello", language: "en-US", isFinal: true)
         ]))
+        try sink.persist(.upsert(TranscriptSegment(id: "segment-2", text: "world", language: "en-US", isFinal: true)))
 
         let document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments.map(\.id), ["segment-1"])
-        XCTAssertEqual(document.segments.map(\.text), ["hello"])
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello\n")
+        XCTAssertEqual(document.segments.map(\.id), ["segment-1", "segment-2"])
+        XCTAssertEqual(document.segments.map(\.text), ["hello", "world"])
+        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello world\n")
     }
 }
