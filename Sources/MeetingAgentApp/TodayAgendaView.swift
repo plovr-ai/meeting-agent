@@ -2,6 +2,7 @@ import MeetingAgentCore
 import SwiftUI
 
 struct TodayAgendaView: View {
+    private let recentHistoryDays = 7
     let title: String
     let emptyTitle: String
     let emptyDescription: String
@@ -69,8 +70,8 @@ struct TodayAgendaView: View {
                     .foregroundStyle(CommandCenterPalette.secondaryText)
             }
             Spacer()
-            CommandCenterChip(title: "\(sortedMeetings.count) meetings")
-            if let activeMeetingID, meetings.contains(where: { $0.id == activeMeetingID }) {
+            CommandCenterChip(title: "\(editableMeetings.count) meetings")
+            if let activeMeetingID, editableMeetings.contains(where: { $0.id == activeMeetingID }) {
                 CommandCenterChip(title: "Live recording", tint: CommandCenterPalette.primary, filled: true)
             }
         }
@@ -86,34 +87,43 @@ struct TodayAgendaView: View {
 
     @ViewBuilder
     private var agendaList: some View {
-        if sortedMeetings.isEmpty {
-            CommandCenterPanel {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(emptyTitle)
+        if showsSingleFeed {
+            agendaFeed
+        } else {
+            bucketAgendaList
+        }
+    }
+
+    private var agendaFeed: some View {
+        CommandCenterScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agenda")
                         .font(CommandCenterTypography.title)
                         .foregroundStyle(CommandCenterPalette.text)
-                    Text(emptyDescription)
-                        .font(CommandCenterTypography.secondaryBody)
+                    Text("Meeting schedule and metadata")
+                        .font(CommandCenterTypography.caption)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
-                    if let createError {
-                        Text(createError)
-                            .font(CommandCenterTypography.caption)
-                            .foregroundStyle(CommandCenterPalette.danger)
-                    }
-                    if let createMeeting {
-                        Button("Create Meeting") {
-                            do {
-                                try createMeeting()
-                                createError = nil
-                            } catch {
-                                createError = "Could not create meeting: \(error)"
-                            }
-                        }
-                        .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                }
+
+                AgendaFeedSection(title: "Today", count: todayMeetings.count) {
+                    todayFeedContent
+                }
+
+                if !recentGroups.isEmpty {
+                    AgendaFeedSection(title: "Recent", count: recentGroups.reduce(0) { $0 + $1.1.count }) {
+                        recentFeedContent
                     }
                 }
             }
-            .padding(24)
+            .padding(22)
+        }
+    }
+
+    @ViewBuilder
+    private var bucketAgendaList: some View {
+        if sortedMeetings.isEmpty {
+            emptyState
         } else {
             CommandCenterScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -137,18 +147,123 @@ struct TodayAgendaView: View {
         }
     }
 
+    @ViewBuilder
+    private var todayFeedContent: some View {
+        if todayMeetings.isEmpty {
+            emptyState
+        } else {
+            ForEach(todayMeetings) { meeting in
+                AgendaRowView(
+                    meeting: meeting,
+                    isSelected: meeting.id == selectedMeetingID,
+                    isActive: meeting.id == activeMeetingID,
+                    actionTitle: actionTitle(for: meeting),
+                    select: {
+                        selectMeeting(meeting)
+                    },
+                    primaryAction: {
+                        primaryAction(for: meeting)
+                    }
+                )
+            }
+        }
+    }
+
+    private var recentFeedContent: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(recentGroups, id: \.0) { day, meetings in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(day.formatted(date: .abbreviated, time: .omitted))
+                        .font(CommandCenterTypography.sectionTitle)
+                        .foregroundStyle(CommandCenterPalette.text)
+                    ForEach(meetings) { meeting in
+                        RecentAgendaMeetingCard(
+                            meeting: meeting,
+                            isSelected: meeting.id == selectedMeetingID,
+                            open: {
+                                selectMeeting(meeting)
+                                openWorkspace(meeting)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(emptyTitle)
+                    .font(CommandCenterTypography.title)
+                    .foregroundStyle(CommandCenterPalette.text)
+                Text(emptyDescription)
+                    .font(CommandCenterTypography.secondaryBody)
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                if let createError {
+                    Text(createError)
+                        .font(CommandCenterTypography.caption)
+                        .foregroundStyle(CommandCenterPalette.danger)
+                }
+                if let createMeeting {
+                    Button("Create Meeting") {
+                        do {
+                            try createMeeting()
+                            createError = nil
+                        } catch {
+                            createError = "Could not create meeting: \(error)"
+                        }
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                }
+            }
+        }
+    }
+
     private var sortedMeetings: [MeetingRecord] {
         meetings.sorted { lhs, rhs in
             displayDate(for: lhs) < displayDate(for: rhs)
         }
     }
 
+    private var todayMeetings: [MeetingRecord] {
+        meetings.filter { Calendar.current.isDate(displayDate(for: $0), inSameDayAs: Date()) }
+            .sorted { lhs, rhs in
+                displayDate(for: lhs) < displayDate(for: rhs)
+            }
+    }
+
+    private var recentGroups: [(Date, [MeetingRecord])] {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let recentHistoryStart = calendar.date(byAdding: .day, value: -recentHistoryDays, to: startOfToday) ?? startOfToday
+        let recentMeetings = meetings.filter { meeting in
+            let day = calendar.startOfDay(for: displayDate(for: meeting))
+            return day >= recentHistoryStart && day < startOfToday
+        }
+        let grouped = Dictionary(grouping: recentMeetings) { meeting in
+            calendar.startOfDay(for: displayDate(for: meeting))
+        }
+        return grouped.keys.sorted(by: >).map { day in
+            let meetings = grouped[day]?.sorted { displayDate(for: $0) > displayDate(for: $1) } ?? []
+            return (day, meetings)
+        }
+    }
+
+    private var editableMeetings: [MeetingRecord] {
+        showsSingleFeed ? todayMeetings : sortedMeetings
+    }
+
+    private var showsSingleFeed: Bool {
+        createMeeting != nil
+    }
+
     private var selectedMeeting: MeetingRecord? {
         if let selectedMeetingID,
-           let selected = meetings.first(where: { $0.id == selectedMeetingID }) {
+           let selected = editableMeetings.first(where: { $0.id == selectedMeetingID }) {
             return selected
         }
-        return sortedMeetings.first
+        return editableMeetings.first
     }
 
     private func actionTitle(for meeting: MeetingRecord) -> String {
@@ -201,6 +316,28 @@ struct TodayAgendaView: View {
             draftMeetingID = meetingID
         } catch {
             saveError = "Could not save agenda: \(error)"
+        }
+    }
+}
+
+private struct AgendaFeedSection<Content: View>: View {
+    let title: String
+    let count: Int
+    let content: () -> Content
+
+    init(title: String, count: Int, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.count = count
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).commandCenterEyebrow()
+                CommandCenterChip(title: "\(count)")
+            }
+            content()
         }
     }
 }
@@ -284,6 +421,97 @@ private struct AgendaRowView: View {
         let start = (meeting.scheduledStartAt ?? meeting.startedAt).formatted(date: .omitted, time: .shortened)
         guard let end = meeting.scheduledEndAt else { return start }
         return "\(start)\n\(end.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+private struct RecentAgendaMeetingCard: View {
+    let meeting: MeetingRecord
+    let isSelected: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            CommandCenterPanel {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(meeting.name)
+                            .font(CommandCenterTypography.sectionTitle)
+                            .foregroundStyle(CommandCenterPalette.text)
+                            .lineLimit(2)
+                        Spacer()
+                        Text(displayDate.formatted(date: .abbreviated, time: .shortened))
+                            .commandCenterMono()
+                    }
+
+                    HStack(spacing: 8) {
+                        CommandCenterChip(title: statusText, tint: statusTint, filled: true)
+                        CommandCenterChip(title: durationText)
+                        CommandCenterChip(title: meeting.speechLocaleIdentifier, tint: CommandCenterPalette.cyan)
+                        CommandCenterChip(title: artifactText, tint: artifactTint)
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? CommandCenterPalette.primary : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var statusText: String {
+        switch meeting.transcriptionStatus {
+        case .notStarted:
+            return "Not started"
+        case .transcribing:
+            return "Transcribing"
+        case .transcribed:
+            return "Transcribed"
+        case .failed:
+            return "Failed"
+        case .retryRequested:
+            return "Retry requested"
+        }
+    }
+
+    private var statusTint: Color {
+        switch meeting.transcriptionStatus {
+        case .failed:
+            return CommandCenterPalette.danger
+        case .transcribed:
+            return CommandCenterPalette.primary
+        case .transcribing, .retryRequested:
+            return CommandCenterPalette.warning
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+
+    private var durationText: String {
+        let interval = (meeting.endedAt ?? Date()).timeIntervalSince(meeting.startedAt)
+        let minutes = max(Int(interval) / 60, 0)
+        return minutes == 1 ? "1 min" : "\(minutes) min"
+    }
+
+    private var displayDate: Date {
+        meeting.scheduledStartAt ?? meeting.startedAt
+    }
+
+    private var artifactText: String {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil {
+            return "Summary ready"
+        }
+        if meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return "Transcript ready"
+        }
+        return "Artifacts pending"
+    }
+
+    private var artifactTint: Color {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil || meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return CommandCenterPalette.primary
+        }
+        return CommandCenterPalette.secondaryText
     }
 }
 

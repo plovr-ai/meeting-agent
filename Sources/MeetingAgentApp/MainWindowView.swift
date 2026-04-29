@@ -72,7 +72,7 @@ struct MainWindowView: View {
                     title: agendaTitle(for: destination),
                     emptyTitle: agendaEmptyTitle(for: destination),
                     emptyDescription: agendaEmptyDescription(for: destination),
-                    meetings: meetings(for: destination),
+                    meetings: destination == .today ? viewModel.meetings : meetings(for: destination),
                     selectedMeetingID: viewModel.selectedMeetingID,
                     activeMeetingID: viewModel.activeMeetingID,
                     pendingCandidate: viewModel.pendingCandidate,

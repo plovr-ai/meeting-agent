@@ -74,7 +74,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try appSource(named: "MainWindowView.swift")
 
         XCTAssertTrue(source.contains("TodayAgendaView("))
-        XCTAssertTrue(source.contains("meetings: meetings(for: destination)"))
+        XCTAssertTrue(source.contains("meetings: destination == .today ? viewModel.meetings : meetings(for: destination)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, inSameDayAs: now)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)"))
@@ -94,6 +94,21 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Button(\"Save\")"))
         XCTAssertTrue(source.contains("Button(\"Cancel\")"))
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
+    }
+
+    func testTodayAgendaRestoresSingleFeedSections() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Today\""))
+        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Recent\""))
+        XCTAssertTrue(source.contains("recentGroups"))
+        XCTAssertTrue(source.contains("recentHistoryDays"))
+        XCTAssertTrue(source.contains("RecentAgendaMeetingCard"))
+        XCTAssertTrue(source.contains("Meeting schedule and metadata"))
+        XCTAssertTrue(source.contains("let selected = editableMeetings.first(where: { $0.id == selectedMeetingID })"))
+        XCTAssertTrue(source.contains("Summary ready"))
+        XCTAssertTrue(source.contains("Transcript ready"))
+        XCTAssertTrue(source.contains("Artifacts pending"))
     }
 
     func testTodayAgendaRefreshesCleanDraftWhenSelectedMeetingRecordChanges() throws {
