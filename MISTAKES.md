@@ -414,6 +414,22 @@ When a lower-level service mutates persisted model state during an async operati
 
 ---
 
+## [76] Preserve public protocol compatibility when adding optional context
+
+**Date**: 2026-04-29
+**Category**: api-misuse
+
+### What went wrong
+The first recommended-questions implementation added agenda topics directly to the public `MeetingProgressAnalyzing` protocol requirement, which would force every existing conformer to change even when it did not need agenda context.
+
+### Correct approach
+Keep the existing public protocol requirement intact and add a narrower agenda-aware protocol for analyzers that can use the extra context.
+
+### How to avoid
+When adding optional context to a public protocol, prefer a new refined protocol or adapter path over changing the base requirement.
+
+---
+
 ## [73] Match latency calculations to event time bases
 
 **Date**: 2026-04-29
