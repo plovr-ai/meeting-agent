@@ -33,15 +33,26 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Button(\"History\")"))
         XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
         XCTAssertTrue(source.contains("meetings(for: destination)"))
-        XCTAssertTrue(source.contains("emptyMeetingListText(for: destination)"))
+        XCTAssertTrue(source.contains("TodayAgendaView("))
+        XCTAssertTrue(source.contains("case .today, .thisWeek, .history:"))
+        XCTAssertTrue(source.contains("agendaEmptyTitle(for: destination)"))
+        XCTAssertTrue(source.contains("agendaEmptyDescription(for: destination)"))
         XCTAssertTrue(source.contains("meetingDisplayDate(_ meeting: MeetingRecord)"))
         XCTAssertTrue(source.contains("meeting.scheduledStartAt ?? meeting.startedAt"))
-        XCTAssertTrue(source.contains("No meetings today"))
-        XCTAssertTrue(source.contains("No meetings this week"))
+        XCTAssertTrue(source.contains("No meetings scheduled today"))
+        XCTAssertTrue(source.contains("No meetings scheduled this week"))
         XCTAssertTrue(source.contains("No meeting history"))
         XCTAssertFalse(source.contains("Button(\"Recordings\")"))
         XCTAssertFalse(source.contains("Text(\"Recent Recordings\")"))
         XCTAssertFalse(source.contains("Text(\"Meetings\")"))
+    }
+
+    func testSidebarBucketNavigationDoesNotRenderMeetingSelectionList() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertFalse(source.contains("List(selection: Binding("))
+        XCTAssertFalse(source.contains(".tag(Optional(meeting.id))"))
+        XCTAssertFalse(source.contains("meetingListTitle(for: destination)"))
     }
 
     func testSidebarNavigationRowsDefineFullWidthHitArea() throws {
@@ -63,7 +74,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try appSource(named: "MainWindowView.swift")
 
         XCTAssertTrue(source.contains("TodayAgendaView("))
-        XCTAssertTrue(source.contains("meetings: meetings(for: .today)"))
+        XCTAssertTrue(source.contains("meetings: meetings(for: destination)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, inSameDayAs: now)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)"))
@@ -188,13 +199,13 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("\"STT Locale\""))
     }
 
-    func testMeetingRowsUseListSelectionTags() throws {
+    func testMeetingRowsDoNotUseSidebarListSelectionTags() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("List(selection: Binding("))
-        XCTAssertTrue(source.contains(".tag(Optional(meeting.id))"))
+        XCTAssertFalse(source.contains("List(selection: Binding("))
+        XCTAssertFalse(source.contains(".tag(Optional(meeting.id))"))
         XCTAssertFalse(source.contains(".onTapGesture {\n                            viewModel.selectMeeting(meeting.id)"))
     }
 

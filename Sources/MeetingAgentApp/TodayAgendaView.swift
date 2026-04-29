@@ -2,6 +2,9 @@ import MeetingAgentCore
 import SwiftUI
 
 struct TodayAgendaView: View {
+    let title: String
+    let emptyTitle: String
+    let emptyDescription: String
     let meetings: [MeetingRecord]
     let selectedMeetingID: UUID?
     let activeMeetingID: UUID?
@@ -11,7 +14,7 @@ struct TodayAgendaView: View {
     let openWorkspace: (MeetingRecord) -> Void
     let startRecording: (MeetingRecord) -> Void
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
-    let createMeeting: () throws -> Void
+    let createMeeting: (() throws -> Void)?
 
     @State private var draft = AgendaDraft()
     @State private var recordBackedDraft = AgendaDraft()
@@ -58,7 +61,7 @@ struct TodayAgendaView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Today")
+                Text(title)
                     .font(CommandCenterTypography.title)
                     .foregroundStyle(CommandCenterPalette.text)
                 Text(Date().formatted(date: .complete, time: .omitted))
@@ -66,7 +69,7 @@ struct TodayAgendaView: View {
                     .foregroundStyle(CommandCenterPalette.secondaryText)
             }
             Spacer()
-            CommandCenterChip(title: "\(todayMeetings.count) meetings")
+            CommandCenterChip(title: "\(sortedMeetings.count) meetings")
             if let activeMeetingID, meetings.contains(where: { $0.id == activeMeetingID }) {
                 CommandCenterChip(title: "Live recording", tint: CommandCenterPalette.primary, filled: true)
             }
@@ -83,13 +86,13 @@ struct TodayAgendaView: View {
 
     @ViewBuilder
     private var agendaList: some View {
-        if todayMeetings.isEmpty {
+        if sortedMeetings.isEmpty {
             CommandCenterPanel {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("No meetings scheduled today")
+                    Text(emptyTitle)
                         .font(CommandCenterTypography.title)
                         .foregroundStyle(CommandCenterPalette.text)
-                    Text("Create a local agenda item to prepare attendees, topics, and meeting goals before recording.")
+                    Text(emptyDescription)
                         .font(CommandCenterTypography.secondaryBody)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
                     if let createError {
@@ -97,22 +100,24 @@ struct TodayAgendaView: View {
                             .font(CommandCenterTypography.caption)
                             .foregroundStyle(CommandCenterPalette.danger)
                     }
-                    Button("Create Meeting") {
-                        do {
-                            try createMeeting()
-                            createError = nil
-                        } catch {
-                            createError = "Could not create meeting: \(error)"
+                    if let createMeeting {
+                        Button("Create Meeting") {
+                            do {
+                                try createMeeting()
+                                createError = nil
+                            } catch {
+                                createError = "Could not create meeting: \(error)"
+                            }
                         }
+                        .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
                     }
-                    .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
                 }
             }
             .padding(24)
         } else {
             CommandCenterScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(todayMeetings) { meeting in
+                    ForEach(sortedMeetings) { meeting in
                         AgendaRowView(
                             meeting: meeting,
                             isSelected: meeting.id == selectedMeetingID,
@@ -132,7 +137,7 @@ struct TodayAgendaView: View {
         }
     }
 
-    private var todayMeetings: [MeetingRecord] {
+    private var sortedMeetings: [MeetingRecord] {
         meetings.sorted { lhs, rhs in
             displayDate(for: lhs) < displayDate(for: rhs)
         }
@@ -143,7 +148,7 @@ struct TodayAgendaView: View {
            let selected = meetings.first(where: { $0.id == selectedMeetingID }) {
             return selected
         }
-        return todayMeetings.first
+        return sortedMeetings.first
     }
 
     private func actionTitle(for meeting: MeetingRecord) -> String {
