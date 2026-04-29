@@ -19,6 +19,10 @@ public extension AudioFrameTranscriber {
     var failureReason: String? { nil }
 }
 
+public protocol TranscriptUpdateSink: AnyObject {
+    func receive(_ update: TranscriptSegmentUpdate)
+}
+
 public struct SpeechTranscriptionContext: Equatable {
     public let inputAudioURL: URL?
     public let transcriptURL: URL
@@ -47,19 +51,22 @@ public struct SpeechTranscriptionStreamContext {
     public let sampleRate: Double
     public let channelCount: Int
     public let performanceEventLogger: PerformanceEventLogger?
+    public let transcriptUpdateSink: TranscriptUpdateSink?
 
     public init(
         transcriptURL: URL,
         localeIdentifier: String,
         sampleRate: Double,
         channelCount: Int,
-        performanceEventLogger: PerformanceEventLogger? = nil
+        performanceEventLogger: PerformanceEventLogger? = nil,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil
     ) {
         self.transcriptURL = transcriptURL
         self.localeIdentifier = localeIdentifier
         self.sampleRate = sampleRate
         self.channelCount = channelCount
         self.performanceEventLogger = performanceEventLogger
+        self.transcriptUpdateSink = transcriptUpdateSink
     }
 }
 
@@ -102,14 +109,16 @@ public enum StreamingSpeechTranscriberFactory {
         transcriptURL: URL,
         sampleRate: Double,
         channelCount: Int,
-        performanceEventLogger: PerformanceEventLogger? = nil
+        performanceEventLogger: PerformanceEventLogger? = nil,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil
     ) async throws -> AudioFrameTranscriber {
         let context = SpeechTranscriptionStreamContext(
             transcriptURL: transcriptURL,
             localeIdentifier: configuration.localeIdentifier,
             sampleRate: sampleRate,
             channelCount: channelCount,
-            performanceEventLogger: performanceEventLogger
+            performanceEventLogger: performanceEventLogger,
+            transcriptUpdateSink: transcriptUpdateSink
         )
         if configuration.usesDeepgram {
             return try await DeepgramStreamingSpeechTranscriptionProvider(

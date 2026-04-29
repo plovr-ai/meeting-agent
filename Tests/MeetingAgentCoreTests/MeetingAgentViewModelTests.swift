@@ -2703,8 +2703,14 @@ private final class ViewModelFakeAudioFrameWriter: AudioFrameWriting {
 }
 
 private final class ViewModelFakeAudioFrameTranscriber: AudioFrameTranscriber {
+    var transcriptUpdateSink: TranscriptUpdateSink?
+
     func append(_ frame: AudioFrame) throws {}
     func finish() {}
+
+    func emit(_ update: TranscriptSegmentUpdate) {
+        transcriptUpdateSink?.receive(update)
+    }
 }
 
 private final class ViewModelFakeTranscriberFactory {
@@ -2724,9 +2730,11 @@ private final class ViewModelFakeTranscriberFactory {
         transcriptURL: URL,
         sampleRate: Double,
         channelCount: Int,
-        performanceEventLogger: PerformanceEventLogger?
+        performanceEventLogger: PerformanceEventLogger?,
+        transcriptUpdateSink: TranscriptUpdateSink?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(localeIdentifier: configuration.localeIdentifier))
+        transcriber.transcriptUpdateSink = transcriptUpdateSink
         return transcriber
     }
 }

@@ -269,6 +269,45 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(diagnostics.endedReason, .captureFailed)
         XCTAssertEqual(diagnostics.status, .captureFailed)
     }
+
+    func testRecorderDrainsTranscriptUpdatesWithoutReadingTranscriptFile() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "hello live",
+            language: "en-US",
+            sourceProvider: "fake",
+            isFinal: true
+        )))
+
+        let updates = fixture.recorder.drainTranscriptUpdates()
+
+        XCTAssertEqual(updates.flatMap { $0.document.segments.map(\.text) }, ["hello live"])
+    }
+
+    func testRecorderPersistsCanonicalTranscriptFromUpdates() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "persist me",
+            language: "en-US",
+            sourceProvider: "fake",
+            isFinal: true
+        )))
+
+        _ = fixture.recorder.drainTranscriptUpdates()
+
+        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(document.segments.map(\.text), ["persist me"])
+    }
 }
 
 private struct RecorderFixture {
@@ -371,6 +410,7 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
     var appendError: Error?
     var appendedFrames: [AudioFrame] = []
     var finishCallCount = 0
+    var transcriptUpdateSink: TranscriptUpdateSink?
 
     func append(_ frame: AudioFrame) throws {
         if let appendError {
@@ -381,6 +421,10 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
 
     func finish() {
         finishCallCount += 1
+    }
+
+    func emit(_ update: TranscriptSegmentUpdate) {
+        transcriptUpdateSink?.receive(update)
     }
 }
 
@@ -406,7 +450,8 @@ private final class FakeRecorderTranscriberFactory {
         transcriptURL: URL,
         sampleRate: Double,
         channelCount: Int,
-        performanceEventLogger: PerformanceEventLogger?
+        performanceEventLogger: PerformanceEventLogger?,
+        transcriptUpdateSink: TranscriptUpdateSink?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(
             localeIdentifier: configuration.localeIdentifier,
@@ -421,6 +466,7 @@ private final class FakeRecorderTranscriberFactory {
         if let error {
             throw error
         }
+        transcriber.transcriptUpdateSink = transcriptUpdateSink
         return transcriber
     }
 

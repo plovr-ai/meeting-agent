@@ -11,11 +11,12 @@ public final class MeetingRecorder {
     private var activeRecord: MeetingRecord?
     private let captureSessionFactory: () -> AudioCaptureSessionManaging
     private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
-    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber
+    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber
     private let silenceDetector: AudioSilenceDetector
     private var captureSession: AudioCaptureSessionManaging?
     private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
+    private var transcriptUpdateSink: RecordingTranscriptUpdateSink?
     private var performanceEventLogger: PerformanceEventLogger?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
@@ -32,13 +33,14 @@ public final class MeetingRecorder {
             wavWriterFactory: { url, sampleRate, channelCount in
                 try WavFileWriter(url: url, sampleRate: sampleRate, channelCount: channelCount)
             },
-            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount, performanceEventLogger in
+            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount, performanceEventLogger, transcriptUpdateSink in
                 try await StreamingSpeechTranscriberFactory.startTranscriber(
                     configuration: configuration,
                     transcriptURL: transcriptURL,
                     sampleRate: sampleRate,
                     channelCount: channelCount,
-                    performanceEventLogger: performanceEventLogger
+                    performanceEventLogger: performanceEventLogger,
+                    transcriptUpdateSink: transcriptUpdateSink
                 )
             }
         )
@@ -48,7 +50,7 @@ public final class MeetingRecorder {
         store: MeetingStore,
         captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
-        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?) async throws -> AudioFrameTranscriber,
+        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber,
         silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
     ) {
         self.store = store
@@ -187,12 +189,15 @@ public final class MeetingRecorder {
 
         if let transcriptURL = updatedRecord.transcriptURL {
             do {
+                let updateSink = try RecordingTranscriptUpdateSink(transcriptURL: transcriptURL)
+                transcriptUpdateSink = updateSink
                 let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
                     transcriptURL,
                     session.outputSampleRate,
                     session.outputChannelCount,
-                    performanceEventLogger
+                    performanceEventLogger,
+                    updateSink
                 )
                 transcriber = startedTranscriber
                 isStartingTranscriber = false
@@ -200,6 +205,7 @@ public final class MeetingRecorder {
             } catch {
                 isStartingTranscriber = false
                 pendingTranscriptionFrames = []
+                transcriptUpdateSink = nil
                 try markTranscriptionFailed("Speech recognition unavailable: \(error)")
                 performanceEventLogger?.log(
                     "transcriber_start_failed",
@@ -246,6 +252,10 @@ public final class MeetingRecorder {
         }
     }
 
+    public func drainTranscriptUpdates() -> [TranscriptSegmentAccumulationResult] {
+        transcriptUpdateSink?.drainResults() ?? []
+    }
+
     public func stopRecording(
         at endedAt: Date = Date(),
         endedReason: CaptureEndedReason = .saved
@@ -264,6 +274,8 @@ public final class MeetingRecorder {
         diagnosticsTracker?.finish(endedReason: endedReason)
         writer = nil
         transcriber = nil
+        transcriptUpdateSink?.close()
+        transcriptUpdateSink = nil
         captureSession = nil
         return try markStopped(at: endedAt, endedReason: endedReason)
     }
@@ -343,6 +355,45 @@ public final class MeetingRecorder {
         record.transcriptionFailureReason = message
         activeRecord = record
         try store.save(record)
+    }
+}
+
+private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
+    private let writer: TranscriptFileWriter
+    private var accumulator = TranscriptSegmentAccumulator()
+    private var pendingResults: [TranscriptSegmentAccumulationResult] = []
+    private let lock = NSLock()
+
+    init(transcriptURL: URL) throws {
+        self.writer = try TranscriptFileWriter(url: transcriptURL)
+    }
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = accumulator.apply(update)
+        pendingResults.append(result)
+        persist(result)
+    }
+
+    func drainResults() -> [TranscriptSegmentAccumulationResult] {
+        lock.lock()
+        defer { lock.unlock() }
+        let results = pendingResults
+        pendingResults.removeAll()
+        return results
+    }
+
+    func close() {
+        try? writer.close()
+    }
+
+    private func persist(_ result: TranscriptSegmentAccumulationResult) {
+        if let text = result.plainTextReplacement {
+            try? writer.replace(with: text)
+        } else {
+            try? writer.replace(with: result.document.segments)
+        }
     }
 }
 
