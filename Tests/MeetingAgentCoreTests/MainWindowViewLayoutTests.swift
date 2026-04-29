@@ -71,11 +71,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(metadataSource.contains("Image(systemName: \"exclamationmark.circle\")"))
         XCTAssertTrue(metadataSource.contains(".help(pipelineDebugHelpText)"))
         XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: transcriptionStatusText"))
-        XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: pipelineDisplayName"))
+        XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: pipelineDisplayName"))
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Actual STT Source:"))
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Transcription Link:"))
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Transcription Model:"))
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Preflight:"))
+        XCTAssertTrue(source.contains("\"Pipeline: \\(pipelineDisplayName)\""))
+        XCTAssertTrue(source.contains("\"Transcript Latency: \\(transcriptLatencyText)\""))
+        XCTAssertTrue(source.contains("\"Translation Latency: \\(translationLatencyText)\""))
+        XCTAssertTrue(source.contains("meeting.performanceEventsURL"))
+        XCTAssertTrue(source.contains("PerformanceEvent.self"))
+        XCTAssertTrue(source.contains("translationRequestID"))
+        XCTAssertTrue(source.contains("caption_translation_scheduled"))
+        XCTAssertTrue(source.contains("caption_translation_attached"))
     }
 
     func testRecordingAndRetryButtonsShareActionRow() throws {
