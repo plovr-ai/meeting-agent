@@ -24,7 +24,6 @@ public final class MeetingRecorder {
     private let pendingTranscriptionFrameLimit = 3_000
 
     public private(set) var state: MeetingRecorderState = .idle
-    public weak var realtimeFrameConsumer: RealtimeFrameConsumer?
 
     public convenience init(store: MeetingStore = MeetingStore()) {
         self.init(
@@ -245,7 +244,6 @@ public final class MeetingRecorder {
                 bufferPendingTranscriptionFrame(frame)
             }
         }
-        deliverFramesToRealtimeConsumerForTesting(frames)
     }
 
     public func stopRecording(
@@ -304,11 +302,6 @@ public final class MeetingRecorder {
 
     public var currentCaptureStatus: CaptureStatus? {
         diagnosticsTracker?.liveStatus
-    }
-
-    public func deliverFramesToRealtimeConsumerForTesting(_ frames: [AudioFrame]) {
-        guard !frames.isEmpty else { return }
-        realtimeFrameConsumer?.consumeRealtimeFrames(frames)
     }
 
     private func persistTranscriptionFailure(_ message: String) throws {

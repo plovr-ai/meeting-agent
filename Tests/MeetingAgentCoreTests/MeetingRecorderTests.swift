@@ -46,27 +46,10 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(diagnostics.status, .targetProcessEnded)
     }
 
-    func testRecorderCanFanOutFramesToRealtimeConsumerWithoutThrowing() throws {
-        let storeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-recorder-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: storeRoot) }
-        let store = MeetingStore(baseDirectory: storeRoot)
-        let recorder = MeetingRecorder(store: store)
-        let consumer = CapturingRealtimeFrameConsumer()
-
-        recorder.realtimeFrameConsumer = consumer
-        let frame = AudioFrame(pcm: Data([1, 2, 3]), sampleRate: 24_000, channelCount: 1, timestampNanos: 0)
-
-        recorder.deliverFramesToRealtimeConsumerForTesting([frame])
-
-        XCTAssertEqual(consumer.receivedFrames, [frame])
-    }
-
     func testStartDrainAndStopRecordingWithInjectedCapturePipeline() async throws {
         let fixture = try RecorderFixture()
         let frame = AudioFrame(pcm: Data([64, 0, 65, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 9)
         fixture.session.frameBuffer.push(frame)
-        let consumer = CapturingRealtimeFrameConsumer()
-        fixture.recorder.realtimeFrameConsumer = consumer
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
 
         try await fixture.recorder.startRecording(
@@ -85,7 +68,6 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(fixture.transcriberFactory.requests.first?.sampleRate, 16_000)
         XCTAssertEqual(fixture.writer.writtenFrames, [frame])
         XCTAssertEqual(fixture.transcriber.appendedFrames, [frame])
-        XCTAssertEqual(consumer.receivedFrames, [frame])
         XCTAssertEqual(fixture.writer.closeCallCount, 1)
         XCTAssertEqual(fixture.transcriber.finishCallCount, 1)
         XCTAssertEqual(fixture.session.stopCallCount, 1)
@@ -102,8 +84,6 @@ final class MeetingRecorderTests: XCTestCase {
         let fixture = try RecorderFixture()
         let silentFrame = AudioFrame(pcm: Data([0, 0, 2, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
         let voicedFrame = AudioFrame(pcm: Data([64, 0, 0, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 2)
-        let consumer = CapturingRealtimeFrameConsumer()
-        fixture.recorder.realtimeFrameConsumer = consumer
         fixture.session.frameBuffer.push(silentFrame)
         fixture.session.frameBuffer.push(voicedFrame)
         let record = try fixture.recorder.prepareRecord(for: fixture.target)
@@ -113,7 +93,6 @@ final class MeetingRecorderTests: XCTestCase {
 
         XCTAssertEqual(fixture.writer.writtenFrames, [silentFrame, voicedFrame])
         XCTAssertEqual(fixture.transcriber.appendedFrames, [voicedFrame])
-        XCTAssertEqual(consumer.receivedFrames, [silentFrame, voicedFrame])
     }
 
     func testPrepareRecordCanReuseExistingAgendaRecord() throws {
@@ -289,14 +268,6 @@ final class MeetingRecorderTests: XCTestCase {
         )
         XCTAssertEqual(diagnostics.endedReason, .captureFailed)
         XCTAssertEqual(diagnostics.status, .captureFailed)
-    }
-}
-
-private final class CapturingRealtimeFrameConsumer: RealtimeFrameConsumer {
-    var receivedFrames: [AudioFrame] = []
-
-    func consumeRealtimeFrames(_ frames: [AudioFrame]) {
-        receivedFrames.append(contentsOf: frames)
     }
 }
 
