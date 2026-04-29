@@ -31,6 +31,24 @@ final class MeetingRecordTests: XCTestCase {
                 expectedDecisions: [],
                 keyTerms: [MeetingKeyTerm(value: "launch")]
             ),
+            meetingGoals: [
+                MeetingGoal(
+                    id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+                    title: "Confirm launch plan",
+                    objectives: [MeetingObjective(id: "owner", title: "Confirm launch owner")],
+                    requiredQuestions: ["Have we confirmed the deadline?"],
+                    expectedDecisions: [],
+                    keyTerms: [MeetingKeyTerm(value: "launch")]
+                ),
+                MeetingGoal(
+                    id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+                    title: "Align support plan",
+                    objectives: [],
+                    requiredQuestions: [],
+                    expectedDecisions: [],
+                    keyTerms: []
+                )
+            ],
             attendees: [
                 MeetingAttendee(
                     id: UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!,
@@ -69,6 +87,97 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertEqual(record.speechProvider, .whisper)
         XCTAssertEqual(record.transcriptionProviderID, "whisper")
         XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
+    }
+
+    func testMeetingRecordInitializerDerivesMeetingGoalsFromLegacyGoal() {
+        let goal = MeetingGoal(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            title: "Confirm launch plan",
+            objectives: [],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+
+        let record = MeetingRecord(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            name: "Google Meet",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            audioURL: nil,
+            transcriptURL: nil,
+            meetingGoal: goal
+        )
+
+        XCTAssertEqual(record.meetingGoal?.title, "Confirm launch plan")
+        XCTAssertEqual(record.meetingGoals.map(\.title), ["Confirm launch plan"])
+    }
+
+    func testMeetingRecordInitializerDefaultsToNoGoals() {
+        let record = MeetingRecord(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            name: "Google Meet",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            audioURL: nil,
+            transcriptURL: nil
+        )
+
+        XCTAssertNil(record.meetingGoal)
+        XCTAssertEqual(record.meetingGoals, [])
+    }
+
+    func testMeetingRecordInitializerFallsBackFromBlankProviderAndLocale() {
+        let record = MeetingRecord(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            name: "Google Meet",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            audioURL: nil,
+            transcriptURL: nil,
+            transcriptionProviderID: "   ",
+            speechLocaleIdentifier: "   "
+        )
+
+        XCTAssertEqual(record.transcriptionProviderID, "whisper")
+        XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
+    }
+
+    func testMeetingAgendaUpdateDerivesMeetingGoalsFromLegacyGoal() {
+        let goal = MeetingGoal(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            title: "Confirm launch plan",
+            objectives: [],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+
+        let update = MeetingAgendaUpdate(
+            name: "Planning",
+            attendees: [],
+            agendaTopics: [],
+            scheduledStartAt: nil,
+            scheduledEndAt: nil,
+            meetingGoal: goal
+        )
+
+        XCTAssertEqual(update.meetingGoal?.title, "Confirm launch plan")
+        XCTAssertEqual(update.meetingGoals.map(\.title), ["Confirm launch plan"])
+    }
+
+    func testMeetingAgendaUpdateDefaultsToNoGoals() {
+        let update = MeetingAgendaUpdate(
+            name: "Planning",
+            attendees: [],
+            agendaTopics: [],
+            scheduledStartAt: nil,
+            scheduledEndAt: nil,
+            meetingGoal: nil
+        )
+
+        XCTAssertNil(update.meetingGoal)
+        XCTAssertEqual(update.meetingGoals, [])
     }
 
     func testActiveRecordHasNoEndTime() {
@@ -164,6 +273,70 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertNil(decoded.meetingGoal)
     }
 
+    func testDecodesLegacyMeetingGoalIntoMeetingGoals() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "meetingGoal" : {
+            "expectedDecisions" : [],
+            "id" : "22222222-2222-2222-2222-222222222222",
+            "keyTerms" : [],
+            "objectives" : [],
+            "requiredQuestions" : [],
+            "title" : "Confirm launch plan"
+          },
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.meetingGoals.map(\.title), ["Confirm launch plan"])
+        XCTAssertEqual(decoded.meetingGoal?.title, "Confirm launch plan")
+    }
+
+    func testDecodesMeetingGoalsIntoLegacyFirstGoal() throws {
+        let json = """
+        {
+          "audioURL" : "file:\\/\\/\\/tmp\\/audio.wav",
+          "endedAt" : null,
+          "id" : "11111111-1111-1111-1111-111111111111",
+          "meetingGoals" : [
+            {
+              "expectedDecisions" : [],
+              "id" : "22222222-2222-2222-2222-222222222222",
+              "keyTerms" : [],
+              "objectives" : [],
+              "requiredQuestions" : [],
+              "title" : "Align rollout"
+            },
+            {
+              "expectedDecisions" : [],
+              "id" : "33333333-3333-3333-3333-333333333333",
+              "keyTerms" : [],
+              "objectives" : [],
+              "requiredQuestions" : [],
+              "title" : "Confirm owner"
+            }
+          ],
+          "name" : "Google Meet",
+          "startedAt" : "2026-04-25T10:00:00Z",
+          "transcriptJSONURL" : "file:\\/\\/\\/tmp\\/transcript.json",
+          "transcriptURL" : "file:\\/\\/\\/tmp\\/transcript.txt"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.meetingGoals.map(\.title), ["Align rollout", "Confirm owner"])
+        XCTAssertEqual(decoded.meetingGoal?.title, "Align rollout")
+    }
+
     func testDecodesLegacyMetadataWithoutAgendaFields() throws {
         let json = """
         {
@@ -181,6 +354,7 @@ final class MeetingRecordTests: XCTestCase {
 
         XCTAssertEqual(decoded.attendees, [])
         XCTAssertEqual(decoded.agendaTopics, [])
+        XCTAssertEqual(decoded.meetingGoals, [])
         XCTAssertNil(decoded.scheduledStartAt)
         XCTAssertNil(decoded.scheduledEndAt)
     }

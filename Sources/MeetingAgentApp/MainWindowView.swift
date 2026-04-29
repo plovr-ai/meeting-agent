@@ -116,6 +116,7 @@ struct MainWindowView: View {
                     isRecording: viewModel.isRecording,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
                     recommendedQuestions: viewModel.recommendedQuestions,
+                    meetingProgressState: viewModel.meetingProgressState,
                     backToMeetings: {
                         destination = workspaceReturnDestination
                     },
@@ -378,6 +379,7 @@ private struct MeetingDetailView: View {
     let isRecording: Bool
     let liveCaptionTurns: [LiveCaptionTurn]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let meetingProgressState: MeetingProgressState?
     let backToMeetings: () -> Void
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
@@ -410,6 +412,7 @@ private struct MeetingDetailView: View {
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
                     summary: summary(for: meeting),
                     recommendedQuestions: recommendedQuestions,
+                    meetingProgressState: meetingProgressState,
                     saveAgenda: saveAgenda,
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
@@ -563,6 +566,7 @@ private struct MeetingCommandCenterView: View {
     let transcriptionStatusText: String
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let meetingProgressState: MeetingProgressState?
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: () -> Void
@@ -616,7 +620,8 @@ private struct MeetingCommandCenterView: View {
                         meeting: meeting,
                         isRecording: isRecording,
                         summary: summary,
-                        recommendedQuestions: recommendedQuestions
+                        recommendedQuestions: recommendedQuestions,
+                        meetingProgressState: meetingProgressState
                     )
                     .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
                 }
@@ -745,8 +750,10 @@ private struct MeetingCommandCenterView: View {
     }
 
     private var goalDisplay: String {
-        let normalized = meeting.meetingGoal?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? "No goal" : normalized
+        let titles = meetingGoalTitles(for: meeting)
+        guard let first = titles.first else { return "No goals" }
+        let remaining = titles.count - 1
+        return remaining > 0 ? "\(first) +\(remaining)" : first
     }
 
     private var attendeesDisplay: String {
@@ -1046,11 +1053,16 @@ private struct InsightPaneView: View {
     let isRecording: Bool
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let meetingProgressState: MeetingProgressState?
 
     var body: some View {
         VStack(spacing: 0) {
             CommandCenterScrollView(background: CommandCenterPalette.surface, content: {
                 VStack(alignment: .leading, spacing: 16) {
+                    GoalTrackerPanel(
+                        meeting: meeting,
+                        meetingProgressState: meetingProgressState
+                    )
                     if !recommendedQuestions.isEmpty {
                         RecommendedQuestionsPanel(questions: recommendedQuestions)
                     }
@@ -1098,6 +1110,80 @@ private struct InsightPaneView: View {
             }
         }
     }
+}
+
+private struct GoalTrackerPanel: View {
+    let meeting: MeetingRecord
+    let meetingProgressState: MeetingProgressState?
+
+    var body: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Goals").commandCenterEyebrow()
+                let titles = meetingGoalTitles(for: meeting)
+                if titles.isEmpty {
+                    Text("No goals set.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                } else {
+                    ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
+                        HStack(spacing: 10) {
+                            Text(title)
+                                .font(CommandCenterTypography.secondaryBody)
+                                .foregroundStyle(CommandCenterPalette.text)
+                                .lineLimit(2)
+                            Spacer(minLength: 8)
+                            CommandCenterChip(
+                                title: statusText(forGoalAt: index),
+                                tint: statusTint(forGoalAt: index),
+                                filled: index == 0 && firstGoalHasProgress
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var firstGoalHasProgress: Bool {
+        guard let progressGoalID = meetingProgressState?.goal.id,
+              let firstGoalID = goalList.first?.id
+        else {
+            return false
+        }
+        return progressGoalID == firstGoalID
+    }
+
+    private var goalList: [MeetingGoal] {
+        meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    }
+
+    private func statusText(forGoalAt index: Int) -> String {
+        guard index == 0, firstGoalHasProgress else { return "Pending" }
+        return meetingProgressState?.status.displayText ?? "Pending"
+    }
+
+    private func statusTint(forGoalAt index: Int) -> Color {
+        guard index == 0, let status = meetingProgressState?.status, firstGoalHasProgress else {
+            return CommandCenterPalette.secondaryText
+        }
+        switch status {
+        case .blocked:
+            return CommandCenterPalette.danger
+        case .partiallyCovered:
+            return CommandCenterPalette.warning
+        case .onTrack:
+            return CommandCenterPalette.primary
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+}
+
+private func meetingGoalTitles(for meeting: MeetingRecord) -> [String] {
+    let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    return goals
+        .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
 }
 
 private struct RecommendedQuestionsPanel: View {

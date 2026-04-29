@@ -2655,7 +2655,30 @@ final class MeetingAgentViewModelTests: XCTestCase {
                     requiredQuestions: [],
                     expectedDecisions: [],
                     keyTerms: []
-                )
+                ),
+                meetingGoals: [
+                    MeetingGoal(
+                        title: " Align on rollout ",
+                        objectives: [],
+                        requiredQuestions: [],
+                        expectedDecisions: [],
+                        keyTerms: []
+                    ),
+                    MeetingGoal(
+                        title: " Confirm launch owner ",
+                        objectives: [],
+                        requiredQuestions: [],
+                        expectedDecisions: [],
+                        keyTerms: []
+                    ),
+                    MeetingGoal(
+                        title: "   ",
+                        objectives: [],
+                        requiredQuestions: [],
+                        expectedDecisions: [],
+                        keyTerms: []
+                    )
+                ]
             )
         )
 
@@ -2668,6 +2691,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(saved.scheduledStartAt, Date(timeIntervalSince1970: 500))
         XCTAssertEqual(saved.scheduledEndAt, Date(timeIntervalSince1970: 800))
         XCTAssertEqual(saved.meetingGoal?.title, "Align on rollout")
+        XCTAssertEqual(saved.meetingGoals.map(\.title), ["Align on rollout", "Confirm launch owner"])
+        XCTAssertEqual(loaded.meetingGoals.map(\.title), ["Align on rollout", "Confirm launch owner"])
+        XCTAssertEqual(loaded.meetingGoal?.title, "Align on rollout")
         XCTAssertEqual(loaded, saved)
     }
 
