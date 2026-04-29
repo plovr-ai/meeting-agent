@@ -47,6 +47,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let exportService: MeetingExportService
     private var liveCaptionStore = LiveCaptionStore()
     private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
+    private var liveCaptionPipeline: LiveCaptionPipeline
+    private var liveCaptionReplayTask: Task<Void, Never>?
     private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
     @Published public private(set) var meetingGoal: MeetingGoal?
     public var recommendedQuestions: [FollowUpQuestionSuggestion] {
@@ -98,18 +100,24 @@ public final class MeetingAgentViewModel: ObservableObject {
             Self.summaryProvider(for: configuration)
         }
         self.processTargetsProvider = processTargetsProvider
+        let resolvedSpeechConfiguration: SpeechTranscriptionConfiguration
         if let speechConfiguration {
-            self.speechConfiguration = speechConfiguration
+            resolvedSpeechConfiguration = speechConfiguration
         } else if speechProvider != .whisper || speechLocaleIdentifier != Locale.current.identifier {
-            self.speechConfiguration = SpeechTranscriptionConfiguration(
+            resolvedSpeechConfiguration = SpeechTranscriptionConfiguration(
                 provider: speechProvider,
                 localeIdentifier: speechLocaleIdentifier,
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             )
         } else {
-            self.speechConfiguration = (try? speechConfigurationStore.load()) ?? .default
+            resolvedSpeechConfiguration = (try? speechConfigurationStore.load()) ?? .default
         }
+        self.speechConfiguration = resolvedSpeechConfiguration
+        liveCaptionPipeline = Self.makeLiveCaptionPipeline(
+            configuration: resolvedSpeechConfiguration,
+            translationProvider: nil
+        )
         refreshPrimaryChainPreflightResult()
     }
 
@@ -350,7 +358,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
         if transcriptResults.isEmpty {
-            refreshLiveCaptionTurnsFromSelectedMeeting()
+            refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
         } else {
             applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults)
         }
@@ -529,7 +537,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             structuredURL: record.transcriptJSONURL
         )
         resetLiveCaptionPipeline()
-        refreshLiveCaptionTurnsFromSelectedMeeting()
+        await refreshLiveCaptionTurnsFromSelectedMeetingAsync()
         statusText = "Speaker label updated"
         objectWillChange.send()
     }
@@ -550,7 +558,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
         await invalidateDownstreamArtifactsAfterTranscriptChange(for: meetingID)
         resetLiveCaptionPipeline()
-        refreshLiveCaptionTurnsFromSelectedMeeting()
+        await refreshLiveCaptionTurnsFromSelectedMeetingAsync()
         statusText = "Transcript corrected; summary needs regeneration"
         objectWillChange.send()
     }
@@ -786,6 +794,27 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
+    private static func makeLiveCaptionPipeline(
+        configuration: SpeechTranscriptionConfiguration,
+        translationProvider: TextTranslationProvider?
+    ) -> LiveCaptionPipeline {
+        LiveCaptionPipeline(
+            sourceLocale: configuration.localeIdentifier,
+            targetLocale: configuration.targetLocaleIdentifier,
+            translationProvider: translationProvider,
+            performanceEventLogger: nil
+        )
+    }
+
+    private func makeLiveCaptionPipeline(
+        translationProvider: TextTranslationProvider? = nil
+    ) -> LiveCaptionPipeline {
+        Self.makeLiveCaptionPipeline(
+            configuration: speechConfiguration,
+            translationProvider: translationProvider
+        )
+    }
+
     private func resetLiveCaptionStore() {
         liveCaptionStore.reset(
             sourceLocale: speechConfiguration.localeIdentifier,
@@ -800,6 +829,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func resetLiveCaptionPipeline(keepStore: Bool = false) {
+        liveCaptionReplayTask?.cancel()
+        liveCaptionReplayTask = nil
         if !keepStore {
             liveCaptionStore.reset(
                 sourceLocale: speechConfiguration.localeIdentifier,
@@ -811,6 +842,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             sourceLocale: speechConfiguration.localeIdentifier,
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
+        liveCaptionPipeline = makeLiveCaptionPipeline()
         processedLiveCaptionSegmentSignaturesByID.removeAll()
         draftTranslationKeysByTurnID.removeAll()
         draftTranslationInFlightByTurnID.removeAll()
@@ -872,14 +904,58 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func refreshLiveCaptionTurnsFromSelectedMeeting() {
-        guard let meeting = selectedMeeting,
-              let transcriptJSONURL = meeting.transcriptJSONURL,
-              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        else {
+        guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
             liveCaptionTurns = []
+            meetingProgressHealth.caption = .idle
+            return
+        }
+        liveCaptionReplayTask?.cancel()
+        liveCaptionReplayTask = Task { [weak self] in
+            await self?.refreshLiveCaptionTurnsFromSelectedMeetingAsync(document: document)
+        }
+    }
+
+    private func refreshLiveCaptionTurnsFromSelectedMeetingSynchronously() {
+        liveCaptionReplayTask?.cancel()
+        liveCaptionReplayTask = nil
+        guard let document = selectedTranscriptDocument() else {
+            liveCaptionTurns = []
+            meetingProgressHealth.caption = .idle
             return
         }
         applyTranscriptDocumentToLiveCaptions(document)
+    }
+
+    func waitForLiveCaptionReplayForTesting() async {
+        await liveCaptionReplayTask?.value
+    }
+
+    private func refreshLiveCaptionTurnsFromSelectedMeetingAsync(document providedDocument: TranscriptDocument? = nil) async {
+        guard !Task.isCancelled else { return }
+        guard let document = providedDocument ?? selectedTranscriptDocument() else {
+            liveCaptionTurns = []
+            meetingProgressHealth.caption = .idle
+            return
+        }
+        liveCaptionPipeline = makeLiveCaptionPipeline(
+            translationProvider: captionTranslationProviderFactory(speechConfiguration)
+        )
+        let snapshot = await liveCaptionPipeline.replay(document)
+        guard !Task.isCancelled else { return }
+        publishLiveCaptionPipelineSnapshot(snapshot)
+        processedLiveCaptionSegmentSignaturesByID = document.segments.reduce(into: [:]) { signatures, segment in
+            signatures[segment.id] = liveCaptionSegmentSignature(for: segment)
+        }
+        scheduleCaptionTextTranslationIfNeeded()
+    }
+
+    private func selectedTranscriptDocument() -> TranscriptDocument? {
+        guard let meeting = selectedMeeting,
+              let transcriptJSONURL = meeting.transcriptJSONURL
+        else {
+            return nil
+        }
+        return try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
     }
 
     private func applyTranscriptAccumulationResultsToLiveCaptions(
@@ -894,6 +970,19 @@ public final class MeetingAgentViewModel: ObservableObject {
             processedLiveCaptionSegmentSignaturesByID.removeAll()
         }
         applyTranscriptDocumentToLiveCaptions(latest.document)
+    }
+
+    private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {
+        liveCaptionStore.reset(
+            sourceLocale: speechConfiguration.localeIdentifier,
+            targetLocale: speechConfiguration.targetLocaleIdentifier
+        )
+        for turn in snapshot.turns {
+            liveCaptionStore.upsert(turn)
+        }
+        liveCaptionTurns = snapshot.turns
+        meetingProgressHealth.caption = snapshot.captionHealth
+        updateCaptionTranslationHealth()
     }
 
     private func applyTranscriptDocumentToLiveCaptions(_ document: TranscriptDocument) {
@@ -939,18 +1028,22 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func markProcessedLiveCaptionSegmentIfNeeded(_ segment: TranscriptSegment) -> Bool {
-        let signature = [
+        let signature = liveCaptionSegmentSignature(for: segment)
+        guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else {
+            return false
+        }
+        processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
+        return true
+    }
+
+    private func liveCaptionSegmentSignature(for segment: TranscriptSegment) -> String {
+        [
             segment.text,
             segment.isFinal ? "final" : "interim",
             segment.speechFinal ? "speechFinal" : "open",
             segment.speakerID ?? "",
             segment.speakerLabel ?? ""
         ].joined(separator: "\u{1F}")
-        guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else {
-            return false
-        }
-        processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
-        return true
     }
 
     private func freezeOpenLiveCaptionChunk(reason: LiveCaptionFreezeReason) {
