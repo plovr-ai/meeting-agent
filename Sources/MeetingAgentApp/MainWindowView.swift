@@ -18,8 +18,6 @@ struct MainWindowView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                sidebarHeader
-
                 VStack(spacing: 6) {
                     Button("Today") {
                         destination = .today
@@ -55,7 +53,7 @@ struct MainWindowView: View {
                 .background(destination == .settings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             }
             .background(CommandCenterPalette.surface)
-            .frame(minWidth: 260, idealWidth: 300)
+            .frame(minWidth: 180, idealWidth: 210)
         } detail: {
             switch destination {
             case .settings:
@@ -208,22 +206,6 @@ struct MainWindowView: View {
         workspaceReturnDestination = destination.agendaReturnDestination
         viewModel.selectMeeting(meeting.id)
         self.destination = .workspace
-    }
-
-    private var sidebarHeader: some View {
-        HStack {
-            Text("Meeting Agent")
-                .commandCenterEyebrow()
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 16)
-        .background(CommandCenterPalette.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(CommandCenterPalette.border)
-                .frame(height: 1)
-        }
     }
 
     private func meetings(for destination: MainWindowDestination) -> [MeetingRecord] {
@@ -608,11 +590,6 @@ private struct MeetingCommandCenterView: View {
                         .frame(height: 1)
                 }
 
-                AgendaContextStrip(
-                    meeting: meeting,
-                    topics: meeting.agendaTopics
-                )
-
                 HStack(spacing: 0) {
                     TranscriptPaneView(
                         meeting: meeting,
@@ -799,34 +776,6 @@ private struct MeetingCommandCenterView: View {
         draft = agendaRecordBackedDraft
         editAgendaTarget = nil
         agendaSaveError = nil
-    }
-}
-
-private struct AgendaContextStrip: View {
-    let meeting: MeetingRecord
-    let topics: [MeetingAgendaTopic]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(topics.prefix(3)) { topic in
-                CommandCenterChip(title: topic.title)
-            }
-            if topics.count > 3 {
-                CommandCenterChip(title: "+\(topics.count - 3) topics")
-            }
-            Spacer()
-            if let scheduledStartAt = meeting.scheduledStartAt {
-                CommandCenterChip(title: scheduledStartAt.formatted(date: .omitted, time: .shortened))
-            }
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 10)
-        .background(CommandCenterPalette.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(CommandCenterPalette.border)
-                .frame(height: 1)
-        }
     }
 }
 
@@ -1186,48 +1135,47 @@ private struct UnifiedTranscriptView: View {
     let editSpeaker: (LiveCaptionTurn) -> Void
 
     var body: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Transcript").commandCenterEyebrow()
-                    Spacer()
-                    if !autoFollowsLatest, !turns.isEmpty {
-                        Button("Return to latest") {
-                            returnToLatest()
-                        }
-                        .buttonStyle(CommandCenterActionButtonStyle())
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Transcript").commandCenterEyebrow()
+                Spacer()
+                if !autoFollowsLatest, !turns.isEmpty {
+                    Button("Return to latest") {
+                        returnToLatest()
                     }
-                }
-
-                if turns.isEmpty {
-                    fallbackTranscript
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        let groups = LiveCaptionSpeakerGroup.groups(from: turns)
-                        ForEach(groups) { group in
-                            BilingualTranscriptGroup(
-                                group: group,
-                                sourceLocale: sourceLocale,
-                                targetLocale: targetLocale,
-                                editSpeaker: group.speaker.identifier == nil ? nil : {
-                                    if let firstTurn = group.turns.first {
-                                        editSpeaker(firstTurn)
-                                    }
-                                }
-                            )
-                            .id(group.id)
-                        }
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 8).onChanged { _ in
-                            if isRecording {
-                                pauseFollowing()
-                            }
-                        }
-                    )
+                    .buttonStyle(CommandCenterActionButtonStyle())
                 }
             }
+
+            if turns.isEmpty {
+                fallbackTranscript
+            } else {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    let groups = LiveCaptionSpeakerGroup.groups(from: turns)
+                    ForEach(groups) { group in
+                        BilingualTranscriptGroup(
+                            group: group,
+                            sourceLocale: sourceLocale,
+                            targetLocale: targetLocale,
+                            editSpeaker: group.speaker.identifier == nil ? nil : {
+                                if let firstTurn = group.turns.first {
+                                    editSpeaker(firstTurn)
+                                }
+                            }
+                        )
+                        .id(group.id)
+                    }
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8).onChanged { _ in
+                        if isRecording {
+                            pauseFollowing()
+                        }
+                    }
+                )
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var fallbackTranscript: some View {
