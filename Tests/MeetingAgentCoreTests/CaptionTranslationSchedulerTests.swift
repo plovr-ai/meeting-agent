@@ -291,6 +291,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(providerError.metadata["translationKind"], "final")
         XCTAssertEqual(providerError.metadata["providerID"], "recording-translation")
         XCTAssertFalse(providerError.metadata.values.contains("private words"))
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_failed_count"
+                && $0.metadata["count"] == "1"
+                && $0.metadata["translationKind"] == "final"
+                && $0.metadata["failureReason"] == "translation error 2"
+        })
     }
 
     func testTranslationRequestsRespectGlobalConcurrencyLimit() async {
