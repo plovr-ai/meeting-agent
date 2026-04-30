@@ -516,10 +516,10 @@ public struct LiveCaptionStore: Equatable {
             previous: previousSegment.text,
             replacement: segment.text
         )
-        updated.resetStableDisplayMetadata()
         updated.sourceLocale = turn.sourceLocale
         updated.targetLocale = turn.targetLocale
         updated.isFinal = turn.isFinal
+        updated.resetStableDisplayMetadata()
         updated.captionHealth = turn.captionHealth
         updated.translationHealth = turn.translationHealth
         updated.chunkState = turn.chunkState
