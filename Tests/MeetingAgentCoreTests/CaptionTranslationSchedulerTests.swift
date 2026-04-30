@@ -220,6 +220,31 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.event == "caption_translation_started" && $0.metadata["translationKind"] == "final" })
     }
 
+    func testStaleDraftCompletionLogsStaleWithoutAttachedEvent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(draftTurn(text: "old draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        currentStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "旧草稿"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+        )
+
+        let updates = await scheduler.liveTranslationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        scheduler.apply(update, to: &currentStore)
+
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_stale" })
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_attached" })
+        XCTAssertNil(currentStore.turns.first?.translatedText)
+    }
+
     func testTranslationRequestsRespectGlobalConcurrencyLimit() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(id: "segment-1", text: "first", sourceLocale: "en-US", targetLocale: "zh-CN"))

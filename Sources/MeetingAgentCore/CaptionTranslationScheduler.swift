@@ -107,10 +107,16 @@ public final class CaptionTranslationScheduler {
             store.markTranslationCompleteWithoutText(forTurnID: update.turnID)
         case .draftText(let text):
             store.attachTranslation(text, toTurnID: update.turnID)
+            if let request = update.request {
+                logAttached(request: request, textLength: text.count)
+            }
             persistTranslation?(current, text, false)
         case .finalText(let text):
             store.attachTranslation(text, toTurnID: update.turnID)
             store.markTranslationFinal(forTurnID: update.turnID)
+            if let request = update.request {
+                logAttached(request: request, textLength: text.count)
+            }
             persistTranslation?(current, text, true)
         case .failed(let message):
             store.markTranslationFailed(forTurnID: update.turnID, message: message)
@@ -337,18 +343,14 @@ public final class CaptionTranslationScheduler {
                 textLength: translatedText.count,
                 metadata: metadata
             )
-            logger?.log(
-                "caption_translation_attached",
-                segmentID: request.turn.id,
-                isFinal: !request.isDraft,
-                textLength: translatedText.count,
-                metadata: metadata
-            )
+            var completedRequest = request
+            completedRequest.queueDepth = queueDepth
+            completedRequest.inFlightCount = inFlightCount
             return CaptionTranslationUpdate(
                 turnID: request.turn.id,
                 key: request.key,
                 result: request.isDraft ? .draftText(translatedText) : .finalText(translatedText),
-                request: request
+                request: completedRequest
             )
         } catch {
             let nsError = error as NSError
@@ -427,6 +429,16 @@ public final class CaptionTranslationScheduler {
         )
     }
 
+    private func logAttached(request: ActiveCaptionTranslationRequest, textLength: Int) {
+        performanceEventLogger?.log(
+            "caption_translation_attached",
+            segmentID: request.turn.id,
+            isFinal: !request.isDraft,
+            textLength: textLength,
+            metadata: translationMetadata(for: request)
+        )
+    }
+
     private func translationMetadata(
         for request: ActiveCaptionTranslationRequest,
         extra: [String: String] = [:]
@@ -453,6 +465,12 @@ public final class CaptionTranslationScheduler {
         }
         if let boundaryReason = turn.boundaryReason {
             metadata["boundaryReason"] = boundaryReason.rawValue
+        }
+        if let queueDepth = request.queueDepth {
+            metadata["queueDepth"] = String(queueDepth)
+        }
+        if let inFlightCount = request.inFlightCount {
+            metadata["inFlightCount"] = String(inFlightCount)
         }
         for (key, value) in extra {
             metadata[key] = value
@@ -510,6 +528,8 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var requestOrdinalForTurn: Int = 1
     var sourceText: String = ""
     var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
+    var queueDepth: Int?
+    var inFlightCount: Int?
 }
 
 private struct CaptionTranslationExecution {
@@ -552,6 +572,12 @@ private enum CaptionTranslationExecutionMetadata {
         }
         if let boundaryReason = turn.boundaryReason {
             metadata["boundaryReason"] = boundaryReason.rawValue
+        }
+        if let queueDepth = request.queueDepth {
+            metadata["queueDepth"] = String(queueDepth)
+        }
+        if let inFlightCount = request.inFlightCount {
+            metadata["inFlightCount"] = String(inFlightCount)
         }
         return metadata
     }
