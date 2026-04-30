@@ -43,6 +43,10 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var activeCaptionApplyTask: Task<Void, Never>?
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var liveCaptionReplaySequence = 0
+    private let liveCaptionSnapshotDebounceNanoseconds: UInt64
+    private var pendingLiveCaptionSnapshot: LiveCaptionPipelineSnapshot?
+    private var pendingLiveCaptionSnapshotTask: Task<Void, Never>?
+    private var pendingLiveCaptionSnapshotGeneration = 0
     @Published public private(set) var meetingGoal: MeetingGoal?
     public var recommendedQuestions: [FollowUpQuestionSuggestion] {
         Array((meetingProgressState?.suggestedQuestions ?? []).prefix(2))
@@ -70,6 +74,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         exportService: MeetingExportService = MeetingExportService(),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
+        liveCaptionSnapshotDebounceNanoseconds: UInt64 = 75_000_000,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
@@ -80,6 +85,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
             Self.summaryProvider(for: configuration)
         }
+        self.liveCaptionSnapshotDebounceNanoseconds = liveCaptionSnapshotDebounceNanoseconds
         self.processTargetsProvider = processTargetsProvider
         let resolvedSpeechConfiguration: SpeechTranscriptionConfiguration
         if let speechConfiguration {
@@ -895,7 +901,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func resetLiveCaptionStore() {
         resetLiveCaptionPipeline()
-        liveCaptionTurns = []
+        clearLiveCaptionTurns()
         meetingProgressHealth.caption = .idle
         meetingProgressHealth.translation = .idle
         resetMeetingProgressState()
@@ -906,7 +912,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask?.cancel()
         liveCaptionReplayTask = nil
         liveCaptionReplaySequence += 1
-        liveCaptionTurns = []
+        clearLiveCaptionTurns()
         liveCaptionPipeline = makeLiveCaptionPipeline()
         liveCaptionPipelineUsesCaptionTranslationProvider = false
         liveCaptionPipelineHasTranslationProvider = false
@@ -958,7 +964,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func refreshLiveCaptionTurnsFromSelectedMeeting() {
         guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
-            liveCaptionTurns = []
+            clearLiveCaptionTurns()
             meetingProgressHealth.caption = .idle
             return
         }
@@ -973,7 +979,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func refreshLiveCaptionTurnsFromSelectedMeetingSynchronously() {
         guard let document = selectedTranscriptDocument() else {
             liveCaptionReplayTask = nil
-            liveCaptionTurns = []
+            clearLiveCaptionTurns()
             meetingProgressHealth.caption = .idle
             return
         }
@@ -1035,7 +1041,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) async {
         guard !Task.isCancelled else { return }
         guard let document = providedDocument ?? selectedTranscriptDocument() else {
-            liveCaptionTurns = []
+            clearLiveCaptionTurns()
             meetingProgressHealth.caption = .idle
             return
         }
@@ -1127,7 +1133,91 @@ public final class MeetingAgentViewModel: ObservableObject {
             && context.selectedMeetingID == selectedMeetingID
     }
 
+    private func clearLiveCaptionTurns() {
+        cancelPendingLiveCaptionSnapshotPublication()
+        liveCaptionTurns = []
+    }
+
+    private func cancelPendingLiveCaptionSnapshotPublication() {
+        pendingLiveCaptionSnapshotGeneration += 1
+        pendingLiveCaptionSnapshotTask?.cancel()
+        pendingLiveCaptionSnapshotTask = nil
+        pendingLiveCaptionSnapshot = nil
+    }
+
     private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {
+        guard shouldDebounceLiveCaptionSnapshot(snapshot) else {
+            cancelPendingLiveCaptionSnapshotPublication()
+            publishLiveCaptionPipelineSnapshotImmediately(snapshot)
+            return
+        }
+
+        if let pendingLiveCaptionSnapshot {
+            currentPerformanceEventLogger()?.log(
+                "caption_snapshot_publication_coalesced",
+                metadata: [
+                    "pendingTurnCount": String(pendingLiveCaptionSnapshot.turns.count),
+                    "replacementTurnCount": String(snapshot.turns.count),
+                    "debounceMilliseconds": String(liveCaptionSnapshotDebounceNanoseconds / 1_000_000)
+                ]
+            )
+        }
+        pendingLiveCaptionSnapshot = snapshot
+        pendingLiveCaptionSnapshotGeneration += 1
+        let generation = pendingLiveCaptionSnapshotGeneration
+        let delay = liveCaptionSnapshotDebounceNanoseconds
+        pendingLiveCaptionSnapshotTask?.cancel()
+        pendingLiveCaptionSnapshotTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            self?.publishPendingLiveCaptionSnapshot(generation: generation)
+        }
+    }
+
+    private func shouldDebounceLiveCaptionSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) -> Bool {
+        guard liveCaptionSnapshotDebounceNanoseconds > 0 else { return false }
+        guard !snapshot.turns.isEmpty else { return false }
+        guard snapshot.captionHealth == .live else { return false }
+        switch snapshot.translationHealth {
+        case .failed, .degraded:
+            return false
+        case .idle, .pending, .live:
+            break
+        }
+        let previousTurns = pendingLiveCaptionSnapshot?.turns ?? liveCaptionTurns
+        guard !previousTurns.isEmpty else {
+            return snapshot.turns.allSatisfy(isDelayableDraftCaptionTurn)
+        }
+        let previousTurnsByID = Dictionary(uniqueKeysWithValues: previousTurns.map { ($0.id, $0) })
+        let snapshotTurnsByID = Dictionary(uniqueKeysWithValues: snapshot.turns.map { ($0.id, $0) })
+        let changedSnapshotTurns = snapshot.turns.filter { previousTurnsByID[$0.id] != $0 }
+        let removedPreviousTurns = previousTurns.filter { snapshotTurnsByID[$0.id] == nil }
+        guard !changedSnapshotTurns.isEmpty || !removedPreviousTurns.isEmpty else {
+            return false
+        }
+        return changedSnapshotTurns.allSatisfy(isDelayableDraftCaptionTurn)
+            && removedPreviousTurns.allSatisfy(isDelayableDraftCaptionTurn)
+    }
+
+    private func isDelayableDraftCaptionTurn(_ turn: LiveCaptionTurn) -> Bool {
+        turn.displayState == .draft
+            && !turn.isFinal
+            && turn.boundaryStrength != .hard
+            && turn.captionHealth == .live
+    }
+
+    private func publishPendingLiveCaptionSnapshot(generation: Int) {
+        guard generation == pendingLiveCaptionSnapshotGeneration,
+              let snapshot = pendingLiveCaptionSnapshot
+        else {
+            return
+        }
+        pendingLiveCaptionSnapshotTask = nil
+        pendingLiveCaptionSnapshot = nil
+        publishLiveCaptionPipelineSnapshotImmediately(snapshot)
+    }
+
+    private func publishLiveCaptionPipelineSnapshotImmediately(_ snapshot: LiveCaptionPipelineSnapshot) {
         liveCaptionTurns = snapshot.turns
         meetingProgressHealth.caption = snapshot.captionHealth
         meetingProgressHealth.translation = snapshot.translationHealth

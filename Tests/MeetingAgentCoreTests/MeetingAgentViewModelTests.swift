@@ -529,6 +529,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let viewModel = MeetingAgentViewModel(
             store: fixture.store,
             recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 0,
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -548,12 +549,185 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.meetingProgressHealth.caption, .live)
     }
 
+    func testDraftCaptionSnapshotsAreDebouncedBeforePublication() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 100_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var accumulator = TranscriptSegmentAccumulator()
+
+        let first = accumulator.apply(.upsert(TranscriptSegment(
+            id: "draft-1",
+            text: "first draft",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([first])
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+
+        let second = accumulator.apply(.upsert(TranscriptSegment(
+            id: "draft-1",
+            text: "second draft",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([second])
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.originalText == "second draft"
+        }
+        XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
+    }
+
+    func testFinalCaptionSnapshotPublishesImmediatelyAndCancelsPendingDraft() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 1_000_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var accumulator = TranscriptSegmentAccumulator()
+
+        let draft = accumulator.apply(.upsert(TranscriptSegment(
+            id: "caption-1",
+            text: "draft text",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([draft])
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+
+        let final = accumulator.apply(.upsert(TranscriptSegment(
+            id: "caption-1",
+            text: "final text",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([final])
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "final text")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
+
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "final text")
+    }
+
+    func testDraftSnapshotAfterVisibleFinalCaptionIsDebounced() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 100_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var accumulator = TranscriptSegmentAccumulator()
+
+        let final = accumulator.apply(.upsert(TranscriptSegment(
+            id: "final-1",
+            text: "final text",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([final])
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["final-1"])
+
+        let draft = accumulator.apply(.upsert(TranscriptSegment(
+            id: "draft-2",
+            text: "draft after final",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([draft])
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["final-1"])
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.map(\.sourceSegmentID) == ["final-1", "draft-2"]
+        }
+    }
+
+    func testSelectingAnotherMeetingCancelsPendingDraftCaptionSnapshot() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 1_000_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let firstMeetingID = try XCTUnwrap(viewModel.selectedMeetingID)
+        let secondMeeting = try fixture.store.createMeeting(name: "Second", startedAt: Date()).record
+        viewModel.selectMeeting(firstMeetingID)
+        var accumulator = TranscriptSegmentAccumulator()
+
+        let draft = accumulator.apply(.upsert(TranscriptSegment(
+            id: "stale-draft",
+            text: "stale draft",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([draft])
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+
+        viewModel.selectMeeting(secondMeeting.id)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+    }
+
+    func testCoalescedDraftCaptionSnapshotsLogPerformanceEvent() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 100_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.selectedMeeting)
+        var accumulator = TranscriptSegmentAccumulator()
+
+        let first = accumulator.apply(.upsert(TranscriptSegment(
+            id: "metric-draft",
+            text: "first",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([first])
+        let second = accumulator.apply(.upsert(TranscriptSegment(
+            id: "metric-draft",
+            text: "second",
+            language: "en-US",
+            isFinal: false
+        )))
+        await viewModel.applyTranscriptAccumulationResultsForTesting([second])
+
+        try await waitFor {
+            ((try? readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))) ?? [])
+                .contains(where: { $0.event == "caption_snapshot_publication_coalesced" })
+        }
+    }
+
     func testStaleActiveTranscriptApplyDoesNotOverwriteNewerCaption() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
         let viewModel = MeetingAgentViewModel(
             store: fixture.store,
             recorder: fixture.recorder,
+            liveCaptionSnapshotDebounceNanoseconds: 0,
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -1462,6 +1636,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let viewModel = MeetingAgentViewModel(
             store: store,
             captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
             processTargetsProvider: { [] }
         )
         try viewModel.loadMeetings()
