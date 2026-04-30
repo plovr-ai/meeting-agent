@@ -733,5 +733,7 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(updated.sourceSegmentIDs, ["final-1", "interim-1"])
         XCTAssertEqual(updated.displayState, .sealed)
         XCTAssertEqual(updated.boundaryStrength, .hard)
+        XCTAssertEqual(updated.stableOriginalTextPrefix, "select German and hear the customer")
+        XCTAssertEqual(updated.unstableOriginalTextTail, "")
     }
 }
