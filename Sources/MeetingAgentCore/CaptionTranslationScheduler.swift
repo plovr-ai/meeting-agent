@@ -1,21 +1,39 @@
 import Foundation
 
+public struct CaptionTranslationSchedulerConfiguration: Equatable {
+    public var draftDebounceNanoseconds: UInt64
+    public var maxConcurrentTranslationRequests: Int
+
+    public init(
+        draftDebounceNanoseconds: UInt64 = 200_000_000,
+        maxConcurrentTranslationRequests: Int = 2
+    ) {
+        self.draftDebounceNanoseconds = draftDebounceNanoseconds
+        self.maxConcurrentTranslationRequests = max(1, maxConcurrentTranslationRequests)
+    }
+}
+
 @MainActor
 public final class CaptionTranslationScheduler {
     private let provider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
     private let persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)?
+    private let configuration: CaptionTranslationSchedulerConfiguration
     private var requestedFinalTranslationKeys: Set<String> = []
     private var activeRequestsByKey: [String: ActiveCaptionTranslationRequest] = [:]
+    private var pendingDraftTokensByTurnID: [String: UUID] = [:]
+    private var requestOrdinalsByTurnID: [String: Int] = [:]
 
     public init(
         provider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
-        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil
+        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil,
+        configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
     ) {
         self.provider = provider
         self.performanceEventLogger = performanceEventLogger
         self.persistTranslation = persistTranslation
+        self.configuration = configuration
     }
 
     public func scheduleTranslations(in store: inout LiveCaptionStore) async {
@@ -33,7 +51,7 @@ public final class CaptionTranslationScheduler {
     }
 
     private func translationUpdates(for store: LiveCaptionStore, includingDrafts: Bool) async -> [CaptionTranslationUpdate] {
-        var updates: [CaptionTranslationUpdate] = []
+        var executions: [CaptionTranslationExecution] = []
         let turns = store.turns
             .filter { $0.translationHealth == .pending }
             .filter { turn in
@@ -61,11 +79,11 @@ public final class CaptionTranslationScheduler {
                 return lhs.createdAt < rhs.createdAt
             }
         for turn in turns {
-            if let update = await translationUpdate(for: turn, in: store, includingDrafts: includingDrafts) {
-                updates.append(update)
+            if let execution = await translationExecution(for: turn, in: store, includingDrafts: includingDrafts) {
+                executions.append(execution)
             }
         }
-        return updates
+        return await execute(executions)
     }
 
     func apply(_ update: CaptionTranslationUpdate, to store: inout LiveCaptionStore) {
@@ -129,16 +147,23 @@ public final class CaptionTranslationScheduler {
         }
     }
 
-    private func translationUpdate(
+    private func translationExecution(
         for turn: LiveCaptionTurn,
         in store: LiveCaptionStore,
         includingDrafts: Bool
-    ) async -> CaptionTranslationUpdate? {
+    ) async -> CaptionTranslationExecution? {
         let isFinalTranslation = turn.displayState == .sealed && turn.boundaryStrength == .hard
         let key = translationKey(for: turn, isFinalTranslation: isFinalTranslation)
         let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
         if options.isSameLanguage {
-            return CaptionTranslationUpdate(turnID: turn.id, key: key, result: .completeWithoutText, request: nil)
+            logSkipped(turn: turn, key: key, isFinalTranslation: isFinalTranslation, reason: "same_language")
+            return CaptionTranslationExecution(
+                request: nil,
+                segment: nil,
+                options: options,
+                provider: nil,
+                update: CaptionTranslationUpdate(turnID: turn.id, key: key, result: .completeWithoutText, request: nil)
+            )
         }
 
         guard isFinalTranslation || includingDrafts else {
@@ -147,22 +172,56 @@ public final class CaptionTranslationScheduler {
         guard let provider else {
             return nil
         }
+        if isFinalTranslation {
+            cancelDraftsSuperseded(by: [turn])
+            pendingDraftTokensByTurnID[turn.id] = nil
+        }
         guard !requestedFinalTranslationKeys.contains(key) else {
+            logSkipped(turn: turn, key: key, isFinalTranslation: isFinalTranslation, reason: "duplicate_key")
             return nil
         }
         requestedFinalTranslationKeys.insert(key)
         let requestID = "caption-translation-\(UUID().uuidString)"
+        let sourceText = translationSourceText(for: turn, in: store, final: isFinalTranslation)
+        let requestOrdinal = nextRequestOrdinal(forTurnID: turn.id)
         let request = ActiveCaptionTranslationRequest(
             id: requestID,
             turn: turn,
             key: key,
             isDraft: !isFinalTranslation,
-            revision: turn.translationRevision
+            revision: turn.translationRevision,
+            requestOrdinalForTurn: requestOrdinal,
+            sourceText: sourceText,
+            configuration: configuration
         )
         activeRequestsByKey[key] = request
-        let metadata = translationMetadata(
-            for: request
-        )
+        if request.isDraft,
+           configuration.draftDebounceNanoseconds > 0 {
+            let token = UUID()
+            let replaced = pendingDraftTokensByTurnID.updateValue(token, forKey: turn.id) != nil
+            performanceEventLogger?.log(
+                replaced ? "caption_translation_debounce_replaced" : "caption_translation_debounce_scheduled",
+                segmentID: turn.id,
+                isFinal: false,
+                textLength: turn.originalText.count,
+                metadata: translationMetadata(for: request)
+            )
+            try? await Task.sleep(nanoseconds: configuration.draftDebounceNanoseconds)
+            guard pendingDraftTokensByTurnID[turn.id] == token,
+                  activeRequestsByKey[key] != nil
+            else {
+                return nil
+            }
+            pendingDraftTokensByTurnID[turn.id] = nil
+            performanceEventLogger?.log(
+                "caption_translation_debounce_fired",
+                segmentID: turn.id,
+                isFinal: false,
+                textLength: turn.originalText.count,
+                metadata: translationMetadata(for: request)
+            )
+        }
+        let metadata = translationMetadata(for: request)
         performanceEventLogger?.log(
             "caption_translation_scheduled",
             segmentID: turn.id,
@@ -174,50 +233,128 @@ public final class CaptionTranslationScheduler {
         let segment = TranscriptSegment(
             id: turn.sourceSegmentID,
             speaker: turn.speaker,
-            text: translationSourceText(for: turn, in: store, final: isFinalTranslation),
+            text: sourceText,
             language: turn.sourceLocale,
             isFinal: isFinalTranslation,
             createdAt: turn.createdAt
         )
+        return CaptionTranslationExecution(request: request, segment: segment, options: options, provider: provider, update: nil)
+    }
+
+    private func execute(_ executions: [CaptionTranslationExecution]) async -> [CaptionTranslationUpdate] {
+        var immediateUpdates: [CaptionTranslationUpdate] = []
+        var requestExecutions: [CaptionTranslationExecution] = []
+        for execution in executions {
+            if let update = execution.update {
+                immediateUpdates.append(update)
+            } else {
+                requestExecutions.append(execution)
+            }
+        }
+        guard !requestExecutions.isEmpty else {
+            return immediateUpdates
+        }
+        let limit = min(configuration.maxConcurrentTranslationRequests, requestExecutions.count)
+        let logger = performanceEventLogger
+        var updates: [CaptionTranslationUpdate] = []
+        await withTaskGroup(of: CaptionTranslationUpdate?.self) { group in
+            var nextIndex = 0
+            var running = 0
+
+            func enqueueNext() {
+                guard nextIndex < requestExecutions.count else { return }
+                let execution = requestExecutions[nextIndex]
+                nextIndex += 1
+                running += 1
+                let inFlightCount = running
+                let queueDepth = requestExecutions.count - nextIndex
+                logger?.log(
+                    "caption_translation_enqueued",
+                    segmentID: execution.request?.turn.id,
+                    isFinal: execution.request.map { !$0.isDraft },
+                    textLength: execution.request?.turn.originalText.count,
+                    metadata: execution.request.map {
+                        var metadata = CaptionTranslationExecutionMetadata.metadata(for: $0)
+                        metadata["queueDepth"] = String(queueDepth)
+                        metadata["inFlightCount"] = String(inFlightCount)
+                        return metadata
+                    } ?? [:]
+                )
+                group.addTask {
+                    await Self.performTranslation(execution, inFlightCount: inFlightCount, queueDepth: queueDepth, logger: logger)
+                }
+            }
+
+            while running < limit, nextIndex < requestExecutions.count {
+                enqueueNext()
+            }
+            while let update = await group.next() {
+                running -= 1
+                if let update {
+                    updates.append(update)
+                }
+                while running < limit, nextIndex < requestExecutions.count {
+                    enqueueNext()
+                }
+            }
+        }
+        for update in updates {
+            activeRequestsByKey.removeValue(forKey: update.key)
+        }
+        return immediateUpdates + updates
+    }
+
+    private static func performTranslation(
+        _ execution: CaptionTranslationExecution,
+        inFlightCount: Int,
+        queueDepth: Int,
+        logger: PerformanceEventLogger?
+    ) async -> CaptionTranslationUpdate? {
+        guard let request = execution.request,
+              let segment = execution.segment,
+              let provider = execution.provider
+        else {
+            return execution.update
+        }
+        let metadata = execution.metadata(queueDepth: queueDepth, inFlightCount: inFlightCount)
         do {
-            performanceEventLogger?.log(
+            logger?.log(
                 "caption_translation_started",
-                segmentID: turn.id,
-                isFinal: true,
-                textLength: turn.originalText.count,
+                segmentID: request.turn.id,
+                isFinal: !request.isDraft,
+                textLength: request.turn.originalText.count,
                 metadata: metadata
             )
             let translated = try await provider.translate(
                 transcript: TranscriptDocument(segments: [segment]),
-                options: options
+                options: execution.options
             )
-            let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
-            performanceEventLogger?.log(
+            let translatedText = translated.segments.first { $0.id == request.turn.sourceSegmentID }?.targetText ?? ""
+            logger?.log(
                 "caption_translation_finished",
-                segmentID: turn.id,
-                isFinal: true,
+                segmentID: request.turn.id,
+                isFinal: !request.isDraft,
                 textLength: translatedText.count,
                 metadata: metadata
             )
-            performanceEventLogger?.log(
+            logger?.log(
                 "caption_translation_attached",
-                segmentID: turn.id,
-                isFinal: true,
+                segmentID: request.turn.id,
+                isFinal: !request.isDraft,
                 textLength: translatedText.count,
                 metadata: metadata
             )
             return CaptionTranslationUpdate(
-                turnID: turn.id,
-                key: key,
-                result: isFinalTranslation ? .finalText(translatedText) : .draftText(translatedText),
-                request: activeRequestsByKey.removeValue(forKey: key) ?? request
+                turnID: request.turn.id,
+                key: request.key,
+                result: request.isDraft ? .draftText(translatedText) : .finalText(translatedText),
+                request: request
             )
         } catch {
-            activeRequestsByKey.removeValue(forKey: key)
             let nsError = error as NSError
             return CaptionTranslationUpdate(
-                turnID: turn.id,
-                key: key,
+                turnID: request.turn.id,
+                key: request.key,
                 result: .failed("\(nsError.domain) error \(nsError.code)"),
                 request: request
             )
@@ -304,7 +441,12 @@ public final class CaptionTranslationScheduler {
             "translationKind": request.isDraft ? "draft" : "final",
             "translationRequestID": request.id,
             "translationRevision": String(request.revision),
-            "translationKeyHash": String(request.key.hashValue)
+            "translationKeyHash": stableHash(request.key),
+            "sourceTextHash": stableHash(request.sourceText),
+            "sourceTextLength": String(request.sourceText.count),
+            "requestOrdinalForTurn": String(request.requestOrdinalForTurn),
+            "debounceMilliseconds": String(request.configuration.draftDebounceNanoseconds / 1_000_000),
+            "concurrencyLimit": String(request.configuration.maxConcurrentTranslationRequests)
         ]
         if let boundaryStrength = turn.boundaryStrength {
             metadata["boundaryStrength"] = String(describing: boundaryStrength)
@@ -317,6 +459,46 @@ public final class CaptionTranslationScheduler {
         }
         return metadata
     }
+
+    private func logSkipped(
+        turn: LiveCaptionTurn,
+        key: String,
+        isFinalTranslation: Bool,
+        reason: String
+    ) {
+        let request = ActiveCaptionTranslationRequest(
+            id: "caption-translation-skipped-\(UUID().uuidString)",
+            turn: turn,
+            key: key,
+            isDraft: !isFinalTranslation,
+            revision: turn.translationRevision,
+            requestOrdinalForTurn: requestOrdinalsByTurnID[turn.id, default: 0],
+            sourceText: turn.originalText,
+            configuration: configuration
+        )
+        performanceEventLogger?.log(
+            "caption_translation_skipped",
+            segmentID: turn.id,
+            isFinal: isFinalTranslation,
+            textLength: turn.originalText.count,
+            metadata: translationMetadata(for: request, extra: ["skipReason": reason])
+        )
+    }
+
+    private func nextRequestOrdinal(forTurnID turnID: String) -> Int {
+        let next = requestOrdinalsByTurnID[turnID, default: 0] + 1
+        requestOrdinalsByTurnID[turnID] = next
+        return next
+    }
+}
+
+private func stableHash(_ value: String) -> String {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in value.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= 1_099_511_628_211
+    }
+    return String(hash, radix: 16)
 }
 
 struct ActiveCaptionTranslationRequest: Equatable {
@@ -325,6 +507,54 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var key: String
     var isDraft: Bool
     var revision: Int
+    var requestOrdinalForTurn: Int = 1
+    var sourceText: String = ""
+    var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
+}
+
+private struct CaptionTranslationExecution {
+    var request: ActiveCaptionTranslationRequest?
+    var segment: TranscriptSegment?
+    var options: TranslationOptions
+    var provider: TextTranslationProvider?
+    var update: CaptionTranslationUpdate?
+
+    func metadata(queueDepth: Int, inFlightCount: Int) -> [String: String] {
+        guard let request else { return [:] }
+        var metadata = CaptionTranslationExecutionMetadata.metadata(for: request)
+        metadata["queueDepth"] = String(queueDepth)
+        metadata["inFlightCount"] = String(inFlightCount)
+        return metadata
+    }
+}
+
+private enum CaptionTranslationExecutionMetadata {
+    static func metadata(for request: ActiveCaptionTranslationRequest) -> [String: String] {
+        let turn = request.turn
+        var metadata: [String: String] = [
+            "turnID": turn.id,
+            "sourceSegmentID": turn.sourceSegmentID,
+            "sourceSegmentIDs": turn.sourceSegmentIDs.joined(separator: ","),
+            "sourceLocale": turn.sourceLocale,
+            "targetLocale": turn.targetLocale,
+            "translationKind": request.isDraft ? "draft" : "final",
+            "translationRequestID": request.id,
+            "translationRevision": String(request.revision),
+            "translationKeyHash": stableHash(request.key),
+            "sourceTextHash": stableHash(request.sourceText),
+            "sourceTextLength": String(request.sourceText.count),
+            "requestOrdinalForTurn": String(request.requestOrdinalForTurn),
+            "debounceMilliseconds": String(request.configuration.draftDebounceNanoseconds / 1_000_000),
+            "concurrencyLimit": String(request.configuration.maxConcurrentTranslationRequests)
+        ]
+        if let boundaryStrength = turn.boundaryStrength {
+            metadata["boundaryStrength"] = String(describing: boundaryStrength)
+        }
+        if let boundaryReason = turn.boundaryReason {
+            metadata["boundaryReason"] = boundaryReason.rawValue
+        }
+        return metadata
+    }
 }
 
 enum CaptionTranslationUpdateResult: Equatable {

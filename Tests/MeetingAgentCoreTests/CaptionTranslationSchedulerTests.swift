@@ -142,13 +142,110 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationState, .pendingFinal)
     }
 
+    func testDraftTranslationTelemetryUsesDraftFinalFlagAndBudgetMetadata() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(draftTurn(text: "draft text", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "草稿"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+        )
+
+        for update in await scheduler.liveTranslationUpdates(for: store) {
+            scheduler.apply(update, to: &store)
+        }
+
+        let events = try readEvents(from: eventsURL)
+        let started = try XCTUnwrap(events.first { $0.event == "caption_translation_started" })
+        XCTAssertEqual(started.isFinal, false)
+        XCTAssertEqual(started.metadata["translationKind"], "draft")
+        XCTAssertEqual(started.metadata["sourceTextLength"], "10")
+        XCTAssertNotNil(started.metadata["sourceTextHash"])
+        XCTAssertEqual(started.metadata["requestOrdinalForTurn"], "1")
+        XCTAssertEqual(started.metadata["inFlightCount"], "1")
+        XCTAssertEqual(started.metadata["concurrencyLimit"], "2")
+    }
+
+    func testDraftTranslationDebounceKeepsLatestPendingDraftForTurn() async {
+        var firstStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        firstStore.upsert(draftTurn(text: "old draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        var secondStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        secondStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let firstStoreSnapshot = firstStore
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "新草稿"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
+        )
+
+        async let firstUpdates = scheduler.liveTranslationUpdates(for: firstStoreSnapshot)
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        let secondUpdates = await scheduler.liveTranslationUpdates(for: secondStore)
+        let resolvedFirstUpdates = await firstUpdates
+
+        XCTAssertTrue(resolvedFirstUpdates.isEmpty)
+        XCTAssertEqual(secondUpdates.count, 1)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["new draft"])
+    }
+
+    func testFinalTranslationBypassesDraftDebounceAndRunsWhenDraftTextMatches() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var draftStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        draftStore.upsert(draftTurn(text: "same text", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        var finalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        finalStore.upsert(hardSealedTurn(text: "same text", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let draftStoreSnapshot = draftStore
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "最终"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
+        )
+
+        async let draftUpdates = scheduler.liveTranslationUpdates(for: draftStoreSnapshot)
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        let finalUpdates = await scheduler.translationUpdates(for: finalStore)
+        _ = await draftUpdates
+
+        let events = try readEvents(from: eventsURL)
+        XCTAssertEqual(finalUpdates.count, 1)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["same text"])
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_started" && $0.metadata["translationKind"] == "final" })
+    }
+
+    func testTranslationRequestsRespectGlobalConcurrencyLimit() async {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(hardSealedTurn(id: "segment-1", text: "first", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        store.upsert(hardSealedTurn(id: "segment-2", text: "second", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        store.upsert(hardSealedTurn(id: "segment-3", text: "third", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = DelayedRecordingTextTranslationProvider(delayNanoseconds: 20_000_000)
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+        )
+
+        let updates = await scheduler.translationUpdates(for: store)
+
+        XCTAssertEqual(updates.count, 3)
+        XCTAssertEqual(provider.maximumConcurrentRequests, 2)
+    }
+
     private func hardSealedTurn(
+        id: String = "segment-1",
         text: String = "hello",
         sourceLocale: String,
         targetLocale: String
     ) -> LiveCaptionTurn {
         LiveCaptionTurn(
-            sourceSegmentID: "segment-1",
+            sourceSegmentID: id,
             originalText: text,
             sourceLocale: sourceLocale,
             targetLocale: targetLocale,
@@ -159,6 +256,32 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
             boundaryReason: .speechFinal,
             boundaryStrength: .hard
         )
+    }
+
+    private func draftTurn(
+        id: String = "segment-1",
+        text: String,
+        sourceLocale: String,
+        targetLocale: String
+    ) -> LiveCaptionTurn {
+        LiveCaptionTurn(
+            sourceSegmentID: id,
+            originalText: text,
+            sourceLocale: sourceLocale,
+            targetLocale: targetLocale,
+            isFinal: false,
+            translationHealth: .pending,
+            displayState: .draft,
+            translationState: .draft
+        )
+    }
+
+    private func readEvents(from url: URL) throws -> [PerformanceEvent] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try String(contentsOf: url, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map { try decoder.decode(PerformanceEvent.self, from: Data($0.utf8)) }
     }
 }
 
@@ -216,5 +339,69 @@ private final class RecordingTextTranslationProvider: TextTranslationProvider {
             },
             provenance: PipelineProvenance(profileID: "recording")
         )
+    }
+}
+
+private final class DelayedRecordingTextTranslationProvider: TextTranslationProvider {
+    let delayNanoseconds: UInt64
+    private let lock = NSLock()
+    private var activeRequestCount = 0
+    private var maximumConcurrentRequestCount = 0
+
+    var maximumConcurrentRequests: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return maximumConcurrentRequestCount
+    }
+
+    init(delayNanoseconds: UInt64) {
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: "delayed-recording-translation",
+            displayName: "Delayed Recording Translation",
+            capability: .textTranslation,
+            executionMode: .local,
+            supportedSourceLocales: ["*"],
+            supportedTargetLocales: ["*"],
+            requiresNetwork: false,
+            requiresAPIKey: false
+        )
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        beginRequest()
+        try? await Task.sleep(nanoseconds: delayNanoseconds)
+        endRequest()
+        return TranslatedTranscript(
+            sourceLocale: options.sourceLocale,
+            targetLocale: options.targetLocale,
+            segments: transcript.segments.map { segment in
+                BilingualSubtitleSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    sourceText: segment.text,
+                    targetText: "translated \(segment.text)",
+                    status: .complete,
+                    providerChain: [descriptor.id]
+                )
+            },
+            provenance: PipelineProvenance(profileID: "recording")
+        )
+    }
+
+    private func beginRequest() {
+        lock.lock()
+        activeRequestCount += 1
+        maximumConcurrentRequestCount = max(maximumConcurrentRequestCount, activeRequestCount)
+        lock.unlock()
+    }
+
+    private func endRequest() {
+        lock.lock()
+        activeRequestCount -= 1
+        lock.unlock()
     }
 }
