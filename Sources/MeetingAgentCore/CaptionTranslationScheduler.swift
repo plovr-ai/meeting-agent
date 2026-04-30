@@ -376,6 +376,13 @@ public final class CaptionTranslationScheduler {
                 textLength: request.turn.originalText.count,
                 metadata: failureMetadata
             )
+            logger?.log(
+                "caption_translation_failed_count",
+                segmentID: request.turn.id,
+                isFinal: !request.isDraft,
+                textLength: request.turn.originalText.count,
+                metadata: failureMetadata
+            )
             return CaptionTranslationUpdate(
                 turnID: request.turn.id,
                 key: request.key,
