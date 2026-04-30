@@ -145,6 +145,8 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var sourceSegmentIDs: [String]
     public var speaker: TranscriptSpeaker
     public var originalText: String
+    public var stableOriginalTextPrefix: String
+    public var unstableOriginalTextTail: String
     public var translatedText: String?
     public var sourceLocale: String
     public var targetLocale: String
@@ -166,6 +168,8 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         sourceSegmentIDs: [String]? = nil,
         speaker: TranscriptSpeaker = .default,
         originalText: String,
+        stableOriginalTextPrefix: String? = nil,
+        unstableOriginalTextTail: String? = nil,
         translatedText: String? = nil,
         sourceLocale: String = "en-US",
         targetLocale: String = "zh-CN",
@@ -189,6 +193,14 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         self.sourceSegmentIDs = sourceSegmentIDs ?? [sourceSegmentID]
         self.speaker = speaker
         self.originalText = originalText
+        let resolvedStablePrefix = stableOriginalTextPrefix ?? (isFinal ? originalText : "")
+        self.stableOriginalTextPrefix = resolvedStablePrefix
+        self.unstableOriginalTextTail = unstableOriginalTextTail ?? {
+            if isFinal {
+                return ""
+            }
+            return String(originalText.dropFirst(resolvedStablePrefix.count))
+        }()
         self.translatedText = translatedText
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
@@ -216,6 +228,8 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         case sourceSegmentIDs
         case speaker
         case originalText
+        case stableOriginalTextPrefix
+        case unstableOriginalTextTail
         case translatedText
         case sourceLocale
         case targetLocale
@@ -239,10 +253,20 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         sourceSegmentIDs = try container.decodeIfPresent([String].self, forKey: .sourceSegmentIDs) ?? [sourceSegmentID]
         speaker = try container.decode(TranscriptSpeaker.self, forKey: .speaker)
         originalText = try container.decode(String.self, forKey: .originalText)
+        isFinal = try container.decode(Bool.self, forKey: .isFinal)
+        let decodedStablePrefix = try container.decodeIfPresent(String.self, forKey: .stableOriginalTextPrefix)
+        let resolvedStablePrefix = decodedStablePrefix ?? (isFinal ? originalText : "")
+        stableOriginalTextPrefix = resolvedStablePrefix
+        if let decodedUnstableTail = try container.decodeIfPresent(String.self, forKey: .unstableOriginalTextTail) {
+            unstableOriginalTextTail = decodedUnstableTail
+        } else if isFinal {
+            unstableOriginalTextTail = ""
+        } else {
+            unstableOriginalTextTail = String(originalText.dropFirst(resolvedStablePrefix.count))
+        }
         translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
         sourceLocale = try container.decode(String.self, forKey: .sourceLocale)
         targetLocale = try container.decode(String.self, forKey: .targetLocale)
-        isFinal = try container.decode(Bool.self, forKey: .isFinal)
         captionHealth = try container.decode(LivePipelineHealth.self, forKey: .captionHealth)
         translationHealth = try container.decode(LivePipelineHealth.self, forKey: .translationHealth)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -492,6 +516,7 @@ public struct LiveCaptionStore: Equatable {
             previous: previousSegment.text,
             replacement: segment.text
         )
+        updated.resetStableDisplayMetadata()
         updated.sourceLocale = turn.sourceLocale
         updated.targetLocale = turn.targetLocale
         updated.isFinal = turn.isFinal
@@ -541,6 +566,7 @@ public struct LiveCaptionStore: Equatable {
         merged.sourceLocale = turn.sourceLocale
         merged.targetLocale = turn.targetLocale
         merged.isFinal = turn.isFinal
+        merged.resetStableDisplayMetadata()
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
         merged.displayState = turn.displayState
@@ -557,6 +583,7 @@ public struct LiveCaptionStore: Equatable {
         merged.sourceLocale = turn.sourceLocale
         merged.targetLocale = turn.targetLocale
         merged.isFinal = false
+        merged.resetStableDisplayMetadata()
         merged.captionHealth = turn.captionHealth
         merged.translationHealth = .pending
         merged.chunkState = .draft
@@ -765,6 +792,18 @@ public struct LiveCaptionStore: Equatable {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         turns.removeAll()
+    }
+}
+
+private extension LiveCaptionTurn {
+    mutating func resetStableDisplayMetadata() {
+        if isFinal {
+            stableOriginalTextPrefix = originalText
+            unstableOriginalTextTail = ""
+        } else {
+            stableOriginalTextPrefix = ""
+            unstableOriginalTextTail = originalText
+        }
     }
 }
 
