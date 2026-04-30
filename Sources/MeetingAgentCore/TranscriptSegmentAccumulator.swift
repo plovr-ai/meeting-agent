@@ -4,6 +4,7 @@ public enum TranscriptSegmentUpdate: Equatable {
     case upsert(TranscriptSegment)
     case replaceAll([TranscriptSegment])
     case replaceWithPlainText(String)
+    case translationPatch(segmentID: String, text: String, targetLocale: String, isFinal: Bool)
 }
 
 public struct TranscriptSegmentAccumulationResult: Equatable {
@@ -42,7 +43,55 @@ public struct TranscriptSegmentAccumulator {
                 changedSegmentIDs: [],
                 plainTextReplacement: text
             )
+        case .translationPatch(let segmentID, let text, let targetLocale, let isFinal):
+            return applyTranslationPatch(
+                segmentID: segmentID,
+                text: text,
+                targetLocale: targetLocale,
+                isFinal: isFinal
+            )
         }
+    }
+
+    private mutating func applyTranslationPatch(
+        segmentID: String,
+        text: String,
+        targetLocale: String,
+        isFinal: Bool
+    ) -> TranscriptSegmentAccumulationResult {
+        let normalizedSegmentID = segmentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTargetLocale = targetLocale.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = document.segments.firstIndex(where: { $0.id == normalizedSegmentID }) else {
+            return TranscriptSegmentAccumulationResult(
+                document: document,
+                changedSegmentIDs: [],
+                plainTextReplacement: nil
+            )
+        }
+        let segment = document.segments[index]
+        document.segments[index] = TranscriptSegment(
+            id: segment.id,
+            speaker: segment.speaker,
+            startTimeSeconds: segment.startTimeSeconds,
+            endTimeSeconds: segment.endTimeSeconds,
+            text: segment.text,
+            language: segment.language,
+            sourceProvider: segment.sourceProvider,
+            isFinal: segment.isFinal,
+            speechFinal: segment.speechFinal,
+            confidence: segment.confidence,
+            createdAt: segment.createdAt,
+            timingSource: segment.timingSource,
+            translatedText: normalizedText,
+            translationTargetLocale: normalizedTargetLocale,
+            translationIsFinal: isFinal
+        )
+        return TranscriptSegmentAccumulationResult(
+            document: document,
+            changedSegmentIDs: [normalizedSegmentID],
+            plainTextReplacement: nil
+        )
     }
 
     private mutating func applyUpsert(_ segment: TranscriptSegment) -> TranscriptSegmentAccumulationResult {

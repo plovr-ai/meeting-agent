@@ -72,6 +72,60 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(result.document.segments.first?.translationIsFinal, true)
     }
 
+    func testTranslationPatchUpdatesMatchingSegment() {
+        var accumulator = TranscriptSegmentAccumulator(document: TranscriptDocument(segments: [
+            TranscriptSegment(id: "segment-1", text: "Confirm owner."),
+            TranscriptSegment(id: "segment-2", text: "Review timeline.")
+        ]))
+
+        let result = accumulator.apply(.translationPatch(
+            segmentID: "segment-2",
+            text: "复查时间线。",
+            targetLocale: "zh-CN",
+            isFinal: true
+        ))
+
+        XCTAssertEqual(result.changedSegmentIDs, ["segment-2"])
+        XCTAssertNil(result.document.segments[0].translatedText)
+        XCTAssertEqual(result.document.segments[1].translatedText, "复查时间线。")
+        XCTAssertEqual(result.document.segments[1].translationTargetLocale, "zh-CN")
+        XCTAssertEqual(result.document.segments[1].translationIsFinal, true)
+    }
+
+    func testTranslationPatchMissingSegmentLeavesDocumentUnchanged() {
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(id: "segment-1", text: "Confirm owner.")
+        ])
+        var accumulator = TranscriptSegmentAccumulator(document: document)
+
+        let result = accumulator.apply(.translationPatch(
+            segmentID: "missing",
+            text: "确认负责人。",
+            targetLocale: "zh-CN",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(result.changedSegmentIDs, [])
+        XCTAssertEqual(result.document, document)
+    }
+
+    func testTranslationPatchNormalizesInputs() {
+        var accumulator = TranscriptSegmentAccumulator(document: TranscriptDocument(segments: [
+            TranscriptSegment(id: "segment-1", text: "Confirm owner.")
+        ]))
+
+        let result = accumulator.apply(.translationPatch(
+            segmentID: " segment-1 ",
+            text: " 确认负责人。 ",
+            targetLocale: " zh-CN ",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(result.changedSegmentIDs, ["segment-1"])
+        XCTAssertEqual(result.document.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(result.document.segments.first?.translationTargetLocale, "zh-CN")
+    }
+
     func testFileBackedTranscriptUpdateSinkPersistsUpdates() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-sink-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -259,6 +259,23 @@ public final class MeetingRecorder {
         transcriptUpdateSink?.drainResults() ?? []
     }
 
+    @discardableResult
+    public func updateActiveTranscriptTranslation(
+        segmentID: String,
+        text: String,
+        targetLocale: String,
+        isFinal: Bool
+    ) throws -> Bool {
+        guard let transcriptUpdateSink else { return false }
+        try transcriptUpdateSink.updateSegmentTranslation(
+            segmentID: segmentID,
+            text: text,
+            targetLocale: targetLocale,
+            isFinal: isFinal
+        )
+        return true
+    }
+
     public func stopRecording(
         at endedAt: Date = Date(),
         endedReason: CaptureEndedReason = .saved
@@ -362,14 +379,13 @@ public final class MeetingRecorder {
 }
 
 private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
-    private let writer: TranscriptFileWriter
+    private let store: RecordingTranscriptPersistenceStore
     private let performanceEventLogger: PerformanceEventLogger?
-    private var accumulator = TranscriptSegmentAccumulator()
     private var pendingResults: [TranscriptSegmentAccumulationResult] = []
     private let lock = NSLock()
 
     init(transcriptURL: URL, performanceEventLogger: PerformanceEventLogger?) throws {
-        self.writer = try TranscriptFileWriter(url: transcriptURL)
+        self.store = try RecordingTranscriptPersistenceStore(transcriptURL: transcriptURL)
         self.performanceEventLogger = performanceEventLogger
     }
 
@@ -377,9 +393,7 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
         lock.lock()
         defer { lock.unlock() }
         logEmitted(update)
-        let result = accumulator.apply(update)
-        pendingResults.append(result)
-        persist(result)
+        persist(update)
     }
 
     func drainResults() -> [TranscriptSegmentAccumulationResult] {
@@ -391,32 +405,54 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
     }
 
     func close() {
-        try? writer.close()
+        lock.lock()
+        defer { lock.unlock() }
+        try? store.close()
     }
 
-    private func persist(_ result: TranscriptSegmentAccumulationResult) {
+    func updateSegmentTranslation(
+        segmentID: String,
+        text: String,
+        targetLocale: String,
+        isFinal: Bool
+    ) throws {
+        let update = TranscriptSegmentUpdate.translationPatch(
+            segmentID: segmentID,
+            text: text,
+            targetLocale: targetLocale,
+            isFinal: isFinal
+        )
+        lock.lock()
+        defer { lock.unlock() }
+        logEmitted(update)
+        let result = try store.apply(update)
+        pendingResults.append(result)
+        logPersisted(result)
+    }
+
+    private func persist(_ update: TranscriptSegmentUpdate) {
+        do {
+            let result = try store.apply(update)
+            pendingResults.append(result)
+            logPersisted(result)
+        } catch {
+            return
+        }
+    }
+
+    private func logPersisted(_ result: TranscriptSegmentAccumulationResult) {
         if let text = result.plainTextReplacement {
-            do {
-                try writer.replace(with: text)
-                performanceEventLogger?.log(
-                    "transcript_segment_persisted",
-                    textLength: text.count,
-                    metadata: ["update": "replaceWithPlainText"]
-                )
-            } catch {
-                return
-            }
+            performanceEventLogger?.log(
+                "transcript_segment_persisted",
+                textLength: text.count,
+                metadata: ["update": "replaceWithPlainText"]
+            )
         } else {
-            do {
-                try writer.replace(with: result.document.segments)
-                for segment in result.document.segments where result.changedSegmentIDs.contains(segment.id) {
-                    performanceEventLogger?.logSegment(
-                        "transcript_segment_persisted",
-                        segment: segment
-                    )
-                }
-            } catch {
-                return
+            for segment in result.document.segments where result.changedSegmentIDs.contains(segment.id) {
+                performanceEventLogger?.logSegment(
+                    "transcript_segment_persisted",
+                    segment: segment
+                )
             }
         }
     }
@@ -434,6 +470,17 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
                 "transcript_segment_emitted",
                 textLength: text.count,
                 metadata: ["update": "replaceWithPlainText"]
+            )
+        case .translationPatch(let segmentID, let text, let targetLocale, let isFinal):
+            performanceEventLogger?.log(
+                "transcript_segment_emitted",
+                segmentID: segmentID,
+                isFinal: isFinal,
+                textLength: text.count,
+                metadata: [
+                    "update": "translationPatch",
+                    "targetLocale": targetLocale
+                ]
             )
         }
     }
