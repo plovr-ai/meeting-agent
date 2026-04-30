@@ -289,7 +289,7 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(updates.flatMap { $0.document.segments.map(\.text) }, ["hello live"])
     }
 
-    func testRecorderPersistsCanonicalTranscriptFromUpdates() async throws {
+    func testRecorderBuffersTranscriptArtifactsUntilStop() async throws {
         let fixture = try RecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
@@ -305,8 +305,55 @@ final class MeetingRecorderTests: XCTestCase {
 
         _ = fixture.recorder.drainTranscriptUpdates()
 
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "")
+        XCTAssertEqual(
+            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments,
+            []
+        )
+
+        _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+
         let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
         XCTAssertEqual(document.segments.map(\.text), ["persist me"])
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "User A:\npersist me\n")
+        XCTAssertEqual(try transcriptEventLogLineCount(for: record), 1)
+    }
+
+    func testRecorderPatchesActiveTranscriptTranslationWithoutImmediateArtifactRewrite() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Confirm owner.",
+            language: "en-US",
+            sourceProvider: "fake",
+            isFinal: true
+        )))
+
+        let didPatch = try fixture.recorder.updateActiveTranscriptTranslation(
+            segmentID: "segment-1",
+            text: "确认负责人。",
+            targetLocale: "zh-CN",
+            isFinal: true
+        )
+        let updates = fixture.recorder.drainTranscriptUpdates()
+
+        XCTAssertTrue(didPatch)
+        XCTAssertEqual(updates.last?.document.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "")
+        XCTAssertEqual(
+            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments,
+            []
+        )
+
+        _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(document.segments.first?.translationTargetLocale, "zh-CN")
+        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
+        XCTAssertEqual(try transcriptEventLogLineCount(for: record), 2)
     }
 
     func testTranscriptUpdatePipelineLogsEmittedAndPersistedEvents() async throws {
@@ -515,6 +562,15 @@ private func performanceEventNames(at url: URL) throws -> [String] {
     try String(contentsOf: url, encoding: .utf8)
         .split(separator: "\n")
         .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)).event }
+}
+
+private func transcriptEventLogLineCount(for record: MeetingRecord) throws -> Int {
+    let eventLogURL = try XCTUnwrap(record.transcriptURL)
+        .deletingLastPathComponent()
+        .appendingPathComponent("transcript-events.jsonl")
+    return try String(contentsOf: eventLogURL, encoding: .utf8)
+        .split(whereSeparator: \.isNewline)
+        .count
 }
 
 private func XCTAssertThrowsErrorAsync(

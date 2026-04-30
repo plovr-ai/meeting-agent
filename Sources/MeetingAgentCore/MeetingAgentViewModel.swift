@@ -844,7 +844,17 @@ public final class MeetingAgentViewModel: ObservableObject {
             configuration: speechConfiguration,
             translationProvider: translationProvider,
             performanceEventLogger: currentPerformanceEventLogger(),
-            persistTranslation: { turn, translatedText, isFinal in
+            persistTranslation: { [weak self] turn, translatedText, isFinal in
+                if let self, self.activeMeetingID == self.selectedMeetingID {
+                    if (try? self.recorder.updateActiveTranscriptTranslation(
+                        segmentID: turn.sourceSegmentID,
+                        text: translatedText,
+                        targetLocale: turn.targetLocale,
+                        isFinal: isFinal
+                    )) == true {
+                        return
+                    }
+                }
                 try? TranscriptFileWriter.updateSegmentTranslation(
                     segmentID: turn.sourceSegmentID,
                     text: translatedText,
