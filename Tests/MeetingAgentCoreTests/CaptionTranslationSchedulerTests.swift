@@ -168,6 +168,16 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(started.metadata["requestOrdinalForTurn"], "1")
         XCTAssertEqual(started.metadata["inFlightCount"], "1")
         XCTAssertEqual(started.metadata["concurrencyLimit"], "2")
+        XCTAssertEqual(started.metadata["providerID"], "recording-translation")
+        XCTAssertNil(started.metadata["sourceText"])
+        let finished = try XCTUnwrap(events.first { $0.event == "caption_translation_finished" })
+        XCTAssertNotNil(finished.metadata["durationMilliseconds"])
+        let scheduledCount = try XCTUnwrap(events.first { $0.event == "caption_translation_scheduled_count" })
+        XCTAssertEqual(scheduledCount.metadata["count"], "1")
+        XCTAssertEqual(scheduledCount.metadata["translationKind"], "draft")
+        let completedCount = try XCTUnwrap(events.first { $0.event == "caption_translation_completed_count" })
+        XCTAssertEqual(completedCount.metadata["count"], "1")
+        XCTAssertEqual(completedCount.metadata["translationKind"], "draft")
     }
 
     func testDraftTranslationDebounceKeepsLatestPendingDraftForTurn() async {
@@ -218,6 +228,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(finalUpdates.count, 1)
         XCTAssertEqual(provider.requests.map(\.sourceText), ["same text"])
         XCTAssertTrue(events.contains { $0.event == "caption_translation_started" && $0.metadata["translationKind"] == "final" })
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_scheduled_count"
+                && $0.metadata["translationKind"] == "final"
+                && $0.metadata["count"] == "1"
+                && $0.metadata["providerID"] == "recording-translation"
+        })
     }
 
     func testStaleDraftCompletionLogsStaleWithoutAttachedEvent() async throws {
@@ -240,9 +256,41 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         scheduler.apply(update, to: &currentStore)
 
         let events = try readEvents(from: eventsURL)
-        XCTAssertTrue(events.contains { $0.event == "caption_translation_stale" })
+        let stale = try XCTUnwrap(events.first { $0.event == "caption_translation_stale" })
+        XCTAssertEqual(stale.metadata["translationKind"], "draft")
+        XCTAssertEqual(stale.metadata["reason"], "draft_no_longer_current")
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_stale_count"
+                && $0.metadata["count"] == "1"
+                && $0.metadata["translationKind"] == "draft"
+        })
         XCTAssertFalse(events.contains { $0.event == "caption_translation_attached" })
         XCTAssertNil(currentStore.turns.first?.translatedText)
+    }
+
+    func testProviderFailureLogsSanitizedErrorCount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(hardSealedTurn(text: "private words", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(error: NSError(domain: "translation", code: 2))
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+        )
+
+        await scheduler.scheduleTranslations(in: &store)
+
+        let events = try readEvents(from: eventsURL)
+        let providerError = try XCTUnwrap(events.first { $0.event == "caption_translation_provider_error" })
+        XCTAssertEqual(providerError.metadata["failureReason"], "translation error 2")
+        XCTAssertEqual(providerError.metadata["retryCount"], "0")
+        XCTAssertEqual(providerError.metadata["count"], "1")
+        XCTAssertEqual(providerError.metadata["translationKind"], "final")
+        XCTAssertEqual(providerError.metadata["providerID"], "recording-translation")
+        XCTAssertFalse(providerError.metadata.values.contains("private words"))
     }
 
     func testTranslationRequestsRespectGlobalConcurrencyLimit() async {

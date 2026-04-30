@@ -96,3 +96,10 @@ public extension PerformanceEventLogger {
         )
     }
 }
+
+extension PerformanceEventLogger {
+    static func durationMetadata(from start: Date, to end: Date = Date()) -> [String: String] {
+        let milliseconds = max(0, Int((end.timeIntervalSince(start) * 1_000).rounded()))
+        return ["durationMilliseconds": String(milliseconds)]
+    }
+}
