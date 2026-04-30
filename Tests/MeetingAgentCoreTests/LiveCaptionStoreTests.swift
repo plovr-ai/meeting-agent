@@ -179,6 +179,44 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(turn.chunkState, .frozen)
     }
 
+    func testLiveCaptionTurnDefaultsStableDisplayMetadata() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We should decide",
+            isFinal: false
+        )
+
+        XCTAssertEqual(turn.stableOriginalTextPrefix, "")
+        XCTAssertEqual(turn.unstableOriginalTextTail, "We should decide")
+    }
+
+    func testLiveCaptionTurnDecodesLegacyStableDisplayMetadataDefaults() throws {
+        let data = Data("""
+        {
+          "id": "segment-1",
+          "sourceSegmentID": "segment-1",
+          "sourceSegmentIDs": ["segment-1"],
+          "speaker": {},
+          "originalText": "Legacy draft",
+          "sourceLocale": "en-US",
+          "targetLocale": "zh-CN",
+          "isFinal": false,
+          "captionHealth": { "state": "live" },
+          "translationHealth": { "state": "pending" },
+          "createdAt": "2026-04-30T00:00:00Z",
+          "chunkState": "draft",
+          "translationRevision": 1,
+          "displayState": "draft",
+          "translationState": "draft"
+        }
+        """.utf8)
+
+        let turn = try JSONDecoder.meetingAgent.decode(LiveCaptionTurn.self, from: data)
+
+        XCTAssertEqual(turn.stableOriginalTextPrefix, "")
+        XCTAssertEqual(turn.unstableOriginalTextTail, "Legacy draft")
+    }
+
     func testSpeakerGroupsCombineConsecutiveSameSpeakerCaptionBlocks() {
         let speaker = TranscriptSpeaker(identifier: "speaker-1", label: "User A")
         let groups = LiveCaptionSpeakerGroup.groups(from: [
@@ -317,6 +355,8 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertTrue(merged.isFinal)
         XCTAssertEqual(merged.translationHealth, .pending)
         XCTAssertEqual(merged.createdAt, Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(merged.stableOriginalTextPrefix, "我们先看一下 这个季度的目标")
+        XCTAssertEqual(merged.unstableOriginalTextTail, "")
     }
 
     func testAppendingFinalSegmentFromDifferentSpeakerCreatesNewTurn() {
@@ -367,6 +407,8 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(updated.originalText, "So I just No. It works. It works very well.")
         XCTAssertFalse(updated.isFinal)
         XCTAssertEqual(updated.chunkState, .draft)
+        XCTAssertEqual(updated.stableOriginalTextPrefix, "")
+        XCTAssertEqual(updated.unstableOriginalTextTail, "So I just No. It works. It works very well.")
     }
 
     func testAppendingInterimContainingLatestTurnKeepsSingleCompleteText() {

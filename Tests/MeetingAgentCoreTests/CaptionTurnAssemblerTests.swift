@@ -98,6 +98,116 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         XCTAssertEqual(draft.displayState, .draft)
     }
 
+    func testInterimGrowthPreservesSharedStablePrefix() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        guard case .draftUpdated(let draft) = events.single else {
+            XCTFail("Expected same-ID interim to update draft")
+            return
+        }
+        XCTAssertEqual(draft.originalText, "We should decide")
+        XCTAssertEqual(draft.stableOriginalTextPrefix, "We should")
+        XCTAssertEqual(draft.unstableOriginalTextTail, " decide")
+    }
+
+    func testInterimCorrectionKeepsOnlyPrefixBeforeChangedWordStable() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We might decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        guard case .draftUpdated(let draft) = events.single else {
+            XCTFail("Expected same-ID interim to update draft")
+            return
+        }
+        XCTAssertEqual(draft.stableOriginalTextPrefix, "We ")
+        XCTAssertEqual(draft.unstableOriginalTextTail, "might decide")
+    }
+
+    func testFinalPromotionClearsMutableStableTail() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide today.",
+            isFinal: true,
+            speechFinal: true
+        ))
+
+        guard case .sealed(let sealed) = events.last else {
+            XCTFail("Expected final segment to seal matching interim draft")
+            return
+        }
+        XCTAssertEqual(sealed.originalText, "We should decide today.")
+        XCTAssertEqual(sealed.stableOriginalTextPrefix, "We should decide today.")
+        XCTAssertEqual(sealed.unstableOriginalTextTail, "")
+    }
+
+    func testSpeakerChangeResetsStablePrefixForSameSegmentID() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let id = "deepgram-transcribe-stream-0.0"
+        _ = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-0",
+            text: "We should decide",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        let events = assembler.apply(segment(
+            id: id,
+            speaker: "deepgram-speaker-1",
+            text: "We should decide now",
+            isFinal: false,
+            speechFinal: false
+        ))
+
+        guard case .draftUpdated(let draft) = events.single else {
+            XCTFail("Expected same-ID interim to update draft")
+            return
+        }
+        XCTAssertEqual(draft.stableOriginalTextPrefix, "")
+        XCTAssertEqual(draft.unstableOriginalTextTail, "We should decide now")
+    }
+
     func testFinalSegmentReplacesMatchingInterimDraft() {
         var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
         let id = "deepgram-transcribe-stream-0.0"

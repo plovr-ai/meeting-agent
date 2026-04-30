@@ -102,6 +102,8 @@ public struct CaptionTurnAssembler: Equatable {
         var translationRevision = 1
         var translatedText: String?
         var translationHealth: LivePipelineHealth = .pending
+        var stableOriginalTextPrefix: String?
+        var unstableOriginalTextTail: String?
         if let previous {
             translationRevision = previous.translationRevision
             if previous.originalText != segment.text {
@@ -111,6 +113,9 @@ public struct CaptionTurnAssembler: Equatable {
             if previous.originalText == segment.text {
                 translationHealth = previous.translationHealth
             }
+            let stability = stableDisplayText(previous: previous, segment: segment)
+            stableOriginalTextPrefix = stability.prefix
+            unstableOriginalTextTail = stability.tail
         }
         return LiveCaptionTurn(
             id: previous?.id ?? segment.id,
@@ -118,6 +123,8 @@ public struct CaptionTurnAssembler: Equatable {
             sourceSegmentIDs: [segment.id],
             speaker: segment.speaker,
             originalText: segment.text,
+            stableOriginalTextPrefix: stableOriginalTextPrefix,
+            unstableOriginalTextTail: unstableOriginalTextTail,
             translatedText: translatedText,
             sourceLocale: segment.language ?? sourceLocale,
             targetLocale: targetLocale,
@@ -133,5 +140,43 @@ public struct CaptionTurnAssembler: Equatable {
             boundaryReason: nil,
             boundaryStrength: nil
         )
+    }
+
+    private func stableDisplayText(
+        previous: LiveCaptionTurn,
+        segment: TranscriptSegment
+    ) -> (prefix: String, tail: String) {
+        guard previous.speaker == segment.speaker else {
+            return ("", segment.text)
+        }
+        let prefix = stablePrefix(previous.originalText, segment.text)
+        let tail = String(segment.text.dropFirst(prefix.count))
+        return (prefix, tail)
+    }
+
+    private func stablePrefix(_ previous: String, _ current: String) -> String {
+        guard !previous.isEmpty, !current.isEmpty else { return "" }
+        let previousCharacters = Array(previous)
+        let currentCharacters = Array(current)
+        var index = 0
+        while index < previousCharacters.count,
+              index < currentCharacters.count,
+              previousCharacters[index] == currentCharacters[index] {
+            index += 1
+        }
+        let rawPrefix = String(currentCharacters.prefix(index))
+        if index == currentCharacters.count || index == previousCharacters.count {
+            return rawPrefix
+        }
+        return rawPrefix.trimmingToLastWordBoundary()
+    }
+}
+
+private extension String {
+    func trimmingToLastWordBoundary() -> String {
+        guard let boundary = lastIndex(where: { $0.isWhitespace || $0.isPunctuation }) else {
+            return ""
+        }
+        return String(self[...boundary])
     }
 }
