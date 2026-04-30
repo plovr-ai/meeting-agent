@@ -583,11 +583,68 @@ final class LiveCaptionPipelineTests: XCTestCase {
         provider.completeRequest(at: 0, targetText: "旧翻译")
         _ = await oldReplay.value
 
-        let currentSnapshot = await pipeline.flush(reason: .manualStop)
+        let currentSnapshot = pipeline.flushCaptionsOnly(reason: .manualStop)
 
         XCTAssertEqual(currentSnapshot.turns.map(\.sourceSegmentID), ["new-segment"])
         XCTAssertEqual(currentSnapshot.turns.first?.originalText, "new text")
         XCTAssertEqual(currentSnapshot.turns.first?.translatedText, "新翻译")
+    }
+
+    func testSameTextDraftFinalizationRequestsFinalTranslationAndIgnoresStaleDraftCompletion() async throws {
+        let provider = SuspendedPipelineTranslationProvider()
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "speaker-1")
+        let draftSegment = TranscriptSegment(
+            id: "segment-1",
+            speaker: speaker,
+            text: "same text",
+            language: "en-US",
+            isFinal: false,
+            speechFinal: false
+        )
+        let finalSegment = TranscriptSegment(
+            id: "segment-1",
+            speaker: speaker,
+            text: "same text",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )
+
+        let draftApply = Task {
+            await pipeline.apply(TranscriptSegmentAccumulationResult(
+                document: TranscriptDocument(segments: [draftSegment]),
+                changedSegmentIDs: ["segment-1"],
+                plainTextReplacement: nil
+            ))
+        }
+        try await waitForPipelineCondition { provider.pendingRequestCount == 1 }
+
+        let finalApply = Task {
+            await pipeline.apply(TranscriptSegmentAccumulationResult(
+                document: TranscriptDocument(segments: [finalSegment]),
+                changedSegmentIDs: ["segment-1"],
+                plainTextReplacement: nil
+            ))
+        }
+        try await waitForPipelineCondition { provider.pendingRequestCount == 2 }
+
+        provider.completeRequest(at: 1, targetText: "最终翻译")
+        let finalSnapshot = await finalApply.value
+        XCTAssertEqual(finalSnapshot.turns.first?.translatedText, "最终翻译")
+        XCTAssertEqual(finalSnapshot.turns.first?.translationState, .final)
+
+        provider.completeRequest(at: 0, targetText: "草稿翻译")
+        _ = await draftApply.value
+        let currentSnapshot = await pipeline.schedulePendingTranslations()
+
+        XCTAssertEqual(currentSnapshot.turns.first?.translatedText, "最终翻译")
+        XCTAssertEqual(currentSnapshot.turns.first?.translationState, .final)
     }
 
     func testFlushSealsOpenCaptionChunk() async {

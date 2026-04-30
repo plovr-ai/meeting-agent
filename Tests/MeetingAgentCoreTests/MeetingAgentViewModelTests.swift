@@ -1569,6 +1569,72 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "newer translation")
     }
 
+    func testInFlightTranslationPersistsToOriginalMeetingAfterSelectionChanges() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let firstRecord = try store.createMeeting(name: "First", startedAt: Date()).record
+        let secondRecord = try store.createMeeting(name: "Second", startedAt: Date()).record
+        let firstWriter = try TranscriptFileWriter(url: XCTUnwrap(firstRecord.transcriptURL), structuredURL: XCTUnwrap(firstRecord.transcriptJSONURL))
+        let secondWriter = try TranscriptFileWriter(url: XCTUnwrap(secondRecord.transcriptURL), structuredURL: XCTUnwrap(secondRecord.transcriptJSONURL))
+        try firstWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "first meeting text", language: "en-US", isFinal: true, speechFinal: true)
+        ])
+        try secondWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "second meeting text", language: "en-US", isFinal: true, speechFinal: true)
+        ])
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(firstRecord.id)
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        viewModel.selectMeeting(secondRecord.id)
+        provider.completeRequest(at: 0, targetText: "第一场翻译")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let firstDocument = try TranscriptFileWriter.readDocument(from: XCTUnwrap(firstRecord.transcriptJSONURL))
+        let secondDocument = try TranscriptFileWriter.readDocument(from: XCTUnwrap(secondRecord.transcriptJSONURL))
+        XCTAssertEqual(firstDocument.segments.first?.translatedText, "第一场翻译")
+        XCTAssertNil(secondDocument.segments.first?.translatedText)
+    }
+
+    func testStopRecordingPublishesDelayedFlushedFinalTranslation() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "open caption", language: "en-US", isFinal: false)
+        ])
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 1 }
+        provider.completeRequest(at: 0, targetText: "停止前草稿")
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "停止前草稿" }
+
+        viewModel.stopRecording()
+        try await waitFor { provider.pendingRequestCount == 2 }
+        provider.completeRequest(at: 1, targetText: "最终停止翻译")
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.translatedText == "最终停止翻译"
+                && viewModel.liveCaptionTurns.first?.translationState == .final
+        }
+    }
+
     func testDifferentSpeakerDraftTranslationsAreQueuedOneAtATime() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

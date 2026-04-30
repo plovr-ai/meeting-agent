@@ -54,7 +54,34 @@ public struct CaptionTurnAssembler: Equatable {
     }
 
     public mutating func flush(reason: LiveCaptionFreezeReason) -> [CaptionTurnEvent] {
-        chunker.flushOpenChunk(reason: reason).map(event(from:))
+        var events = chunker.flushOpenChunk(reason: reason).map(event(from:))
+        for segmentID in openDraftSegmentIDs {
+            guard let draft = openDraftsBySegmentID[segmentID] else { continue }
+            events.append(.sealed(LiveCaptionTurn(
+                id: draft.id,
+                sourceSegmentID: draft.sourceSegmentID,
+                sourceSegmentIDs: draft.sourceSegmentIDs,
+                speaker: draft.speaker,
+                originalText: draft.originalText,
+                translatedText: draft.translatedText,
+                sourceLocale: draft.sourceLocale,
+                targetLocale: draft.targetLocale,
+                isFinal: true,
+                captionHealth: draft.captionHealth,
+                translationHealth: .pending,
+                createdAt: draft.createdAt,
+                chunkState: .frozen,
+                translationRevision: draft.translationRevision,
+                freezeReason: reason,
+                displayState: .sealed,
+                translationState: .final,
+                boundaryReason: reason,
+                boundaryStrength: reason.boundaryStrength
+            )))
+            openDraftsBySegmentID[segmentID] = nil
+        }
+        openDraftSegmentIDs.removeAll()
+        return events
     }
 
     private func event(from update: LiveCaptionChunkUpdate) -> CaptionTurnEvent {

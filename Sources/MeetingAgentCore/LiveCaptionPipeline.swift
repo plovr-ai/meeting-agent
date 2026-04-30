@@ -28,6 +28,7 @@ public final class LiveCaptionPipeline {
     private var turnAssembler: CaptionTurnAssembler
     private var interimSegmentsByID: [String: TranscriptSegment] = [:]
     private var ingestedSegmentSignaturesByID: [String: String] = [:]
+    private var storeGeneration = 0
 
     public init(
         sourceLocale: String,
@@ -126,6 +127,7 @@ public final class LiveCaptionPipeline {
     }
 
     public func reset(sourceLocale: String, targetLocale: String) {
+        storeGeneration += 1
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
@@ -283,7 +285,14 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleLiveTranslations() async {
+        let generation = storeGeneration
         let updates = await translationScheduler.liveTranslationUpdates(for: store)
+        guard generation == storeGeneration else {
+            for update in updates {
+                translationScheduler.discardStale(update, against: store)
+            }
+            return
+        }
         for update in updates {
             translationScheduler.apply(update, to: &store)
         }

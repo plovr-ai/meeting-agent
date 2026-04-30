@@ -807,12 +807,21 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func makeLiveCaptionPipeline(
         translationProvider: TextTranslationProvider? = nil
     ) -> LiveCaptionPipeline {
-        Self.makeLiveCaptionPipeline(
+        let textURL = selectedMeeting?.transcriptURL
+        let structuredURL = selectedMeeting?.transcriptJSONURL
+        return Self.makeLiveCaptionPipeline(
             configuration: speechConfiguration,
             translationProvider: translationProvider,
             performanceEventLogger: currentPerformanceEventLogger(),
-            persistTranslation: { [weak self] turn, translatedText, isFinal in
-                self?.persistCaptionTranslation(turn, translatedText: translatedText, isFinal: isFinal)
+            persistTranslation: { turn, translatedText, isFinal in
+                try? TranscriptFileWriter.updateSegmentTranslation(
+                    segmentID: turn.sourceSegmentID,
+                    text: translatedText,
+                    targetLocale: turn.targetLocale,
+                    isFinal: isFinal,
+                    textURL: textURL,
+                    structuredURL: structuredURL
+                )
             }
         )
     }
@@ -1070,6 +1079,11 @@ public final class MeetingAgentViewModel: ObservableObject {
             && context.selectedMeetingID == selectedMeetingID
     }
 
+    private func isCurrentCaptionFlush(_ context: ActiveCaptionApplyContext) -> Bool {
+        context.sequence == activeCaptionApplySequence
+            && context.selectedMeetingID == selectedMeetingID
+    }
+
     private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {
         liveCaptionTurns = snapshot.turns
         meetingProgressHealth.caption = snapshot.captionHealth
@@ -1083,29 +1097,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         activeCaptionApplyTask = Task { [weak self] in
             guard let self else { return }
             let snapshot = await liveCaptionPipeline.schedulePendingTranslations()
-            guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
+            guard !Task.isCancelled, isCurrentCaptionFlush(context) else { return }
             publishLiveCaptionPipelineSnapshot(snapshot)
         }
     }
 
     private func currentPerformanceEventLogger() -> PerformanceEventLogger? {
         selectedMeeting?.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
-    }
-
-    private func persistCaptionTranslation(
-        _ turn: LiveCaptionTurn,
-        translatedText: String,
-        isFinal: Bool
-    ) {
-        guard let meeting = selectedMeeting else { return }
-        try? TranscriptFileWriter.updateSegmentTranslation(
-            segmentID: turn.sourceSegmentID,
-            text: translatedText,
-            targetLocale: turn.targetLocale,
-            isFinal: isFinal,
-            textURL: meeting.transcriptURL,
-            structuredURL: meeting.transcriptJSONURL
-        )
     }
 
     public nonisolated static func openRouterCaptionTranslationProvider(

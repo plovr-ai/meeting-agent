@@ -72,7 +72,9 @@ public final class CaptionTranslationScheduler {
         guard let current = store.turns.first(where: { $0.id == update.turnID }) else {
             return
         }
-        let currentKey = finalTranslationKey(for: current)
+        let currentIsFinalTranslation = update.request.map { !$0.isDraft }
+            ?? (current.displayState == .sealed && current.boundaryStrength == .hard)
+        let currentKey = translationKey(for: current, isFinalTranslation: currentIsFinalTranslation)
         guard current.translationHealth == .pending,
               currentKey == update.key
         else {
@@ -97,6 +99,20 @@ public final class CaptionTranslationScheduler {
         }
     }
 
+    func discardStale(_ update: CaptionTranslationUpdate, against store: LiveCaptionStore) {
+        guard let request = update.request,
+              let current = store.turns.first(where: { $0.id == update.turnID })
+        else {
+            return
+        }
+        let currentIsFinalTranslation = !request.isDraft
+        let currentKey = translationKey(for: current, isFinalTranslation: currentIsFinalTranslation)
+        guard current.translationHealth != .pending || currentKey != update.key else {
+            return
+        }
+        logStale(update: update, request: request, current: current)
+    }
+
     func cancelDraftsSuperseded(by turns: [LiveCaptionTurn]) {
         let hardFinals = turns.filter { $0.displayState == .sealed && $0.boundaryStrength == .hard }
         guard !hardFinals.isEmpty else { return }
@@ -118,13 +134,13 @@ public final class CaptionTranslationScheduler {
         in store: LiveCaptionStore,
         includingDrafts: Bool
     ) async -> CaptionTranslationUpdate? {
-        let key = finalTranslationKey(for: turn)
+        let isFinalTranslation = turn.displayState == .sealed && turn.boundaryStrength == .hard
+        let key = translationKey(for: turn, isFinalTranslation: isFinalTranslation)
         let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
         if options.isSameLanguage {
             return CaptionTranslationUpdate(turnID: turn.id, key: key, result: .completeWithoutText, request: nil)
         }
 
-        let isFinalTranslation = turn.displayState == .sealed && turn.boundaryStrength == .hard
         guard isFinalTranslation || includingDrafts else {
             return nil
         }
@@ -208,13 +224,18 @@ public final class CaptionTranslationScheduler {
         }
     }
 
-    private func finalTranslationKey(for turn: LiveCaptionTurn) -> String {
+    private func translationKey(for turn: LiveCaptionTurn, isFinalTranslation: Bool) -> String {
         [
             turn.id,
             turn.sourceSegmentIDs.joined(separator: ","),
             turn.originalText,
             turn.sourceLocale,
-            turn.targetLocale
+            turn.targetLocale,
+            isFinalTranslation ? "final" : "draft",
+            turn.displayState.rawValue,
+            turn.boundaryStrength.map(String.init(describing:)) ?? "",
+            turn.boundaryReason?.rawValue ?? "",
+            String(turn.translationRevision)
         ].joined(separator: "\u{1F}")
     }
 
