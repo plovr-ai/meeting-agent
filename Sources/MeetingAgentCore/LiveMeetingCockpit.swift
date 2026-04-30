@@ -734,6 +734,11 @@ public struct LiveCaptionStore: Equatable {
         turns[index].translationHealth = .live
     }
 
+    public mutating func markTranslationPending(forTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translationHealth = .pending
+    }
+
     public mutating func appendTranslation(_ text: String, toTurnID turnID: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = joinedTranscriptText(turns[index].translatedText ?? "", text)

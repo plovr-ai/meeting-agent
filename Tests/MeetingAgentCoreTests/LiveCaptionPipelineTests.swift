@@ -509,6 +509,36 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .live)
     }
 
+    func testScheduleLivePendingTranslationsTranslatesDraftReplay() async {
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "草稿"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "draft text",
+                language: "en-US",
+                isFinal: false,
+                speechFinal: false
+            )
+        ])
+
+        let replaySnapshot = pipeline.replayCaptionsOnly(document)
+        XCTAssertNil(replaySnapshot.turns.first?.translatedText)
+        XCTAssertEqual(replaySnapshot.translationHealth, .pending)
+
+        let translatedSnapshot = await pipeline.scheduleLivePendingTranslations()
+
+        XCTAssertEqual(provider.requests, ["draft text"])
+        XCTAssertEqual(translatedSnapshot.turns.first?.translatedText, "草稿")
+        XCTAssertEqual(translatedSnapshot.turns.first?.translationState, .draft)
+        XCTAssertEqual(translatedSnapshot.translationHealth, .live)
+    }
+
     func testStaleTranslationCompletionDoesNotOverwriteNewerReplayState() async throws {
         let provider = SuspendedPipelineTranslationProvider()
         let pipeline = LiveCaptionPipeline(
@@ -541,9 +571,15 @@ final class LiveCaptionPipelineTests: XCTestCase {
         }
         try await waitForPipelineCondition { provider.pendingRequestCount == 1 }
 
-        let newSnapshot = await pipeline.replay(newDocument)
+        let newReplay = Task {
+            await pipeline.replay(newDocument)
+        }
+        try await waitForPipelineCondition { provider.pendingRequestCount == 2 }
+        provider.completeRequest(at: 1, targetText: "新翻译")
+        let newSnapshot = await newReplay.value
 
         XCTAssertEqual(newSnapshot.turns.map(\.sourceSegmentID), ["new-segment"])
+        XCTAssertEqual(newSnapshot.turns.first?.translatedText, "新翻译")
         provider.completeRequest(at: 0, targetText: "旧翻译")
         _ = await oldReplay.value
 
@@ -551,7 +587,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertEqual(currentSnapshot.turns.map(\.sourceSegmentID), ["new-segment"])
         XCTAssertEqual(currentSnapshot.turns.first?.originalText, "new text")
-        XCTAssertNil(currentSnapshot.turns.first?.translatedText)
+        XCTAssertEqual(currentSnapshot.turns.first?.translatedText, "新翻译")
     }
 
     func testFlushSealsOpenCaptionChunk() async {
@@ -577,6 +613,45 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
         XCTAssertEqual(snapshot.turns.first?.boundaryReason, .manualStop)
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+
+    func testReplayFinalReplacementAfterInterimRequestsFinalTranslation() async {
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "deepgram-transcribe-stream-0.0": "最终翻译"
+        ])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let speaker = TranscriptSpeaker(identifier: "deepgram-speaker-0")
+        _ = await pipeline.replay(TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "deepgram-transcribe-stream-4.97",
+                speaker: speaker,
+                text: "You I think you selected a female. What was",
+                language: "en-US",
+                isFinal: false
+            )
+        ]))
+
+        let snapshot = await pipeline.replay(TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "deepgram-transcribe-stream-0.0",
+                speaker: speaker,
+                text: "Like, you're really speaking in Spanish. You I think you selected a female voice. Maybe yeah.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ]))
+
+        XCTAssertEqual(snapshot.turns.map(\.id), ["deepgram-transcribe-stream-0.0"])
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "最终翻译")
+        XCTAssertEqual(provider.requests.last, [
+            "Like, you're really speaking in Spanish. You I think you selected a female voice. Maybe yeah."
+        ].joined())
     }
 }
 

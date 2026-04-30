@@ -93,6 +93,22 @@ final class LiveCaptionStoreTests: XCTestCase {
         )
     }
 
+    func testMarkTranslationPendingReopensTranslatedTurn() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "hello",
+            translatedText: "你好",
+            isFinal: true,
+            translationHealth: .live
+        ))
+
+        store.markTranslationPending(forTurnID: "segment-1")
+
+        XCTAssertEqual(store.turns.first?.translatedText, "你好")
+        XCTAssertEqual(store.turns.first?.translationHealth, .pending)
+    }
+
     func testLiveCaptionTurnDecodesLegacyChunkDefaults() throws {
         let data = Data("""
         {

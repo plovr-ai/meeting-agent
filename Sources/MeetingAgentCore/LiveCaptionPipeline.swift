@@ -22,26 +22,31 @@ public final class LiveCaptionPipeline {
     private var targetLocale: String
     private let translationProvider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
+    private let persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)?
     private var translationScheduler: CaptionTranslationScheduler
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
     private var interimSegmentsByID: [String: TranscriptSegment] = [:]
+    private var ingestedSegmentSignaturesByID: [String: String] = [:]
 
     public init(
         sourceLocale: String,
         targetLocale: String,
         translationProvider: TextTranslationProvider?,
-        performanceEventLogger: PerformanceEventLogger?
+        performanceEventLogger: PerformanceEventLogger?,
+        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil
     ) {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         self.translationProvider = translationProvider
         self.performanceEventLogger = performanceEventLogger
+        self.persistTranslation = persistTranslation
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
         translationScheduler = CaptionTranslationScheduler(
             provider: translationProvider,
-            performanceEventLogger: performanceEventLogger
+            performanceEventLogger: performanceEventLogger,
+            persistTranslation: persistTranslation
         )
         interimSegmentsByID = [:]
     }
@@ -63,9 +68,10 @@ public final class LiveCaptionPipeline {
 
         let changedSegmentIDs = Set(result.changedSegmentIDs)
         for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
+            logSegmentIngestedIfNeeded(segment, path: segment.isFinal ? "final" : "interim")
             applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
         }
-        await scheduleTranslations()
+        await scheduleLiveTranslations()
 
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
@@ -74,14 +80,16 @@ public final class LiveCaptionPipeline {
     }
 
     public func replay(_ document: TranscriptDocument) async -> LiveCaptionPipelineSnapshot {
-        reset(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        for segment in document.segments where segment.isFinal {
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
-        }
-        for segment in document.segments where !segment.isFinal {
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
-        }
-        await scheduleTranslations()
+        replayCaptions(document)
+        await scheduleLiveTranslations()
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: currentTranslationHealth()
+        )
+    }
+
+    public func replayCaptionsOnly(_ document: TranscriptDocument) -> LiveCaptionPipelineSnapshot {
+        replayCaptions(document)
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -89,8 +97,28 @@ public final class LiveCaptionPipeline {
     }
 
     public func flush(reason: LiveCaptionFreezeReason) async -> LiveCaptionPipelineSnapshot {
+        _ = flushCaptionsOnly(reason: reason)
+        return await schedulePendingTranslations()
+    }
+
+    public func flushCaptionsOnly(reason: LiveCaptionFreezeReason) -> LiveCaptionPipelineSnapshot {
         applyEvents(turnAssembler.flush(reason: reason))
-        await scheduleTranslations()
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: currentTranslationHealth()
+        )
+    }
+
+    public func schedulePendingTranslations() async -> LiveCaptionPipelineSnapshot {
+        await scheduleLiveTranslations()
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: currentTranslationHealth()
+        )
+    }
+
+    public func scheduleLivePendingTranslations() async -> LiveCaptionPipelineSnapshot {
+        await scheduleLiveTranslations()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -104,7 +132,8 @@ public final class LiveCaptionPipeline {
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
         translationScheduler = CaptionTranslationScheduler(
             provider: translationProvider,
-            performanceEventLogger: performanceEventLogger
+            performanceEventLogger: performanceEventLogger,
+            persistTranslation: persistTranslation
         )
         interimSegmentsByID = [:]
     }
@@ -170,6 +199,57 @@ public final class LiveCaptionPipeline {
         }
     }
 
+    private func replayCaptions(_ document: TranscriptDocument) {
+        let previousTranslatedTurns = store.turns.filter { $0.translatedText?.isEmpty == false }
+        let previousTranslationScheduler = translationScheduler
+        reset(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        for segment in document.segments where segment.isFinal {
+            logSegmentIngestedIfNeeded(segment, path: "final")
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+        }
+        for segment in document.segments where !segment.isFinal {
+            logSegmentIngestedIfNeeded(segment, path: "interim")
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+        }
+        for previous in previousTranslatedTurns {
+            guard let translatedText = previous.translatedText else { continue }
+            for turn in store.turns where turn.translatedText == nil {
+                let previousIDs = Set(previous.sourceSegmentIDs)
+                guard previousIDs.isSubset(of: Set(turn.sourceSegmentIDs)),
+                      previous.targetLocale == turn.targetLocale
+                else { continue }
+                store.attachTranslation(translatedText, toTurnID: turn.id)
+                if previous.translationState == .final,
+                   turn.displayState == .sealed,
+                   turn.boundaryStrength == .hard {
+                    store.markTranslationFinal(forTurnID: turn.id)
+                } else if previous.sourceSegmentIDs != turn.sourceSegmentIDs
+                    || previous.originalText != turn.originalText
+                    || (turn.displayState == .sealed && turn.boundaryStrength == .hard) {
+                    store.markTranslationPending(forTurnID: turn.id)
+                }
+            }
+        }
+        previousTranslationScheduler.cancelDraftsSuperseded(by: store.turns)
+    }
+
+    private func logSegmentIngestedIfNeeded(_ segment: TranscriptSegment, path: String) {
+        let signature = [
+            segment.text,
+            segment.isFinal ? "final" : "interim",
+            segment.speechFinal ? "speechFinal" : "open",
+            segment.speakerID ?? "",
+            segment.speakerLabel ?? ""
+        ].joined(separator: "\u{1F}")
+        guard ingestedSegmentSignaturesByID[segment.id] != signature else { return }
+        ingestedSegmentSignaturesByID[segment.id] = signature
+        performanceEventLogger?.logSegment(
+            "caption_segment_ingested",
+            segment: segment,
+            metadata: ["path": path]
+        )
+    }
+
     private func hydrateCachedTranslation(from segment: TranscriptSegment, toTurnID turnID: String) {
         guard let translatedText = segment.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !translatedText.isEmpty,
@@ -202,8 +282,8 @@ public final class LiveCaptionPipeline {
         )
     }
 
-    private func scheduleTranslations() async {
-        let updates = await translationScheduler.translationUpdates(for: store)
+    private func scheduleLiveTranslations() async {
+        let updates = await translationScheduler.liveTranslationUpdates(for: store)
         for update in updates {
             translationScheduler.apply(update, to: &store)
         }

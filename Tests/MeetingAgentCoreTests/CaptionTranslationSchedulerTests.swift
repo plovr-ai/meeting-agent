@@ -1,7 +1,45 @@
 import XCTest
 @testable import MeetingAgentCore
 
+@MainActor
 final class CaptionTranslationSchedulerTests: XCTestCase {
+    func testTranslationUpdateEquatableCoversRequestAndResultVariants() {
+        let turn = hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN")
+        let request = ActiveCaptionTranslationRequest(
+            id: "request-1",
+            turn: turn,
+            key: "key-1",
+            isDraft: false,
+            revision: 0
+        )
+
+        XCTAssertEqual(request, ActiveCaptionTranslationRequest(
+            id: "request-1",
+            turn: turn,
+            key: "key-1",
+            isDraft: false,
+            revision: 0
+        ))
+        XCTAssertEqual(CaptionTranslationUpdateResult.completeWithoutText, .completeWithoutText)
+        XCTAssertEqual(CaptionTranslationUpdateResult.draftText("草稿"), .draftText("草稿"))
+        XCTAssertEqual(CaptionTranslationUpdateResult.finalText("最终"), .finalText("最终"))
+        XCTAssertEqual(CaptionTranslationUpdateResult.failed("timeout"), .failed("timeout"))
+        XCTAssertEqual(
+            CaptionTranslationUpdate(
+                turnID: turn.id,
+                key: "key-1",
+                result: .finalText("最终"),
+                request: request
+            ),
+            CaptionTranslationUpdate(
+                turnID: turn.id,
+                key: "key-1",
+                result: .finalText("最终"),
+                request: request
+            )
+        )
+    }
+
     func testSameLanguageCompletesWithoutProviderCall() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "en-GB")
         store.upsert(hardSealedTurn(sourceLocale: "en-US", targetLocale: "en-GB"))

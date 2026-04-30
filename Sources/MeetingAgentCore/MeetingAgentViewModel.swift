@@ -1,15 +1,6 @@
 import Combine
 import Foundation
 
-private struct CaptionTranslationRequest {
-    let id: String
-    let turn: LiveCaptionTurn
-    let key: String
-    let isDraft: Bool
-    let revision: Int
-    let performanceEventLogger: PerformanceEventLogger?
-}
-
 @MainActor
 public final class MeetingAgentViewModel: ObservableObject {
     public static let supportedLocaleIdentifiers = [
@@ -45,37 +36,18 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
-    private var liveCaptionStore = LiveCaptionStore()
-    private var liveCaptionChunker = LiveCaptionChunker(sourceLocale: "en-US", targetLocale: "zh-CN")
     private var liveCaptionPipeline: LiveCaptionPipeline
     private var liveCaptionPipelineUsesCaptionTranslationProvider = false
+    private var liveCaptionPipelineHasTranslationProvider = false
     private var activeCaptionApplySequence = 0
     private var activeCaptionApplyTask: Task<Void, Never>?
     private var liveCaptionReplayTask: Task<Void, Never>?
-    private var processedLiveCaptionSegmentSignaturesByID: [String: String] = [:]
+    private var liveCaptionReplaySequence = 0
     @Published public private(set) var meetingGoal: MeetingGoal?
     public var recommendedQuestions: [FollowUpQuestionSuggestion] {
         Array((meetingProgressState?.suggestedQuestions ?? []).prefix(2))
     }
     private var meetingProgressCoordinator: MeetingProgressCoordinator?
-    private var draftTranslationKeysByTurnID: [String: String] = [:]
-    private var draftTranslationInFlightByTurnID: [String: Int] = [:]
-    private var draftTranslationTasksByTurnID: [String: Task<Void, Never>] = [:]
-    private var captionTranslationTasksByRequestID: [String: Task<Void, Never>] = [:]
-    private var pendingDraftTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
-    private var pendingFinalTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
-    private var activeCaptionTranslationRequestIDs = Set<String>()
-    private var activeDraftTranslationRequestIDs = Set<String>()
-    private var activeDraftTranslationRequestIDsByTurnID: [String: String] = [:]
-    private var activeDraftTranslationRequestsByTurnID: [String: CaptionTranslationRequest] = [:]
-    private var draftTranslationCharacterCountsByTurnID: [String: Int] = [:]
-    private var draftTranslationAttemptDatesByTurnID: [String: Date] = [:]
-    private var finalTranslationKeysByTurnID: [String: String] = [:]
-    private var finalTranslationInFlightTurnIDs = Set<String>()
-    private let minDraftTranslationCharacterDelta = 80
-    private let minDraftTranslationInterval: TimeInterval = 2
-    private let maxConcurrentCaptionTranslations = 2
-    private let maxConcurrentDraftCaptionTranslations = 1
     private let captionTranslationProviderFactory: (SpeechTranscriptionConfiguration) -> TextTranslationProvider?
     private let summaryProviderFactory: (SpeechTranscriptionConfiguration) -> MeetingSummaryProvider
     private let processTargetsProvider: () -> [AudioCaptureTarget]
@@ -397,7 +369,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
         }
         invalidateActiveCaptionApplyTasks()
-        freezeOpenLiveCaptionChunk(reason: .manualStop)
+        flushLiveCaptionPipeline(reason: .manualStop)
         allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
@@ -712,7 +684,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
         }
-        freezeOpenLiveCaptionChunk(reason: .manualStop)
+        flushLiveCaptionPipeline(reason: .manualStop)
         statusText = "Target process ended: \(activeTarget.displayName)"
         self.activeTarget = nil
         activeMeetingID = nil
@@ -819,13 +791,16 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private static func makeLiveCaptionPipeline(
         configuration: SpeechTranscriptionConfiguration,
-        translationProvider: TextTranslationProvider?
+        translationProvider: TextTranslationProvider?,
+        performanceEventLogger: PerformanceEventLogger? = nil,
+        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil
     ) -> LiveCaptionPipeline {
         LiveCaptionPipeline(
             sourceLocale: configuration.localeIdentifier,
             targetLocale: configuration.targetLocaleIdentifier,
             translationProvider: translationProvider,
-            performanceEventLogger: nil
+            performanceEventLogger: performanceEventLogger,
+            persistTranslation: persistTranslation
         )
     }
 
@@ -834,16 +809,42 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) -> LiveCaptionPipeline {
         Self.makeLiveCaptionPipeline(
             configuration: speechConfiguration,
-            translationProvider: translationProvider
+            translationProvider: translationProvider,
+            performanceEventLogger: currentPerformanceEventLogger(),
+            persistTranslation: { [weak self] turn, translatedText, isFinal in
+                self?.persistCaptionTranslation(turn, translatedText: translatedText, isFinal: isFinal)
+            }
         )
     }
 
-    private func resetLiveCaptionStore() {
-        liveCaptionStore.reset(
+    private func captionTranslationProviderForCurrentConfiguration() -> TextTranslationProvider? {
+        let options = TranslationOptions(
             sourceLocale: speechConfiguration.localeIdentifier,
             targetLocale: speechConfiguration.targetLocaleIdentifier
         )
-        resetLiveCaptionPipeline(keepStore: true)
+        guard !options.isSameLanguage else { return nil }
+        return captionTranslationProviderFactory(speechConfiguration)
+    }
+
+    private func captionTranslationProviderForCurrentConfiguration(document: TranscriptDocument) -> TextTranslationProvider? {
+        let targetLocale = speechConfiguration.targetLocaleIdentifier
+        let pendingSegments = document.segments.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !pendingSegments.isEmpty,
+           pendingSegments.allSatisfy({
+               TranslationOptions(
+                   sourceLocale: $0.language ?? speechConfiguration.localeIdentifier,
+                   targetLocale: targetLocale
+               ).isSameLanguage
+           }) {
+            return nil
+        }
+        return captionTranslationProviderForCurrentConfiguration()
+    }
+
+    private func resetLiveCaptionStore() {
+        resetLiveCaptionPipeline()
         liveCaptionTurns = []
         meetingProgressHealth.caption = .idle
         meetingProgressHealth.translation = .idle
@@ -851,40 +852,15 @@ public final class MeetingAgentViewModel: ObservableObject {
         configureMeetingProgressCoordinator()
     }
 
-    private func resetLiveCaptionPipeline(keepStore: Bool = false) {
+    private func resetLiveCaptionPipeline() {
         liveCaptionReplayTask?.cancel()
         liveCaptionReplayTask = nil
-        if !keepStore {
-            liveCaptionStore.reset(
-                sourceLocale: speechConfiguration.localeIdentifier,
-                targetLocale: speechConfiguration.targetLocaleIdentifier
-            )
-            liveCaptionTurns = []
-        }
-        liveCaptionChunker = LiveCaptionChunker(
-            sourceLocale: speechConfiguration.localeIdentifier,
-            targetLocale: speechConfiguration.targetLocaleIdentifier
-        )
+        liveCaptionReplaySequence += 1
+        liveCaptionTurns = []
         liveCaptionPipeline = makeLiveCaptionPipeline()
         liveCaptionPipelineUsesCaptionTranslationProvider = false
+        liveCaptionPipelineHasTranslationProvider = false
         invalidateActiveCaptionApplyTasks()
-        processedLiveCaptionSegmentSignaturesByID.removeAll()
-        draftTranslationKeysByTurnID.removeAll()
-        draftTranslationInFlightByTurnID.removeAll()
-        draftTranslationTasksByTurnID.values.forEach { $0.cancel() }
-        draftTranslationTasksByTurnID.removeAll()
-        captionTranslationTasksByRequestID.values.forEach { $0.cancel() }
-        captionTranslationTasksByRequestID.removeAll()
-        pendingDraftTranslationRequestsByTurnID.removeAll()
-        pendingFinalTranslationRequestsByTurnID.removeAll()
-        activeCaptionTranslationRequestIDs.removeAll()
-        activeDraftTranslationRequestIDs.removeAll()
-        activeDraftTranslationRequestIDsByTurnID.removeAll()
-        activeDraftTranslationRequestsByTurnID.removeAll()
-        draftTranslationCharacterCountsByTurnID.removeAll()
-        draftTranslationAttemptDatesByTurnID.removeAll()
-        finalTranslationKeysByTurnID.removeAll()
-        finalTranslationInFlightTurnIDs.removeAll()
     }
 
     private func resetMeetingProgressState() {
@@ -935,62 +911,98 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         liveCaptionReplayTask?.cancel()
+        liveCaptionReplaySequence += 1
+        let sequence = liveCaptionReplaySequence
         liveCaptionReplayTask = Task { [weak self] in
-            await self?.refreshLiveCaptionTurnsFromSelectedMeetingAsync(document: document)
+            await self?.refreshLiveCaptionTurnsFromSelectedMeetingAsync(document: document, sequence: sequence)
         }
     }
 
     private func refreshLiveCaptionTurnsFromSelectedMeetingSynchronously() {
-        liveCaptionReplayTask?.cancel()
-        liveCaptionReplayTask = nil
         guard let document = selectedTranscriptDocument() else {
+            liveCaptionReplayTask = nil
             liveCaptionTurns = []
             meetingProgressHealth.caption = .idle
             return
         }
-        applyTranscriptDocumentToLiveCaptions(document)
+        liveCaptionReplayTask?.cancel()
+        liveCaptionReplaySequence += 1
+        let sequence = liveCaptionReplaySequence
+        let translationProvider = liveCaptionPipelineHasTranslationProvider
+            ? nil
+            : captionTranslationProviderForCurrentConfiguration(document: document)
+        if !liveCaptionPipelineUsesCaptionTranslationProvider
+            || (translationProvider != nil && !liveCaptionPipelineHasTranslationProvider) {
+            liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
+            liveCaptionPipelineUsesCaptionTranslationProvider = true
+            liveCaptionPipelineHasTranslationProvider = translationProvider != nil
+        }
+        publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
+        liveCaptionReplayTask = Task { [weak self] in
+            guard let self else { return }
+            guard liveCaptionReplaySequence == sequence else { return }
+            let snapshot = await liveCaptionPipeline.schedulePendingTranslations()
+            guard liveCaptionReplaySequence == sequence else { return }
+            publishLiveCaptionPipelineSnapshot(snapshot)
+        }
     }
 
     private func refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe() {
         guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
             return
         }
-        guard !liveCaptionTurns.isEmpty else {
-            applyTranscriptDocumentToLiveCaptions(document)
-            return
+        liveCaptionReplayTask?.cancel()
+        liveCaptionReplaySequence += 1
+        let sequence = liveCaptionReplaySequence
+        let translationProvider = liveCaptionPipelineHasTranslationProvider
+            ? nil
+            : captionTranslationProviderForCurrentConfiguration(document: document)
+        if !liveCaptionPipelineUsesCaptionTranslationProvider
+            || (translationProvider != nil && !liveCaptionPipelineHasTranslationProvider) {
+            liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
+            liveCaptionPipelineUsesCaptionTranslationProvider = true
+            liveCaptionPipelineHasTranslationProvider = translationProvider != nil
         }
-        let currentSegmentIDs = Set(liveCaptionTurns.flatMap(\.sourceSegmentIDs))
-        let documentSegmentIDs = Set(document.segments.map(\.id))
-        guard currentSegmentIDs.isSubset(of: documentSegmentIDs),
-              !documentSegmentIDs.isSubset(of: currentSegmentIDs)
-        else {
-            return
+        publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
+        liveCaptionReplayTask = Task { [weak self] in
+            guard let self else { return }
+            guard liveCaptionReplaySequence == sequence else { return }
+            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
+            guard liveCaptionReplaySequence == sequence else { return }
+            publishLiveCaptionPipelineSnapshot(snapshot)
         }
-        applyTranscriptDocumentToLiveCaptions(document)
     }
 
     func waitForLiveCaptionReplayForTesting() async {
         await liveCaptionReplayTask?.value
     }
 
-    private func refreshLiveCaptionTurnsFromSelectedMeetingAsync(document providedDocument: TranscriptDocument? = nil) async {
+    private func refreshLiveCaptionTurnsFromSelectedMeetingAsync(
+        document providedDocument: TranscriptDocument? = nil,
+        sequence: Int? = nil
+    ) async {
         guard !Task.isCancelled else { return }
         guard let document = providedDocument ?? selectedTranscriptDocument() else {
             liveCaptionTurns = []
             meetingProgressHealth.caption = .idle
             return
         }
-        liveCaptionPipeline = makeLiveCaptionPipeline(
-            translationProvider: captionTranslationProviderFactory(speechConfiguration)
-        )
-        liveCaptionPipelineUsesCaptionTranslationProvider = true
-        let snapshot = await liveCaptionPipeline.replay(document)
-        guard !Task.isCancelled else { return }
-        publishLiveCaptionPipelineSnapshot(snapshot)
-        processedLiveCaptionSegmentSignaturesByID = document.segments.reduce(into: [:]) { signatures, segment in
-            signatures[segment.id] = liveCaptionSegmentSignature(for: segment)
+        if let sequence {
+            guard liveCaptionReplaySequence == sequence else { return }
+        } else {
+            guard !Task.isCancelled else { return }
         }
-        scheduleCaptionTextTranslationIfNeeded()
+        let translationProvider = captionTranslationProviderForCurrentConfiguration(document: document)
+        liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
+        liveCaptionPipelineUsesCaptionTranslationProvider = true
+        liveCaptionPipelineHasTranslationProvider = translationProvider != nil
+        let snapshot = await liveCaptionPipeline.replay(document)
+        if let sequence {
+            guard liveCaptionReplaySequence == sequence else { return }
+        } else {
+            guard !Task.isCancelled else { return }
+        }
+        publishLiveCaptionPipelineSnapshot(snapshot)
     }
 
     private func selectedTranscriptDocument() -> TranscriptDocument? {
@@ -1027,17 +1039,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard let latest = results.last else { return }
         guard isCurrentActiveCaptionApply(context) else { return }
         if !liveCaptionPipelineUsesCaptionTranslationProvider {
-            liveCaptionPipeline = makeLiveCaptionPipeline(
-                translationProvider: captionTranslationProviderFactory(speechConfiguration)
-            )
+            let translationProvider = captionTranslationProviderForCurrentConfiguration(document: latest.document)
+            liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
             liveCaptionPipelineUsesCaptionTranslationProvider = true
+            liveCaptionPipelineHasTranslationProvider = translationProvider != nil
         }
         let snapshot = await liveCaptionPipeline.apply(latest)
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishLiveCaptionPipelineSnapshot(snapshot)
-        processedLiveCaptionSegmentSignaturesByID = latest.document.segments.reduce(into: [:]) { signatures, segment in
-            signatures[segment.id] = liveCaptionSegmentSignature(for: segment)
-        }
     }
 
     private func beginActiveCaptionApply() -> ActiveCaptionApplyContext {
@@ -1062,653 +1071,41 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func publishLiveCaptionPipelineSnapshot(_ snapshot: LiveCaptionPipelineSnapshot) {
-        liveCaptionStore.reset(
-            sourceLocale: speechConfiguration.localeIdentifier,
-            targetLocale: speechConfiguration.targetLocaleIdentifier
-        )
-        for turn in snapshot.turns {
-            liveCaptionStore.upsert(turn)
-        }
         liveCaptionTurns = snapshot.turns
         meetingProgressHealth.caption = snapshot.captionHealth
         meetingProgressHealth.translation = snapshot.translationHealth
     }
 
-    private func applyTranscriptDocumentToLiveCaptions(_ document: TranscriptDocument) {
-        let currentSegmentIDs = Set(document.segments.map(\.id))
-        liveCaptionStore.removeNonFinalTurnsNotIn(segmentIDs: currentSegmentIDs)
-        processedLiveCaptionSegmentSignaturesByID = processedLiveCaptionSegmentSignaturesByID.filter {
-            currentSegmentIDs.contains($0.key)
+    private func flushLiveCaptionPipeline(reason: LiveCaptionFreezeReason) {
+        let context = beginActiveCaptionApply()
+        activeCaptionApplyTask?.cancel()
+        publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.flushCaptionsOnly(reason: reason))
+        activeCaptionApplyTask = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await liveCaptionPipeline.schedulePendingTranslations()
+            guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
+            publishLiveCaptionPipelineSnapshot(snapshot)
         }
-        for segment in document.segments where segment.isFinal {
-            guard markProcessedLiveCaptionSegmentIfNeeded(segment) else { continue }
-            currentPerformanceEventLogger()?.logSegment(
-                "caption_segment_ingested",
-                segment: segment,
-                metadata: ["path": "final"]
-            )
-            applyFinalLiveCaptionSegment(segment)
-        }
-        for segment in document.segments where !segment.isFinal {
-            guard markProcessedLiveCaptionSegmentIfNeeded(segment) else { continue }
-            currentPerformanceEventLogger()?.logSegment(
-                "caption_segment_ingested",
-                segment: segment,
-                metadata: ["path": "interim"]
-            )
-            applyInterimLiveCaptionSegment(segment)
-        }
-        liveCaptionTurns = liveCaptionStore.turns
-        meetingProgressHealth.caption = liveCaptionTurns.isEmpty ? .idle : .live
-        scheduleCaptionTextTranslationIfNeeded()
-    }
-
-    private func applyFinalLiveCaptionSegment(_ segment: TranscriptSegment) {
-        for update in liveCaptionChunker.append(segment) {
-            liveCaptionStore.upsert(update.turn)
-            hydrateCachedTranslation(from: segment, toTurnID: update.turn.id)
-            logCaptionTurnUpdate(update.turn)
-        }
-    }
-
-    private func applyInterimLiveCaptionSegment(_ segment: TranscriptSegment) {
-        _ = liveCaptionStore.append(segment)
-        hydrateCachedTranslation(from: segment, toTurnID: segment.id)
-    }
-
-    private func markProcessedLiveCaptionSegmentIfNeeded(_ segment: TranscriptSegment) -> Bool {
-        let signature = liveCaptionSegmentSignature(for: segment)
-        guard processedLiveCaptionSegmentSignaturesByID[segment.id] != signature else {
-            return false
-        }
-        processedLiveCaptionSegmentSignaturesByID[segment.id] = signature
-        return true
-    }
-
-    private func liveCaptionSegmentSignature(for segment: TranscriptSegment) -> String {
-        [
-            segment.text,
-            segment.isFinal ? "final" : "interim",
-            segment.speechFinal ? "speechFinal" : "open",
-            segment.speakerID ?? "",
-            segment.speakerLabel ?? ""
-        ].joined(separator: "\u{1F}")
-    }
-
-    private func freezeOpenLiveCaptionChunk(reason: LiveCaptionFreezeReason) {
-        for update in liveCaptionChunker.flushOpenChunk(reason: reason) {
-            liveCaptionStore.upsert(update.turn)
-            logCaptionTurnUpdate(update.turn, metadata: ["flushReason": reason.rawValue])
-        }
-        liveCaptionTurns = liveCaptionStore.turns
-        scheduleCaptionTextTranslationIfNeeded()
     }
 
     private func currentPerformanceEventLogger() -> PerformanceEventLogger? {
         selectedMeeting?.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
     }
 
-    private func logCaptionTurnUpdate(
-        _ turn: LiveCaptionTurn,
-        metadata extraMetadata: [String: String] = [:]
-    ) {
-        var metadata = translationMetadata(for: turn, isDraft: turn.displayState == .draft)
-        metadata["displayState"] = String(describing: turn.displayState)
-        metadata["chunkState"] = String(describing: turn.chunkState)
-        metadata["translationRevision"] = String(turn.translationRevision)
-        for (key, value) in extraMetadata {
-            metadata[key] = value
-        }
-        currentPerformanceEventLogger()?.log(
-            "caption_turn_updated",
-            segmentID: turn.id,
-            isFinal: turn.isFinal,
-            textLength: turn.originalText.count,
-            metadata: metadata
-        )
-    }
-
-    private func logTranslationScheduled(
-        _ request: CaptionTranslationRequest
-    ) {
-        request.performanceEventLogger?.log(
-            "caption_translation_scheduled",
-            segmentID: request.turn.id,
-            isFinal: !request.isDraft,
-            textLength: request.turn.originalText.count,
-            metadata: translationMetadata(for: request)
-        )
-    }
-
-    private func logTranslationCancelled(_ request: CaptionTranslationRequest, reason: String) {
-        request.performanceEventLogger?.log(
-            "caption_translation_cancelled",
-            segmentID: request.turn.id,
-            isFinal: !request.isDraft,
-            textLength: request.turn.originalText.count,
-            metadata: translationMetadata(for: request, extra: ["reason": reason])
-        )
-    }
-
-    private func translationMetadata(
-        for request: CaptionTranslationRequest,
-        extra: [String: String] = [:]
-    ) -> [String: String] {
-        var metadata = translationMetadata(for: request.turn, isDraft: request.isDraft, extra: extra)
-        metadata["translationRequestID"] = request.id
-        metadata["translationRevision"] = String(request.revision)
-        metadata["translationKeyHash"] = String(request.key.hashValue)
-        return metadata
-    }
-
-    private func translationMetadata(
-        for turn: LiveCaptionTurn,
-        isDraft: Bool,
-        extra: [String: String] = [:]
-    ) -> [String: String] {
-        var metadata: [String: String] = [
-            "turnID": turn.id,
-            "sourceSegmentID": turn.sourceSegmentID,
-            "sourceSegmentIDs": turn.sourceSegmentIDs.joined(separator: ","),
-            "sourceLocale": turn.sourceLocale,
-            "targetLocale": turn.targetLocale,
-            "translationKind": isDraft ? "draft" : "final"
-        ]
-        if let boundaryStrength = turn.boundaryStrength {
-            metadata["boundaryStrength"] = String(describing: boundaryStrength)
-        }
-        if let boundaryReason = turn.boundaryReason {
-            metadata["boundaryReason"] = boundaryReason.rawValue
-        }
-        for (key, value) in extra {
-            metadata[key] = value
-        }
-        return metadata
-    }
-
-    private func scheduleCaptionTextTranslationIfNeeded() {
-        completeSameLanguageCaptionTranslationsIfNeeded()
-        let initialDraftCandidates = liveCaptionStore.turns.filter { turn in
-            guard turn.translationHealth == .pending,
-                  shouldScheduleDraftTranslation(for: turn),
-                  draftTranslationInFlightByTurnID[turn.id] != turn.translationRevision
-            else { return false }
-            return true
-        }
-
-        let finalCandidates = liveCaptionStore.turns.filter { turn in
-            guard turn.displayState == .sealed,
-                  turn.boundaryStrength == .hard,
-                  turn.translationHealth == .pending
-            else { return false }
-            let key = finalCaptionTranslationKey(for: turn)
-            return finalTranslationKeysByTurnID[turn.id] != key
-                && !finalTranslationInFlightTurnIDs.contains(turn.id)
-        }
-        let draftCandidates = initialDraftCandidates.filter { draft in
-            !isDraftTranslationSupersededByHardFinal(draft, finalCandidates: finalCandidates)
-        }
-
-        guard !draftCandidates.isEmpty || !finalCandidates.isEmpty else { return }
-        guard let provider = captionTranslationProviderFactory(speechConfiguration) else { return }
-
-        let performanceEventLogger = currentPerformanceEventLogger()
-        let draftRequests = draftCandidates.map { turn -> CaptionTranslationRequest in
-            let key = draftCaptionTranslationKey(for: turn)
-            draftTranslationInFlightByTurnID[turn.id] = turn.translationRevision
-            draftTranslationAttemptDatesByTurnID[turn.id] = Date()
-            let request = CaptionTranslationRequest(
-                id: "caption-translation-\(UUID().uuidString)",
-                turn: turn,
-                key: key,
-                isDraft: true,
-                revision: turn.translationRevision,
-                performanceEventLogger: performanceEventLogger
-            )
-            logTranslationScheduled(request)
-            return request
-        }
-
-        let finalRequests = finalCandidates.map { turn -> CaptionTranslationRequest in
-            let key = finalCaptionTranslationKey(for: turn)
-            cancelDraftTranslationsSuperseded(by: turn)
-            finalTranslationInFlightTurnIDs.insert(turn.id)
-            let request = CaptionTranslationRequest(
-                id: "caption-translation-\(UUID().uuidString)",
-                turn: turn,
-                key: key,
-                isDraft: false,
-                revision: turn.translationRevision,
-                performanceEventLogger: performanceEventLogger
-            )
-            logTranslationScheduled(request)
-            return request
-        }
-
-        for request in draftRequests {
-            if let pending = pendingDraftTranslationRequestsByTurnID[request.turn.id] {
-                logTranslationCancelled(pending, reason: "superseded_by_newer_draft")
-            }
-            cancelActiveDraftTranslation(forTurnID: request.turn.id, reason: "superseded_by_newer_draft")
-            pendingDraftTranslationRequestsByTurnID[request.turn.id] = request
-        }
-        for request in finalRequests {
-            pendingFinalTranslationRequestsByTurnID[request.turn.id] = request
-        }
-        pumpCaptionTranslationQueue(using: provider)
-    }
-
-    private func completeSameLanguageCaptionTranslationsIfNeeded() {
-        var completedAny = false
-        for turn in liveCaptionStore.turns where turn.translationHealth == .pending {
-            let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
-            guard options.isSameLanguage else { continue }
-            completeCaptionTranslationWithoutProvider(for: turn)
-            completedAny = true
-        }
-        guard completedAny else { return }
-        liveCaptionTurns = liveCaptionStore.turns
-        updateCaptionTranslationHealth()
-    }
-
-    private func shouldScheduleDraftTranslation(for turn: LiveCaptionTurn) -> Bool {
-        guard turn.translationState != .final else {
-            return false
-        }
-        if turn.displayState == .draft {
-            return shouldTranslateDraftCaption(turn)
-        }
-        if turn.displayState == .sealed, turn.boundaryStrength == .soft {
-            return true
-        }
-        return false
-    }
-
-    private func shouldTranslateDraftCaption(_ turn: LiveCaptionTurn, now: Date = Date()) -> Bool {
-        let key = draftCaptionTranslationKey(for: turn)
-        if draftTranslationKeysByTurnID[turn.id] == nil {
-            return true
-        }
-        if draftTranslationKeysByTurnID[turn.id] == key {
-            return false
-        }
-        let previousCount = draftTranslationCharacterCountsByTurnID[turn.id] ?? 0
-        if turn.originalText.count - previousCount >= minDraftTranslationCharacterDelta {
-            return true
-        }
-        let previousAttempt = draftTranslationAttemptDatesByTurnID[turn.id] ?? .distantPast
-        return now.timeIntervalSince(previousAttempt) >= minDraftTranslationInterval
-    }
-
-    private func isDraftTranslationSupersededByHardFinal(
-        _ draft: LiveCaptionTurn,
-        finalCandidates: [LiveCaptionTurn]
-    ) -> Bool {
-        finalCandidates.contains { final in
-            final.id == draft.id || (final.speaker == draft.speaker && draft.createdAt <= final.createdAt)
-        }
-    }
-
-    private func pumpCaptionTranslationQueue(using provider: TextTranslationProvider) {
-        while activeCaptionTranslationRequestIDs.count < maxConcurrentCaptionTranslations {
-            if let request = nextPendingFinalTranslationRequest() {
-                pendingFinalTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
-                startCaptionTranslationRequest(request, using: provider)
-                continue
-            }
-            guard activeDraftTranslationRequestIDs.count < maxConcurrentDraftCaptionTranslations,
-                  let request = nextPendingDraftTranslationRequest()
-            else {
-                break
-            }
-            pendingDraftTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
-            startCaptionTranslationRequest(request, using: provider)
-        }
-    }
-
-    private func nextPendingFinalTranslationRequest() -> CaptionTranslationRequest? {
-        pendingFinalTranslationRequestsByTurnID.values
-            .sorted { lhs, rhs in
-                if lhs.turn.createdAt == rhs.turn.createdAt {
-                    return lhs.turn.id < rhs.turn.id
-                }
-                return lhs.turn.createdAt < rhs.turn.createdAt
-            }
-            .first
-    }
-
-    private func nextPendingDraftTranslationRequest() -> CaptionTranslationRequest? {
-        pendingDraftTranslationRequestsByTurnID.values
-            .sorted { lhs, rhs in
-                if lhs.turn.createdAt == rhs.turn.createdAt {
-                    return lhs.turn.id > rhs.turn.id
-                }
-                return lhs.turn.createdAt > rhs.turn.createdAt
-            }
-            .first
-    }
-
-    private func startCaptionTranslationRequest(
-        _ request: CaptionTranslationRequest,
-        using provider: TextTranslationProvider
-    ) {
-        activeCaptionTranslationRequestIDs.insert(request.id)
-        if request.isDraft {
-            activeDraftTranslationRequestIDs.insert(request.id)
-            activeDraftTranslationRequestIDsByTurnID[request.turn.id] = request.id
-            activeDraftTranslationRequestsByTurnID[request.turn.id] = request
-            draftTranslationTasksByTurnID[request.turn.id]?.cancel()
-        }
-        let task = Task { [weak self, provider, request] in
-            guard let self else { return }
-            await self.translateCaptionTurn(request, using: provider)
-        }
-        captionTranslationTasksByRequestID[request.id] = task
-        if request.isDraft {
-            draftTranslationTasksByTurnID[request.turn.id] = task
-        }
-    }
-
-    private func translateCaptionTurn(_ request: CaptionTranslationRequest, using provider: TextTranslationProvider) async {
-        defer {
-            updateCaptionTranslationHealth()
-            pumpCaptionTranslationQueue(using: provider)
-        }
-        let turn = request.turn
-        if request.isDraft {
-            await Task.yield()
-            guard !Task.isCancelled, isCurrentDraftTranslationRequest(request) else {
-                clearTranslationInFlight(request)
-                return
-            }
-        }
-        let sourceText = translationSourceText(for: turn, final: !request.isDraft)
-        let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
-        if options.isSameLanguage {
-            completeCaptionTranslationWithoutProvider(for: turn)
-            liveCaptionTurns = liveCaptionStore.turns
-            clearTranslationInFlight(request)
-            return
-        }
-        let segment = TranscriptSegment(
-            id: turn.sourceSegmentID,
-            speaker: turn.speaker,
-            text: sourceText,
-            language: turn.sourceLocale,
-            isFinal: turn.isFinal,
-            createdAt: turn.createdAt
-        )
-        do {
-            request.performanceEventLogger?.log(
-                "caption_translation_started",
-                segmentID: turn.id,
-                isFinal: !request.isDraft,
-                textLength: sourceText.count,
-                metadata: translationMetadata(for: request)
-            )
-            let translated = try await provider.translate(
-                transcript: TranscriptDocument(segments: [segment]),
-                options: options
-            )
-            let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
-            request.performanceEventLogger?.log(
-                "caption_translation_finished",
-                segmentID: turn.id,
-                isFinal: !request.isDraft,
-                textLength: translatedText.count,
-                metadata: translationMetadata(for: request)
-            )
-            if request.isDraft {
-                acceptDraftTranslation(request, translatedText: translatedText)
-            } else {
-                acceptFinalTranslation(request, translatedText: translatedText)
-            }
-        } catch is CancellationError {
-            clearTranslationInFlight(request)
-        } catch {
-            if Task.isCancelled {
-                clearTranslationInFlight(request)
-                return
-            }
-            let nsError = error as NSError
-            request.performanceEventLogger?.log(
-                "caption_translation_failed",
-                segmentID: turn.id,
-                isFinal: !request.isDraft,
-                textLength: sourceText.count,
-                metadata: translationMetadata(
-                    for: request,
-                    extra: ["error": "\(nsError.domain) error \(nsError.code)"]
-                )
-            )
-            liveCaptionStore.markTranslationFailed(forTurnID: turn.id, message: "\(nsError.domain) error \(nsError.code)")
-            liveCaptionTurns = liveCaptionStore.turns
-            clearTranslationInFlight(request)
-        }
-    }
-
-    private func isCurrentDraftTranslationRequest(_ request: CaptionTranslationRequest) -> Bool {
-        guard request.isDraft,
-              draftTranslationInFlightByTurnID[request.turn.id] == request.revision,
-              let current = liveCaptionStore.turns.first(where: { $0.id == request.turn.id }),
-              current.translationRevision == request.revision,
-              current.translationState != .final,
-              draftCaptionTranslationKey(for: current) == request.key,
-              shouldScheduleDraftTranslation(for: current)
-        else {
-            return false
-        }
-        return true
-    }
-
-    private func cancelDraftTranslationsSuperseded(by final: LiveCaptionTurn) {
-        let supersededTurnIDs = liveCaptionStore.turns
-            .filter { draft in
-                final.id == draft.id || (final.speaker == draft.speaker && draft.createdAt <= final.createdAt)
-            }
-            .map(\.id)
-        for turnID in supersededTurnIDs {
-            if let pending = pendingDraftTranslationRequestsByTurnID.removeValue(forKey: turnID) {
-                logTranslationCancelled(pending, reason: "superseded_by_final")
-            }
-            cancelActiveDraftTranslation(forTurnID: turnID, reason: "superseded_by_final")
-            draftTranslationTasksByTurnID[turnID]?.cancel()
-            draftTranslationTasksByTurnID.removeValue(forKey: turnID)
-            draftTranslationInFlightByTurnID.removeValue(forKey: turnID)
-        }
-    }
-
-    private func cancelActiveDraftTranslation(forTurnID turnID: String, reason: String) {
-        guard let requestID = activeDraftTranslationRequestIDsByTurnID.removeValue(forKey: turnID) else {
-            return
-        }
-        if let request = activeDraftTranslationRequestsByTurnID.removeValue(forKey: turnID) {
-            logTranslationCancelled(request, reason: reason)
-        }
-        draftTranslationTasksByTurnID[turnID]?.cancel()
-        draftTranslationTasksByTurnID.removeValue(forKey: turnID)
-        activeCaptionTranslationRequestIDs.remove(requestID)
-        activeDraftTranslationRequestIDs.remove(requestID)
-        captionTranslationTasksByRequestID.removeValue(forKey: requestID)
-    }
-
-    private func completeCaptionTranslationWithoutProvider(for turn: LiveCaptionTurn) {
-        liveCaptionStore.markTranslationCompleteWithoutText(forTurnID: turn.id)
-        draftTranslationKeysByTurnID[turn.id] = draftCaptionTranslationKey(for: turn)
-        draftTranslationCharacterCountsByTurnID[turn.id] = turn.originalText.count
-        finalTranslationKeysByTurnID[turn.id] = finalCaptionTranslationKey(for: turn)
-        pendingDraftTranslationRequestsByTurnID.removeValue(forKey: turn.id)
-        pendingFinalTranslationRequestsByTurnID.removeValue(forKey: turn.id)
-        draftTranslationInFlightByTurnID.removeValue(forKey: turn.id)
-        finalTranslationInFlightTurnIDs.remove(turn.id)
-    }
-
-    private func translationSourceText(for turn: LiveCaptionTurn, final: Bool) -> String {
-        guard final else {
-            return turn.originalText
-        }
-        let groups = LiveCaptionSpeakerGroup.groups(from: liveCaptionStore.turns)
-        guard let group = groups.first(where: { $0.turns.contains(where: { $0.id == turn.id }) }) else {
-            return turn.originalText
-        }
-        var texts: [String] = []
-        for candidate in group.turns {
-            texts.append(candidate.originalText)
-            if candidate.id == turn.id {
-                break
-            }
-        }
-        return texts
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    private func acceptDraftTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
-        defer { clearTranslationInFlight(request) }
-        guard let current = liveCaptionStore.turns.first(where: { $0.id == request.turn.id }),
-              current.translationRevision == request.revision,
-              current.translationState != .final,
-              shouldScheduleDraftTranslation(for: current)
-        else {
-            request.performanceEventLogger?.log(
-                "caption_translation_stale",
-                segmentID: request.turn.id,
-                isFinal: false,
-                textLength: request.turn.originalText.count,
-                metadata: translationMetadata(for: request, extra: ["reason": "draft_no_longer_current"])
-            )
-            return
-        }
-        liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
-        persistCaptionTranslation(request, translatedText: translatedText, isFinal: false)
-        request.performanceEventLogger?.log(
-            "caption_translation_attached",
-            segmentID: request.turn.id,
-            isFinal: false,
-            textLength: translatedText.count,
-            metadata: translationMetadata(for: request)
-        )
-        draftTranslationKeysByTurnID[request.turn.id] = request.key
-        draftTranslationCharacterCountsByTurnID[request.turn.id] = current.originalText.count
-        liveCaptionTurns = liveCaptionStore.turns
-    }
-
-    private func acceptFinalTranslation(_ request: CaptionTranslationRequest, translatedText: String) {
-        defer { clearTranslationInFlight(request) }
-        guard liveCaptionStore.turns.contains(where: {
-            $0.id == request.turn.id
-                && $0.displayState == .sealed
-                && $0.boundaryStrength == .hard
-        }) else {
-            request.performanceEventLogger?.log(
-                "caption_translation_stale",
-                segmentID: request.turn.id,
-                isFinal: true,
-                textLength: request.turn.originalText.count,
-                metadata: translationMetadata(for: request, extra: ["reason": "final_no_longer_current"])
-            )
-            return
-        }
-        liveCaptionStore.attachTranslation(translatedText, toTurnID: request.turn.id)
-        liveCaptionStore.markTranslationFinal(forTurnID: request.turn.id)
-        persistCaptionTranslation(request, translatedText: translatedText, isFinal: true)
-        request.performanceEventLogger?.log(
-            "caption_translation_attached",
-            segmentID: request.turn.id,
-            isFinal: true,
-            textLength: translatedText.count,
-            metadata: translationMetadata(for: request)
-        )
-        finalTranslationKeysByTurnID[request.turn.id] = request.key
-        liveCaptionTurns = liveCaptionStore.turns
-    }
-
-    private func clearTranslationInFlight(_ request: CaptionTranslationRequest) {
-        activeCaptionTranslationRequestIDs.remove(request.id)
-        activeDraftTranslationRequestIDs.remove(request.id)
-        captionTranslationTasksByRequestID.removeValue(forKey: request.id)
-        if request.isDraft {
-            if activeDraftTranslationRequestIDsByTurnID[request.turn.id] == request.id {
-                activeDraftTranslationRequestIDsByTurnID.removeValue(forKey: request.turn.id)
-            }
-            if activeDraftTranslationRequestsByTurnID[request.turn.id]?.id == request.id {
-                activeDraftTranslationRequestsByTurnID.removeValue(forKey: request.turn.id)
-            }
-            if draftTranslationInFlightByTurnID[request.turn.id] == request.revision {
-                draftTranslationInFlightByTurnID.removeValue(forKey: request.turn.id)
-                draftTranslationTasksByTurnID.removeValue(forKey: request.turn.id)
-            }
-        } else {
-            finalTranslationInFlightTurnIDs.remove(request.turn.id)
-        }
-    }
-
-    private func draftCaptionTranslationKey(for turn: LiveCaptionTurn) -> String {
-        captionTranslationKey(for: turn)
-    }
-
-    private func finalCaptionTranslationKey(for turn: LiveCaptionTurn) -> String {
-        captionTranslationKey(for: turn)
-    }
-
-    private func captionTranslationKey(for turn: LiveCaptionTurn) -> String {
-        "\(turn.sourceSegmentIDs.joined(separator: ","))|\(turn.sourceLocale)|\(turn.targetLocale)|\(turn.originalText)"
-    }
-
-    private func hydrateCachedTranslation(from segment: TranscriptSegment, toTurnID turnID: String) {
-        guard let translatedText = segment.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !translatedText.isEmpty,
-              let targetLocale = segment.translationTargetLocale?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let current = liveCaptionStore.turns.first(where: { $0.id == turnID }),
-              targetLocale == current.targetLocale
-        else {
-            return
-        }
-        if current.displayState == .sealed,
-           current.boundaryStrength == .hard,
-           segment.translationIsFinal != true {
-            return
-        }
-        liveCaptionStore.attachTranslation(translatedText, toTurnID: turnID)
-        guard let hydrated = liveCaptionStore.turns.first(where: { $0.id == turnID }) else { return }
-        draftTranslationKeysByTurnID[turnID] = draftCaptionTranslationKey(for: hydrated)
-        draftTranslationCharacterCountsByTurnID[turnID] = hydrated.originalText.count
-        if segment.translationIsFinal == true {
-            liveCaptionStore.markTranslationFinal(forTurnID: turnID)
-            finalTranslationKeysByTurnID[turnID] = finalCaptionTranslationKey(for: hydrated)
-        }
-    }
-
     private func persistCaptionTranslation(
-        _ request: CaptionTranslationRequest,
+        _ turn: LiveCaptionTurn,
         translatedText: String,
         isFinal: Bool
     ) {
         guard let meeting = selectedMeeting else { return }
         try? TranscriptFileWriter.updateSegmentTranslation(
-            segmentID: request.turn.sourceSegmentID,
+            segmentID: turn.sourceSegmentID,
             text: translatedText,
-            targetLocale: request.turn.targetLocale,
+            targetLocale: turn.targetLocale,
             isFinal: isFinal,
             textURL: meeting.transcriptURL,
             structuredURL: meeting.transcriptJSONURL
         )
-    }
-
-    private func updateCaptionTranslationHealth() {
-        if liveCaptionTurns.contains(where: { $0.translationHealth == .live }) {
-            meetingProgressHealth.translation = .live
-        } else if let failed = liveCaptionTurns.first(where: {
-            if case .failed = $0.translationHealth { return true }
-            return false
-        }) {
-            meetingProgressHealth.translation = failed.translationHealth
-        } else if liveCaptionTurns.contains(where: { $0.translationHealth == .pending }) {
-            meetingProgressHealth.translation = .pending
-        } else {
-            meetingProgressHealth.translation = .idle
-        }
     }
 
     public nonisolated static func openRouterCaptionTranslationProvider(
