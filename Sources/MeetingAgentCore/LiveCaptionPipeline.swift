@@ -69,8 +69,9 @@ public final class LiveCaptionPipeline {
 
         let changedSegmentIDs = Set(result.changedSegmentIDs)
         for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
+            let receivedAt = Date()
             logSegmentIngestedIfNeeded(segment, path: segment.isFinal ? "final" : "interim")
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment, segmentReceivedAt: receivedAt)
         }
         await scheduleLiveTranslations()
 
@@ -143,6 +144,7 @@ public final class LiveCaptionPipeline {
     private func applyEvents(
         _ events: [CaptionTurnEvent],
         sourceSegment: TranscriptSegment? = nil,
+        segmentReceivedAt: Date? = nil,
         currentSegments: [TranscriptSegment] = []
     ) {
         for event in events {
@@ -156,12 +158,14 @@ public final class LiveCaptionPipeline {
                         applying: turn
                     )
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
                     interimSegmentsByID[sourceSegment.id] = sourceSegment
                     continue
                 }
-                store.upsert(turn)
+                let updated = store.upsert(turn)
                 if let sourceSegment {
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
                 }
             case .sealed(let turn):
                 if let sourceSegment,
@@ -172,14 +176,16 @@ public final class LiveCaptionPipeline {
                         applying: turn
                     )
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
                     }
                     continue
                 }
-                store.upsert(turn)
+                let updated = store.upsert(turn)
                 if let sourceSegment {
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: turn.id)
+                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
                     }
@@ -187,6 +193,7 @@ public final class LiveCaptionPipeline {
             case .interimUpdated(let segment):
                 let turn = store.append(segment)
                 hydrateCachedTranslation(from: segment, toTurnID: turn.id)
+                logCaptionTurnVisible(turn, sourceSegment: segment, receivedAt: segmentReceivedAt)
                 interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
                 let updatedTurn = store.removeSourceSegment(turnID, remainingSegments: currentSegments)
@@ -199,6 +206,47 @@ public final class LiveCaptionPipeline {
                 }
             }
         }
+    }
+
+    private func logCaptionTurnVisible(
+        _ turn: LiveCaptionTurn,
+        sourceSegment: TranscriptSegment,
+        receivedAt: Date?
+    ) {
+        var metadata = captionMetadata(for: turn, sourceSegment: sourceSegment)
+        if let receivedAt {
+            metadata.merge(PerformanceEventLogger.durationMetadata(from: receivedAt)) { _, new in new }
+        }
+        performanceEventLogger?.log(
+            "caption_turn_visible",
+            audioTimeSeconds: sourceSegment.endTimeSeconds,
+            segmentID: sourceSegment.id,
+            isFinal: sourceSegment.isFinal,
+            textLength: sourceSegment.text.count,
+            metadata: metadata
+        )
+    }
+
+    private func captionMetadata(for turn: LiveCaptionTurn, sourceSegment: TranscriptSegment) -> [String: String] {
+        var metadata: [String: String] = [
+            "turnID": turn.id,
+            "sourceSegmentID": sourceSegment.id,
+            "sourceSegmentIDs": turn.sourceSegmentIDs.joined(separator: ","),
+            "sourceLocale": turn.sourceLocale,
+            "targetLocale": turn.targetLocale,
+            "captionState": String(describing: turn.displayState)
+        ]
+        let providerID = sourceSegment.sourceProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !providerID.isEmpty {
+            metadata["providerID"] = providerID
+        }
+        if let boundaryStrength = turn.boundaryStrength {
+            metadata["boundaryStrength"] = String(describing: boundaryStrength)
+        }
+        if let boundaryReason = turn.boundaryReason {
+            metadata["boundaryReason"] = boundaryReason.rawValue
+        }
+        return metadata
     }
 
     private func replayCaptions(_ document: TranscriptDocument) {
@@ -294,8 +342,30 @@ public final class LiveCaptionPipeline {
             return
         }
         for update in updates {
-            translationScheduler.apply(update, to: &store)
+            let attachedVisibleText = translationScheduler.apply(update, to: &store)
+            if attachedVisibleText {
+                logCaptionSnapshotPublished(for: update, publishedAt: Date())
+            }
         }
+    }
+
+    private func logCaptionSnapshotPublished(for update: CaptionTranslationUpdate, publishedAt: Date) {
+        guard let request = update.request,
+              update.attachesVisibleText
+        else {
+            return
+        }
+        var metadata = CaptionTranslationExecutionMetadata.metadata(for: request)
+        if let resultReceivedAt = update.resultReceivedAt {
+            metadata.merge(PerformanceEventLogger.durationMetadata(from: resultReceivedAt, to: publishedAt)) { _, new in new }
+        }
+        performanceEventLogger?.log(
+            "caption_snapshot_published",
+            segmentID: update.turnID,
+            isFinal: !request.isDraft,
+            textLength: update.visibleTextLength,
+            metadata: metadata
+        )
     }
 
     private func currentTranslationHealth() -> LivePipelineHealth {

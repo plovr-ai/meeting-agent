@@ -35,4 +35,13 @@ final class PerformanceEventLoggerTests: XCTestCase {
         XCTAssertEqual(first.metadata["provider"], "deepgram-transcribe")
         XCTAssertEqual(second.event, "recording_stopped")
     }
+
+    func testDurationMetadataRoundsElapsedMilliseconds() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let end = Date(timeIntervalSince1970: 1_000.124)
+
+        let metadata = PerformanceEventLogger.durationMetadata(from: start, to: end)
+
+        XCTAssertEqual(metadata["durationMilliseconds"], "124")
+    }
 }

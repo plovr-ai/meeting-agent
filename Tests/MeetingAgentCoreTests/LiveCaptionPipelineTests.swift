@@ -89,6 +89,49 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .draft)
     }
 
+    func testApplyLogsCaptionTurnVisibleWithoutRawText() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let result = TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "deepgram-transcribe-stream-0.0",
+                    speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+                    text: "Sensitive customer launch detail",
+                    language: "en-US",
+                    sourceProvider: "deepgram-transcribe",
+                    isFinal: false,
+                    speechFinal: false
+                )
+            ]),
+            changedSegmentIDs: ["deepgram-transcribe-stream-0.0"],
+            plainTextReplacement: nil
+        )
+
+        _ = await pipeline.apply(result)
+
+        let events = try readPipelineEvents(from: eventsURL)
+        let visible = try XCTUnwrap(events.first { $0.event == "caption_turn_visible" })
+        XCTAssertEqual(visible.segmentID, "deepgram-transcribe-stream-0.0")
+        XCTAssertEqual(visible.isFinal, false)
+        XCTAssertEqual(visible.textLength, "Sensitive customer launch detail".count)
+        XCTAssertEqual(visible.metadata["turnID"], "deepgram-transcribe-stream-0.0")
+        XCTAssertEqual(visible.metadata["sourceSegmentID"], "deepgram-transcribe-stream-0.0")
+        XCTAssertEqual(visible.metadata["sourceLocale"], "en-US")
+        XCTAssertEqual(visible.metadata["targetLocale"], "zh-CN")
+        XCTAssertEqual(visible.metadata["providerID"], "deepgram-transcribe")
+        XCTAssertNotNil(visible.metadata["durationMilliseconds"])
+        XCTAssertNil(visible.metadata["text"])
+        XCTAssertFalse(visible.metadata.values.contains("Sensitive customer launch detail"))
+    }
+
     func testApplySameIDInterimUpdatePreservesMergedTurn() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -539,6 +582,45 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
     }
 
+    func testScheduleLivePendingTranslationsLogsSnapshotPublished() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "草稿"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "draft text",
+                language: "en-US",
+                isFinal: false,
+                speechFinal: false
+            )
+        ])
+
+        _ = pipeline.replayCaptionsOnly(document)
+        _ = await pipeline.scheduleLivePendingTranslations()
+
+        let events = try readPipelineEvents(from: eventsURL)
+        let published = try XCTUnwrap(events.first { $0.event == "caption_snapshot_published" })
+        XCTAssertEqual(published.segmentID, "segment-1")
+        XCTAssertEqual(published.isFinal, false)
+        XCTAssertEqual(published.textLength, "草稿".count)
+        XCTAssertEqual(published.metadata["turnID"], "segment-1")
+        XCTAssertEqual(published.metadata["sourceSegmentID"], "segment-1")
+        XCTAssertEqual(published.metadata["sourceLocale"], "en-US")
+        XCTAssertEqual(published.metadata["targetLocale"], "zh-CN")
+        XCTAssertEqual(published.metadata["translationKind"], "draft")
+        XCTAssertEqual(published.metadata["providerID"], "pipeline-recording-translation")
+        XCTAssertNotNil(published.metadata["translationRequestID"])
+        XCTAssertNotNil(published.metadata["durationMilliseconds"])
+    }
+
     func testStaleTranslationCompletionDoesNotOverwriteNewerReplayState() async throws {
         let provider = SuspendedPipelineTranslationProvider()
         let pipeline = LiveCaptionPipeline(
@@ -724,6 +806,14 @@ private func waitForPipelineCondition(
         }
         try await Task.sleep(nanoseconds: 1_000_000)
     }
+}
+
+private func readPipelineEvents(from url: URL) throws -> [PerformanceEvent] {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try String(contentsOf: url, encoding: .utf8)
+        .split(whereSeparator: \.isNewline)
+        .map { try decoder.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
 private final class SuspendedPipelineTranslationProvider: TextTranslationProvider {
