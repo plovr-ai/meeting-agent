@@ -619,7 +619,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
                 text: "Alex is the launch owner.",
                 language: "en-US",
-                isFinal: true
+                isFinal: true,
+                speechFinal: true
             )
         ])
 
@@ -1643,7 +1644,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
     }
 
-    func testDifferentSpeakerDraftTranslationsAreQueuedOneAtATime() async throws {
+    func testDifferentSpeakerDraftTranslationsRespectGlobalConcurrencyBudget() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -1665,8 +1666,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.drainRecordingFrames()
         try await waitFor { provider.pendingRequestCount >= 1 }
 
-        XCTAssertEqual(provider.pendingRequestCount, 1)
-        XCTAssertEqual(provider.pendingRequestTexts, [["second speaker draft"]])
+        XCTAssertEqual(provider.pendingRequestCount, 2)
+        XCTAssertEqual(provider.pendingRequestTexts, [["second speaker draft"], ["first speaker draft"]])
 
         viewModel.selectMeeting(nil)
     }
