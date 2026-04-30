@@ -89,6 +89,23 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
     }
 
+    func testBlankProviderAndLocaleFallBackToDefaults() {
+        let record = MeetingRecord(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            name: "Google Meet",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            endedAt: nil,
+            audioURL: nil,
+            transcriptURL: nil,
+            speechProvider: .local,
+            transcriptionProviderID: "   ",
+            speechLocaleIdentifier: "   "
+        )
+
+        XCTAssertEqual(record.transcriptionProviderID, "local")
+        XCTAssertEqual(record.speechLocaleIdentifier, "en-US")
+    }
+
     func testMeetingRecordInitializerDerivesMeetingGoalsFromLegacyGoal() {
         let goal = MeetingGoal(
             id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,

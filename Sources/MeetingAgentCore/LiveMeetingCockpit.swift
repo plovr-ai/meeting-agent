@@ -419,6 +419,97 @@ public struct LiveCaptionStore: Equatable {
         turns.removeAll { !$0.isFinal && !segmentIDs.contains($0.sourceSegmentID) }
     }
 
+    public mutating func remove(turnID: String) {
+        turns.removeAll { $0.id == turnID }
+    }
+
+    @discardableResult
+    public mutating func removeSourceSegment(
+        _ segmentID: String,
+        remainingSegments: [TranscriptSegment]
+    ) -> LiveCaptionTurn? {
+        var matchingIndex: Int?
+        for index in turns.indices where turns[index].sourceSegmentIDs.contains(segmentID) {
+            matchingIndex = index
+            break
+        }
+        guard let index = matchingIndex else {
+            remove(turnID: segmentID)
+            return nil
+        }
+
+        var segmentsByID: [String: TranscriptSegment] = [:]
+        for segment in remainingSegments {
+            segmentsByID[segment.id] = segment
+        }
+
+        var representedSegments: [TranscriptSegment] = []
+        for sourceSegmentID in turns[index].sourceSegmentIDs where sourceSegmentID != segmentID {
+            if let segment = segmentsByID[sourceSegmentID] {
+                representedSegments.append(segment)
+            }
+        }
+        guard !representedSegments.isEmpty else {
+            turns.remove(at: index)
+            return nil
+        }
+        turns[index] = rebuiltTurn(
+            from: representedSegments,
+            preservingID: turns[index].id,
+            previous: turns[index]
+        )
+        return turns[index]
+    }
+
+    @discardableResult
+    public mutating func replaceRepresentedSegment(
+        _ previousSegment: TranscriptSegment,
+        with segment: TranscriptSegment,
+        applying turn: LiveCaptionTurn
+    ) -> LiveCaptionTurn {
+        var matchingIndex: Int?
+        for index in turns.indices
+            where turns[index].sourceSegmentIDs.contains(segment.id)
+                && turns[index].sourceSegmentIDs.count > 1 {
+            matchingIndex = index
+            break
+        }
+        guard let index = matchingIndex else {
+            if segment.isFinal {
+                return upsert(turn)
+            }
+            return append(segment)
+        }
+
+        var updated = turns[index]
+        let previousText = updated.originalText
+        updated.sourceSegmentID = segment.id
+        if !updated.sourceSegmentIDs.contains(segment.id) {
+            updated.sourceSegmentIDs.append(segment.id)
+        }
+        updated.originalText = replacedTranscriptText(
+            in: updated.originalText,
+            previous: previousSegment.text,
+            replacement: segment.text
+        )
+        updated.sourceLocale = turn.sourceLocale
+        updated.targetLocale = turn.targetLocale
+        updated.isFinal = turn.isFinal
+        updated.captionHealth = turn.captionHealth
+        updated.translationHealth = turn.translationHealth
+        updated.chunkState = turn.chunkState
+        if previousText != updated.originalText {
+            updated.translationRevision += 1
+        }
+        updated.freezeReason = turn.freezeReason
+        updated.displayState = turn.displayState
+        updated.translationState = turn.translationState
+        updated.boundaryReason = turn.boundaryReason
+        updated.boundaryStrength = turn.boundaryStrength
+        turns[index] = updated
+        return updated
+    }
+
     private func mergeTargetIndex(for turn: LiveCaptionTurn) -> Int? {
         guard turn.isFinal,
               let lastIndex = turns.indices.last,
@@ -504,6 +595,66 @@ public struct LiveCaptionStore: Equatable {
         return "\(trimmedFirst) \(trimmedSecond)"
     }
 
+    private func rebuiltTurn(
+        from segments: [TranscriptSegment],
+        preservingID id: String,
+        previous: LiveCaptionTurn
+    ) -> LiveCaptionTurn {
+        var originalText = ""
+        var sourceSegmentIDs: [String] = []
+        var allSegmentsFinal = true
+        for segment in segments {
+            originalText = joinedTranscriptText(originalText, segment.text)
+            sourceSegmentIDs.append(segment.id)
+            if !segment.isFinal {
+                allSegmentsFinal = false
+            }
+        }
+        let lastSegment = segments[segments.count - 1]
+        let boundaryReason: LiveCaptionFreezeReason? = lastSegment.speechFinal ? .speechFinal : nil
+        let boundaryStrength = boundaryReason?.boundaryStrength
+        let isSealed = boundaryStrength != nil
+        let textChanged = originalText != previous.originalText
+        return LiveCaptionTurn(
+            id: id,
+            sourceSegmentID: lastSegment.id,
+            sourceSegmentIDs: sourceSegmentIDs,
+            speaker: lastSegment.speaker,
+            originalText: originalText,
+            translatedText: textChanged ? nil : previous.translatedText,
+            sourceLocale: lastSegment.language ?? sourceLocale,
+            targetLocale: targetLocale,
+            isFinal: allSegmentsFinal,
+            captionHealth: .live,
+            translationHealth: textChanged ? .pending : previous.translationHealth,
+            createdAt: previous.createdAt,
+            chunkState: isSealed ? .frozen : .draft,
+            translationRevision: textChanged ? previous.translationRevision + 1 : previous.translationRevision,
+            freezeReason: boundaryReason,
+            displayState: isSealed ? .sealed : .draft,
+            translationState: boundaryStrength == .hard ? .final : .draft,
+            boundaryReason: boundaryReason,
+            boundaryStrength: boundaryStrength
+        )
+    }
+
+    private func replacedTranscriptText(in text: String, previous: String, replacement: String) -> String {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrevious = previous.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isEmpty {
+            return trimmedReplacement
+        }
+        if trimmedPrevious.isEmpty {
+            return joinedTranscriptText(trimmedText, trimmedReplacement)
+        }
+        if let range = trimmedText.range(of: trimmedPrevious) {
+            return String(trimmedText.replacingCharacters(in: range, with: trimmedReplacement))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return joinedTranscriptText(trimmedText, trimmedReplacement)
+    }
+
     private func transcriptTextOverlapsOrContains(_ first: String, _ second: String) -> Bool {
         let firstTokens = normalizedTokens(first)
         let secondTokens = normalizedTokens(second)
@@ -581,6 +732,11 @@ public struct LiveCaptionStore: Equatable {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         turns[index].translationHealth = .live
+    }
+
+    public mutating func markTranslationPending(forTurnID turnID: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
+        turns[index].translationHealth = .pending
     }
 
     public mutating func appendTranslation(_ text: String, toTurnID turnID: String) {
