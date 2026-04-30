@@ -245,6 +245,7 @@ public struct MeetingSummaryInput: Equatable {
     public let startedAt: Date
     public let endedAt: Date?
     public let language: String?
+    public let targetLanguage: String?
     public let meetingGoal: String?
     public let segments: [TranscriptSegment]
     public let generatedAt: Date
@@ -254,6 +255,7 @@ public struct MeetingSummaryInput: Equatable {
         startedAt: Date,
         endedAt: Date?,
         language: String?,
+        targetLanguage: String? = nil,
         meetingGoal: String?,
         segments: [TranscriptSegment],
         generatedAt: Date = Date()
@@ -262,6 +264,7 @@ public struct MeetingSummaryInput: Equatable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.language = language
+        self.targetLanguage = targetLanguage
         self.meetingGoal = meetingGoal
         self.segments = segments
         self.generatedAt = generatedAt

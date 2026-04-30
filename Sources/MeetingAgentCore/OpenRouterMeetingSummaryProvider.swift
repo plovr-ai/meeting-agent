@@ -86,7 +86,9 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
     private static func prompt(for input: MeetingSummaryInput) -> String {
         var lines = [
             "Meeting name: \(input.meetingName)",
-            "Language: \(input.language ?? "unknown")"
+            "Transcript language: \(input.language ?? "unknown")",
+            "Summary target language: \(input.targetLanguage ?? input.language ?? "unknown")",
+            "Write every generated JSON string value in the summary target language."
         ]
         if let meetingGoal = input.meetingGoal?.trimmingCharacters(in: .whitespacesAndNewlines),
            !meetingGoal.isEmpty {

@@ -4,8 +4,8 @@ import SwiftUI
 
 private enum MainWindowDestination: Hashable {
     case today
-    case thisWeek
-    case history
+    case meetings
+    case library
     case workspace
     case settings
 }
@@ -13,27 +13,32 @@ private enum MainWindowDestination: Hashable {
 struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
     @State private var destination: MainWindowDestination = .today
+    @State private var workspaceReturnDestination: MainWindowDestination = .today
 
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                sidebarHeader
-
                 VStack(spacing: 6) {
+                    Text("Meeting Agent")
+                        .font(CommandCenterTypography.sectionTitle)
+                        .foregroundStyle(CommandCenterPalette.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 6)
+
                     Button("Today") {
                         destination = .today
                     }
                     .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .today))
 
-                    Button("This Week") {
-                        destination = .thisWeek
+                    Button("Meetings") {
+                        destination = .meetings
                     }
-                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .thisWeek))
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .meetings))
 
-                    Button("History") {
-                        destination = .history
+                    Button("Library") {
+                        destination = .library
                     }
-                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .history))
+                    .buttonStyle(SidebarNavigationButtonStyle(isSelected: destination == .library))
                 }
                 .padding(12)
 
@@ -54,7 +59,7 @@ struct MainWindowView: View {
                 .background(destination == .settings ? CommandCenterPalette.primary.opacity(0.12) : Color.clear)
             }
             .background(CommandCenterPalette.surface)
-            .frame(minWidth: 260, idealWidth: 300)
+            .frame(minWidth: 180, idealWidth: 210)
         } detail: {
             switch destination {
             case .settings:
@@ -67,8 +72,9 @@ struct MainWindowView: View {
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
-            case .today, .thisWeek, .history:
+            case .today, .meetings, .library:
                 TodayAgendaView(
+                    mode: agendaMode(for: destination),
                     title: agendaTitle(for: destination),
                     emptyTitle: agendaEmptyTitle(for: destination),
                     emptyDescription: agendaEmptyDescription(for: destination),
@@ -81,18 +87,18 @@ struct MainWindowView: View {
                         viewModel.selectMeeting(meeting.id)
                     },
                     openWorkspace: { meeting in
-                        viewModel.selectMeeting(meeting.id)
-                        destination = .workspace
+                        openWorkspace(from: destination, selecting: meeting)
                     },
                     startRecording: { meeting in
                         guard let target = viewModel.pendingCandidate else {
-                            viewModel.selectMeeting(meeting.id)
-                            destination = .workspace
+                            openWorkspace(from: destination, selecting: meeting)
                             return
                         }
+                        let returnDestination = destination.agendaReturnDestination
                         Task {
                             do {
                                 try await viewModel.startRecording(for: target, meetingID: meeting.id)
+                                workspaceReturnDestination = returnDestination
                                 destination = .workspace
                             } catch {
                                 viewModel.setRecordingStartError(error)
@@ -116,6 +122,13 @@ struct MainWindowView: View {
                     isRecording: viewModel.isRecording,
                     liveCaptionTurns: viewModel.liveCaptionTurns,
                     recommendedQuestions: viewModel.recommendedQuestions,
+                    meetingProgressState: viewModel.meetingProgressState,
+                    backToMeetings: {
+                        destination = workspaceReturnDestination
+                    },
+                    saveAgenda: { meetingID, update in
+                        try viewModel.saveAgenda(for: meetingID, update: update)
+                    },
                     stopRecording: {
                         Task {
                             do {
@@ -196,30 +209,20 @@ struct MainWindowView: View {
         }
     }
 
-    private var sidebarHeader: some View {
-        HStack {
-            Text("Meeting Agent")
-                .commandCenterEyebrow()
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 16)
-        .background(CommandCenterPalette.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(CommandCenterPalette.border)
-                .frame(height: 1)
-        }
+    private func openWorkspace(from destination: MainWindowDestination, selecting meeting: MeetingRecord) {
+        workspaceReturnDestination = destination.agendaReturnDestination
+        viewModel.selectMeeting(meeting.id)
+        self.destination = .workspace
     }
 
     private func meetings(for destination: MainWindowDestination) -> [MeetingRecord] {
         switch destination {
         case .today:
             return viewModel.meetings.filter { isToday($0) }
-        case .thisWeek:
-            return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }
-        case .history:
-            return viewModel.meetings.filter { !isThisWeek($0) }
+        case .meetings:
+            return viewModel.meetings.filter { !isCompleted($0) }
+        case .library:
+            return viewModel.meetings.filter { isCompleted($0) }
         case .workspace:
             return viewModel.meetings
         case .settings:
@@ -231,10 +234,10 @@ struct MainWindowView: View {
         switch destination {
         case .today:
             return "Today"
-        case .thisWeek:
-            return "This Week"
-        case .history:
-            return "History"
+        case .meetings:
+            return "Meetings"
+        case .library:
+            return "Library"
         case .workspace:
             return "All Meetings"
         case .settings:
@@ -242,14 +245,27 @@ struct MainWindowView: View {
         }
     }
 
+    private func agendaMode(for destination: MainWindowDestination) -> AgendaListMode {
+        switch destination {
+        case .today:
+            return .today
+        case .meetings:
+            return .meetings
+        case .library:
+            return .library
+        case .workspace, .settings:
+            return .meetings
+        }
+    }
+
     private func agendaEmptyTitle(for destination: MainWindowDestination) -> String {
         switch destination {
         case .today:
             return "No meetings scheduled today"
-        case .thisWeek:
-            return "No meetings scheduled this week"
-        case .history:
-            return "No meeting history"
+        case .meetings:
+            return "No scheduled meetings"
+        case .library:
+            return "No meeting library items"
         case .workspace:
             return "No meetings"
         case .settings:
@@ -261,10 +277,10 @@ struct MainWindowView: View {
         switch destination {
         case .today:
             return "Create a local agenda item to prepare attendees, topics, and meeting goals before recording."
-        case .thisWeek:
-            return "Meetings scheduled later this week will appear here with their agenda details."
-        case .history:
-            return "Completed and past meetings will appear here with their saved agenda details."
+        case .meetings:
+            return "Scheduled meetings will appear here with their agenda details."
+        case .library:
+            return "Completed meetings will appear here with their transcripts, summaries, and exports."
         case .workspace, .settings:
             return ""
         }
@@ -279,6 +295,18 @@ struct MainWindowView: View {
         let meetingDate = meetingDisplayDate(meeting)
         return calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)
             && calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)
+    }
+
+    private func isCompleted(_ meeting: MeetingRecord) -> Bool {
+        if meeting.endedAt != nil {
+            return true
+        }
+        switch meeting.transcriptionStatus {
+        case .transcribed, .failed, .retryRequested:
+            return true
+        case .notStarted, .transcribing:
+            return false
+        }
     }
 
     private func meetingDisplayDate(_ meeting: MeetingRecord) -> Date {
@@ -322,6 +350,17 @@ struct MainWindowView: View {
 
 }
 
+private extension MainWindowDestination {
+    var agendaReturnDestination: MainWindowDestination {
+        switch self {
+        case .today, .meetings, .library:
+            return self
+        case .workspace, .settings:
+            return .today
+        }
+    }
+}
+
 private struct SidebarNavigationButtonStyle: ButtonStyle {
     let isSelected: Bool
 
@@ -346,6 +385,9 @@ private struct MeetingDetailView: View {
     let isRecording: Bool
     let liveCaptionTurns: [LiveCaptionTurn]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let meetingProgressState: MeetingProgressState?
+    let backToMeetings: () -> Void
+    let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: (MeetingRecord) -> Void
     let exportTranscript: (MeetingRecord) -> Void
@@ -361,6 +403,7 @@ private struct MeetingDetailView: View {
             if let meeting {
                 MeetingCommandCenterView(
                     meeting: meeting,
+                    backToMeetings: backToMeetings,
                     pipelineDisplayName: pipelineDisplayName(for: speechConfiguration),
                     transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
@@ -375,6 +418,8 @@ private struct MeetingDetailView: View {
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
                     summary: summary(for: meeting),
                     recommendedQuestions: recommendedQuestions,
+                    meetingProgressState: meetingProgressState,
+                    saveAgenda: saveAgenda,
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
                     exportTranscript: { exportTranscript(meeting) },
@@ -512,6 +557,7 @@ private struct MeetingDetailView: View {
 
 private struct MeetingCommandCenterView: View {
     let meeting: MeetingRecord
+    let backToMeetings: () -> Void
     let pipelineDisplayName: String
     let transcriptionLinkText: String
     let transcriptionModelText: String
@@ -526,6 +572,8 @@ private struct MeetingCommandCenterView: View {
     let transcriptionStatusText: String
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
+    let meetingProgressState: MeetingProgressState?
+    let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: () -> Void
     let exportTranscript: () -> Void
@@ -534,92 +582,213 @@ private struct MeetingCommandCenterView: View {
     let exportVTT: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
+    @State private var editAgendaTarget: MeetingRecord?
+    @State private var draft = AgendaDraft()
+    @State private var agendaRecordBackedDraft = AgendaDraft()
+    @State private var agendaSaveError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            AgendaContextStrip(
-                meeting: meeting,
-                attendees: meeting.attendees,
-                topics: meeting.agendaTopics,
-                goalTitle: meeting.meetingGoal?.title
-            )
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                topCommandRow
+                .padding(.horizontal, 22)
+                .padding(.vertical, 10)
+                .background(CommandCenterPalette.surface)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(CommandCenterPalette.border)
+                        .frame(height: 1)
+                }
 
-            HStack(spacing: 0) {
-                TranscriptPaneView(
-                    meeting: meeting,
-                    pipelineDisplayName: pipelineDisplayName,
-                    transcriptionLinkText: transcriptionLinkText,
-                    transcriptionModelText: transcriptionModelText,
-                    preflightText: preflightText,
-                    actualTranscriptionSourceText: actualTranscriptionSourceText,
-                    statusText: statusText,
-                    isRecording: isRecording,
-                    sourceLocale: sourceLocale,
-                    targetLocale: targetLocale,
-                    liveCaptionTurns: liveCaptionTurns,
-                    transcriptText: transcriptText,
-                    transcriptionStatusText: transcriptionStatusText,
-                    stopRecording: stopRecording,
-                    retryTranscription: retryTranscription,
-                    updateSpeakerLabel: updateSpeakerLabel
+                HStack(spacing: 0) {
+                    TranscriptPaneView(
+                        meeting: meeting,
+                        pipelineDisplayName: pipelineDisplayName,
+                        transcriptionLinkText: transcriptionLinkText,
+                        transcriptionModelText: transcriptionModelText,
+                        preflightText: preflightText,
+                        actualTranscriptionSourceText: actualTranscriptionSourceText,
+                        statusText: statusText,
+                        isRecording: isRecording,
+                        sourceLocale: sourceLocale,
+                        targetLocale: targetLocale,
+                        liveCaptionTurns: liveCaptionTurns,
+                        transcriptText: transcriptText,
+                        transcriptionStatusText: transcriptionStatusText,
+                        updateSpeakerLabel: updateSpeakerLabel
+                    )
+                    .frame(minWidth: 520)
+
+                    Divider()
+                        .overlay(CommandCenterPalette.border)
+
+                    InsightPaneView(
+                        meeting: meeting,
+                        isRecording: isRecording,
+                        summary: summary,
+                        recommendedQuestions: recommendedQuestions,
+                        meetingProgressState: meetingProgressState
+                    )
+                    .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                }
+            }
+
+            if editAgendaTarget != nil {
+                AgendaEditorView(
+                    meeting: editAgendaTarget,
+                    draft: $draft,
+                    saveError: agendaSaveError,
+                    save: saveDetailAgenda,
+                    cancel: cancelDetailAgendaEdit
                 )
-                .frame(minWidth: 520)
-
-                Divider()
-                    .overlay(CommandCenterPalette.border)
-
-                InsightPaneView(
-                    meeting: meeting,
-                    isRecording: isRecording,
-                    summary: summary,
-                    recommendedQuestions: recommendedQuestions,
-                    copySummary: copySummary,
-                    exportTranscript: exportTranscript,
-                    exportMeetingData: exportMeetingData,
-                    exportSRT: exportSRT,
-                    exportVTT: exportVTT
-                )
-                .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 12)
+                .padding(.top, 54)
+                .padding(.trailing, 18)
             }
         }
         .background(CommandCenterPalette.window)
     }
-}
 
-private struct AgendaContextStrip: View {
-    let meeting: MeetingRecord
-    let attendees: [MeetingAttendee]
-    let topics: [MeetingAgendaTopic]
-    let goalTitle: String?
+    private var topCommandRow: some View {
+        HStack(spacing: 12) {
+            Button(action: backToMeetings) {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(.plain)
+            .font(CommandCenterTypography.button)
+            .foregroundStyle(CommandCenterPalette.primary)
 
-    var body: some View {
-        HStack(spacing: 8) {
-            CommandCenterChip(title: goalDisplay, tint: CommandCenterPalette.primary, filled: goalTitle != nil)
-            CommandCenterChip(title: "\(attendees.count) attendees", tint: CommandCenterPalette.cyan)
-            ForEach(topics.prefix(3)) { topic in
-                CommandCenterChip(title: topic.title)
+            Button(action: beginDetailAgendaEdit) {
+                CommandCenterChip(
+                    title: goalDisplay,
+                    tint: CommandCenterPalette.primary,
+                    filled: meeting.meetingGoal != nil
+                )
             }
-            if topics.count > 3 {
-                CommandCenterChip(title: "+\(topics.count - 3) topics")
+            .buttonStyle(.plain)
+            .help("Edit meeting goal")
+
+            Button(action: beginDetailAgendaEdit) {
+                CommandCenterChip(
+                    title: attendeesDisplay,
+                    tint: CommandCenterPalette.cyan,
+                    filled: !meeting.attendees.isEmpty
+                )
             }
+            .buttonStyle(.plain)
+            .help("Edit attendees")
+
             Spacer()
-            if let scheduledStartAt = meeting.scheduledStartAt {
-                CommandCenterChip(title: scheduledStartAt.formatted(date: .omitted, time: .shortened))
-            }
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 10)
-        .background(CommandCenterPalette.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(CommandCenterPalette.border)
-                .frame(height: 1)
+
+            recordingCommand
+            overflowMenu
         }
     }
 
+    @ViewBuilder
+    private var recordingCommand: some View {
+        if isRecording {
+            Button {
+                stopRecording()
+            } label: {
+                Label("Stop Recording", systemImage: "stop.fill")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
+        } else {
+            Button {
+            } label: {
+                Label("Record", systemImage: "record.circle")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+            .disabled(true)
+            .help("Recording can be started from an agenda item.")
+        }
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            Button {
+                copySummary()
+            } label: {
+                Label("Copy Summary", systemImage: "doc.on.clipboard")
+            }
+            .disabled(isRecording || meeting.summaryURL == nil)
+
+            Button {
+                exportTranscript()
+            } label: {
+                Label("Export Transcript", systemImage: "doc.text")
+            }
+            .disabled(isRecording || meeting.transcriptURL == nil)
+
+            Button {
+                exportMeetingData()
+            } label: {
+                Label("Export Meeting JSON", systemImage: "curlybraces")
+            }
+
+            Button {
+                exportSRT()
+            } label: {
+                Label("Export SRT", systemImage: "captions.bubble")
+            }
+
+            Button {
+                exportVTT()
+            } label: {
+                Label("Export VTT", systemImage: "captions.bubble")
+            }
+
+            Divider()
+
+            Button {
+                retryTranscription()
+            } label: {
+                Label("Retry Transcription", systemImage: "arrow.clockwise")
+            }
+            .disabled(isRecording || meeting.audioURL == nil)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .accessibilityLabel("Meeting actions")
+        }
+        .buttonStyle(CommandCenterIconButtonStyle())
+        .help("Meeting actions")
+    }
+
     private var goalDisplay: String {
-        let normalized = goalTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? "No goal" : normalized
+        let titles = meetingGoalTitles(for: meeting)
+        guard let first = titles.first else { return "No goals" }
+        let remaining = titles.count - 1
+        return remaining > 0 ? "\(first) +\(remaining)" : first
+    }
+
+    private var attendeesDisplay: String {
+        meeting.attendees.isEmpty ? "No attendees" : "\(meeting.attendees.count) attendees"
+    }
+
+    private func beginDetailAgendaEdit() {
+        editAgendaTarget = meeting
+        draft = AgendaDraft(meeting: meeting)
+        agendaRecordBackedDraft = draft
+        agendaSaveError = nil
+    }
+
+    private func saveDetailAgenda() {
+        guard let meetingID = editAgendaTarget?.id else { return }
+        do {
+            try saveAgenda(meetingID, draft.update())
+            agendaRecordBackedDraft = draft
+            editAgendaTarget = nil
+            agendaSaveError = nil
+        } catch {
+            agendaSaveError = "Could not save agenda: \(error)"
+        }
+    }
+
+    private func cancelDetailAgendaEdit() {
+        draft = agendaRecordBackedDraft
+        editAgendaTarget = nil
+        agendaSaveError = nil
     }
 }
 
@@ -637,8 +806,6 @@ private struct TranscriptPaneView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
-    let stopRecording: () -> Void
-    let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
@@ -651,7 +818,6 @@ private struct TranscriptPaneView: View {
                 CommandCenterScrollView(content: {
                     VStack(alignment: .leading, spacing: 22) {
                         metadata
-                        recordingActions
                         failureReason
                         UnifiedTranscriptView(
                             turns: liveCaptionTurns,
@@ -761,22 +927,6 @@ private struct TranscriptPaneView: View {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
                 }
             }
-        }
-    }
-
-    private var recordingActions: some View {
-        HStack(spacing: 10) {
-            Button("Stop Recording") {
-                stopRecording()
-            }
-            .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
-            .disabled(!isRecording)
-
-            Button("Retry Transcription") {
-                retryTranscription()
-            }
-            .buttonStyle(CommandCenterActionButtonStyle())
-            .disabled(isRecording || meeting.audioURL == nil)
         }
     }
 
@@ -909,21 +1059,20 @@ private struct InsightPaneView: View {
     let isRecording: Bool
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
-    let copySummary: () -> Void
-    let exportTranscript: () -> Void
-    let exportMeetingData: () -> Void
-    let exportSRT: () -> Void
-    let exportVTT: () -> Void
+    let meetingProgressState: MeetingProgressState?
 
     var body: some View {
         VStack(spacing: 0) {
             CommandCenterScrollView(background: CommandCenterPalette.surface, content: {
                 VStack(alignment: .leading, spacing: 16) {
+                    GoalTrackerPanel(
+                        meeting: meeting,
+                        meetingProgressState: meetingProgressState
+                    )
                     if !recommendedQuestions.isEmpty {
                         RecommendedQuestionsPanel(questions: recommendedQuestions)
                     }
                     phaseSummary
-                    exports
                     summaryPanel
                 }
                 .padding(22)
@@ -940,57 +1089,6 @@ private struct InsightPaneView: View {
                     .commandCenterBody()
                     .lineSpacing(4)
                     .textSelection(.enabled)
-                HStack {
-                    CommandCenterChip(title: isRecording ? "ACTIVE" : "RECORDED", tint: CommandCenterPalette.primary, filled: true)
-                    CommandCenterChip(title: summary == nil ? "Summary pending" : "Summary ready", tint: summary == nil ? CommandCenterPalette.warning : CommandCenterPalette.primary)
-                }
-            }
-        }
-    }
-
-    private var exports: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Exports").commandCenterEyebrow()
-                HStack {
-                    Button {
-                        copySummary()
-                    } label: {
-                        Label("Copy Summary", systemImage: "doc.on.clipboard")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                    .disabled(isRecording || meeting.summaryURL == nil)
-
-                    Button {
-                        exportTranscript()
-                    } label: {
-                        Label("Transcript", systemImage: "doc.text")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                    .disabled(isRecording || meeting.transcriptURL == nil)
-                }
-                HStack {
-                    Button {
-                        exportMeetingData()
-                    } label: {
-                        Label("Meeting JSON", systemImage: "curlybraces")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-
-                    Button {
-                        exportSRT()
-                    } label: {
-                        Label("SRT", systemImage: "captions.bubble")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-
-                    Button {
-                        exportVTT()
-                    } label: {
-                        Label("VTT", systemImage: "captions.bubble")
-                    }
-                    .buttonStyle(CommandCenterActionButtonStyle())
-                }
             }
         }
     }
@@ -1018,6 +1116,80 @@ private struct InsightPaneView: View {
             }
         }
     }
+}
+
+private struct GoalTrackerPanel: View {
+    let meeting: MeetingRecord
+    let meetingProgressState: MeetingProgressState?
+
+    var body: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Goals").commandCenterEyebrow()
+                let titles = meetingGoalTitles(for: meeting)
+                if titles.isEmpty {
+                    Text("No goals set.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                } else {
+                    ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
+                        HStack(spacing: 10) {
+                            Text(title)
+                                .font(CommandCenterTypography.secondaryBody)
+                                .foregroundStyle(CommandCenterPalette.text)
+                                .lineLimit(2)
+                            Spacer(minLength: 8)
+                            CommandCenterChip(
+                                title: statusText(forGoalAt: index),
+                                tint: statusTint(forGoalAt: index),
+                                filled: index == 0 && firstGoalHasProgress
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var firstGoalHasProgress: Bool {
+        guard let progressGoalID = meetingProgressState?.goal.id,
+              let firstGoalID = goalList.first?.id
+        else {
+            return false
+        }
+        return progressGoalID == firstGoalID
+    }
+
+    private var goalList: [MeetingGoal] {
+        meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    }
+
+    private func statusText(forGoalAt index: Int) -> String {
+        guard index == 0, firstGoalHasProgress else { return "Pending" }
+        return meetingProgressState?.status.displayText ?? "Pending"
+    }
+
+    private func statusTint(forGoalAt index: Int) -> Color {
+        guard index == 0, let status = meetingProgressState?.status, firstGoalHasProgress else {
+            return CommandCenterPalette.secondaryText
+        }
+        switch status {
+        case .blocked:
+            return CommandCenterPalette.danger
+        case .partiallyCovered:
+            return CommandCenterPalette.warning
+        case .onTrack:
+            return CommandCenterPalette.primary
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+}
+
+private func meetingGoalTitles(for meeting: MeetingRecord) -> [String] {
+    let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    return goals
+        .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
 }
 
 private struct RecommendedQuestionsPanel: View {
@@ -1055,48 +1227,47 @@ private struct UnifiedTranscriptView: View {
     let editSpeaker: (LiveCaptionTurn) -> Void
 
     var body: some View {
-        CommandCenterPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Transcript").commandCenterEyebrow()
-                    Spacer()
-                    if !autoFollowsLatest, !turns.isEmpty {
-                        Button("Return to latest") {
-                            returnToLatest()
-                        }
-                        .buttonStyle(CommandCenterActionButtonStyle())
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Transcript").commandCenterEyebrow()
+                Spacer()
+                if !autoFollowsLatest, !turns.isEmpty {
+                    Button("Return to latest") {
+                        returnToLatest()
                     }
-                }
-
-                if turns.isEmpty {
-                    fallbackTranscript
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        let groups = LiveCaptionSpeakerGroup.groups(from: turns)
-                        ForEach(groups) { group in
-                            BilingualTranscriptGroup(
-                                group: group,
-                                sourceLocale: sourceLocale,
-                                targetLocale: targetLocale,
-                                editSpeaker: group.speaker.identifier == nil ? nil : {
-                                    if let firstTurn = group.turns.first {
-                                        editSpeaker(firstTurn)
-                                    }
-                                }
-                            )
-                            .id(group.id)
-                        }
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 8).onChanged { _ in
-                            if isRecording {
-                                pauseFollowing()
-                            }
-                        }
-                    )
+                    .buttonStyle(CommandCenterActionButtonStyle())
                 }
             }
+
+            if turns.isEmpty {
+                fallbackTranscript
+            } else {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    let groups = LiveCaptionSpeakerGroup.groups(from: turns)
+                    ForEach(groups) { group in
+                        BilingualTranscriptGroup(
+                            group: group,
+                            sourceLocale: sourceLocale,
+                            targetLocale: targetLocale,
+                            editSpeaker: group.speaker.identifier == nil ? nil : {
+                                if let firstTurn = group.turns.first {
+                                    editSpeaker(firstTurn)
+                                }
+                            }
+                        )
+                        .id(group.id)
+                    }
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8).onChanged { _ in
+                        if isRecording {
+                            pauseFollowing()
+                        }
+                    }
+                )
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var fallbackTranscript: some View {

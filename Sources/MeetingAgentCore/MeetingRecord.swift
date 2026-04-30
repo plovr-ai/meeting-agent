@@ -37,6 +37,7 @@ public struct MeetingAgendaUpdate: Equatable {
     public var scheduledStartAt: Date?
     public var scheduledEndAt: Date?
     public var meetingGoal: MeetingGoal?
+    public var meetingGoals: [MeetingGoal]
 
     public init(
         name: String,
@@ -44,14 +45,22 @@ public struct MeetingAgendaUpdate: Equatable {
         agendaTopics: [MeetingAgendaTopic],
         scheduledStartAt: Date?,
         scheduledEndAt: Date?,
-        meetingGoal: MeetingGoal?
+        meetingGoal: MeetingGoal?,
+        meetingGoals: [MeetingGoal] = []
     ) {
         self.name = name
         self.attendees = attendees
         self.agendaTopics = agendaTopics
         self.scheduledStartAt = scheduledStartAt
         self.scheduledEndAt = scheduledEndAt
-        self.meetingGoal = meetingGoal
+        if !meetingGoals.isEmpty {
+            self.meetingGoals = meetingGoals
+        } else if let meetingGoal {
+            self.meetingGoals = [meetingGoal]
+        } else {
+            self.meetingGoals = []
+        }
+        self.meetingGoal = meetingGoal ?? self.meetingGoals.first
     }
 }
 
@@ -75,6 +84,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
     public var meetingGoal: MeetingGoal?
+    public var meetingGoals: [MeetingGoal]
     public var attendees: [MeetingAttendee]
     public var agendaTopics: [MeetingAgendaTopic]
     public var scheduledStartAt: Date?
@@ -100,6 +110,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionProviderID: String? = nil,
         speechLocaleIdentifier: String = "en-US",
         meetingGoal: MeetingGoal? = nil,
+        meetingGoals: [MeetingGoal]? = nil,
         attendees: [MeetingAttendee] = [],
         agendaTopics: [MeetingAgendaTopic] = [],
         scheduledStartAt: Date? = nil,
@@ -126,7 +137,14 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
             fallback: speechProvider.rawValue
         ) ?? speechProvider.rawValue
         self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
-        self.meetingGoal = meetingGoal
+        if let meetingGoals {
+            self.meetingGoals = meetingGoals
+        } else if let meetingGoal {
+            self.meetingGoals = [meetingGoal]
+        } else {
+            self.meetingGoals = []
+        }
+        self.meetingGoal = meetingGoal ?? self.meetingGoals.first
         self.attendees = attendees
         self.agendaTopics = agendaTopics
         self.scheduledStartAt = scheduledStartAt
@@ -153,6 +171,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case transcriptionProviderID
         case speechLocaleIdentifier
         case meetingGoal
+        case meetingGoals
         case attendees
         case agendaTopics
         case scheduledStartAt
@@ -180,7 +199,15 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionProviderID = try container.decodeIfPresent(String.self, forKey: .transcriptionProviderID)
             ?? speechProvider.rawValue
         speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
-        meetingGoal = try container.decodeIfPresent(MeetingGoal.self, forKey: .meetingGoal)
+        let decodedMeetingGoal = try container.decodeIfPresent(MeetingGoal.self, forKey: .meetingGoal)
+        if let decodedMeetingGoals = try container.decodeIfPresent([MeetingGoal].self, forKey: .meetingGoals) {
+            meetingGoals = decodedMeetingGoals
+        } else if let decodedMeetingGoal {
+            meetingGoals = [decodedMeetingGoal]
+        } else {
+            meetingGoals = []
+        }
+        meetingGoal = decodedMeetingGoal ?? meetingGoals.first
         attendees = try container.decodeIfPresent([MeetingAttendee].self, forKey: .attendees) ?? []
         agendaTopics = try container.decodeIfPresent([MeetingAgendaTopic].self, forKey: .agendaTopics) ?? []
         scheduledStartAt = try container.decodeIfPresent(Date.self, forKey: .scheduledStartAt)

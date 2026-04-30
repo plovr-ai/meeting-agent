@@ -17,7 +17,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains(".frame(minWidth: 260, idealWidth: 300)"))
+        XCTAssertTrue(source.contains(".frame(minWidth: 180, idealWidth: 210)"))
     }
 
     func testMainWindowRoutesThroughMeetingRecordBuckets() throws {
@@ -25,26 +25,30 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("enum MainWindowDestination"))
         XCTAssertTrue(source.contains("case today"))
-        XCTAssertTrue(source.contains("case thisWeek"))
-        XCTAssertTrue(source.contains("case history"))
+        XCTAssertTrue(source.contains("case meetings"))
+        XCTAssertTrue(source.contains("case library"))
         XCTAssertTrue(source.contains("TodayAgendaView("))
         XCTAssertTrue(source.contains("Button(\"Today\")"))
-        XCTAssertTrue(source.contains("Button(\"This Week\")"))
-        XCTAssertTrue(source.contains("Button(\"History\")"))
+        XCTAssertTrue(source.contains("Button(\"Meetings\")"))
+        XCTAssertTrue(source.contains("Button(\"Library\")"))
         XCTAssertTrue(source.contains("Label(\"Settings\", systemImage: \"gearshape\")"))
         XCTAssertTrue(source.contains("meetings(for: destination)"))
         XCTAssertTrue(source.contains("TodayAgendaView("))
-        XCTAssertTrue(source.contains("case .today, .thisWeek, .history:"))
+        XCTAssertTrue(source.contains("mode: agendaMode(for: destination)"))
+        XCTAssertTrue(source.contains("case .today, .meetings, .library:"))
+        XCTAssertTrue(source.contains("case .library:"))
+        XCTAssertTrue(source.contains("return .library"))
         XCTAssertTrue(source.contains("agendaEmptyTitle(for: destination)"))
         XCTAssertTrue(source.contains("agendaEmptyDescription(for: destination)"))
         XCTAssertTrue(source.contains("meetingDisplayDate(_ meeting: MeetingRecord)"))
         XCTAssertTrue(source.contains("meeting.scheduledStartAt ?? meeting.startedAt"))
         XCTAssertTrue(source.contains("No meetings scheduled today"))
-        XCTAssertTrue(source.contains("No meetings scheduled this week"))
-        XCTAssertTrue(source.contains("No meeting history"))
+        XCTAssertTrue(source.contains("No scheduled meetings"))
+        XCTAssertTrue(source.contains("No meeting library items"))
         XCTAssertFalse(source.contains("Button(\"Recordings\")"))
         XCTAssertFalse(source.contains("Text(\"Recent Recordings\")"))
-        XCTAssertFalse(source.contains("Text(\"Meetings\")"))
+        XCTAssertFalse(source.contains("Button(\"This Week\")"))
+        XCTAssertFalse(source.contains("Button(\"History\")"))
     }
 
     func testSidebarBucketNavigationDoesNotRenderMeetingSelectionList() throws {
@@ -78,13 +82,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, inSameDayAs: now)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .weekOfYear)"))
         XCTAssertTrue(source.contains("calendar.isDate(meetingDate, equalTo: now, toGranularity: .yearForWeekOfYear)"))
-        XCTAssertTrue(source.contains("return viewModel.meetings.filter { isThisWeek($0) && !isToday($0) }"))
+        XCTAssertTrue(source.contains("return viewModel.meetings.filter { !isCompleted($0) }"))
+        XCTAssertTrue(source.contains("return viewModel.meetings.filter { isCompleted($0) }"))
     }
 
     func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
         XCTAssertTrue(source.contains("struct TodayAgendaView"))
+        XCTAssertTrue(source.contains("enum AgendaListMode"))
         XCTAssertTrue(source.contains("AgendaRowView"))
         XCTAssertTrue(source.contains("AgendaEditorView"))
         XCTAssertTrue(source.contains("Open Workspace"))
@@ -96,6 +102,39 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
     }
 
+    func testTodayAgendaViewDefinesGoalListEditor() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("var goalTexts: [String] = [\"\"]"))
+        XCTAssertTrue(source.contains("goalsEditor"))
+        XCTAssertTrue(source.contains("Button(\"Add Goal\")"))
+        XCTAssertTrue(source.contains("func addGoal()"))
+        XCTAssertTrue(source.contains("func removeGoal(at index: Int)"))
+        XCTAssertTrue(source.contains("meetingGoals: goalValues"))
+        XCTAssertFalse(source.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
+    }
+
+    func testTodayAgendaUsesTodayWorkflowSections() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Today\""))
+        XCTAssertTrue(source.contains("AgendaFeedSection(title: \"Completed Today\""))
+        XCTAssertTrue(source.contains("completedTodayMeetings"))
+        XCTAssertTrue(source.contains("MeetingArtifactCard"))
+        XCTAssertTrue(source.contains("mode == .today"))
+        XCTAssertTrue(source.contains("mode == .library"))
+        XCTAssertTrue(source.contains("artifactList"))
+        XCTAssertTrue(source.contains("if showsAgendaEditor"))
+        XCTAssertFalse(source.contains("recentGroups"))
+        XCTAssertFalse(source.contains("recentHistoryDays"))
+        XCTAssertFalse(source.contains("RecentAgendaMeetingCard"))
+        XCTAssertTrue(source.contains("Meeting schedule and metadata"))
+        XCTAssertTrue(source.contains("let selected = editableMeetings.first(where: { $0.id == selectedMeetingID })"))
+        XCTAssertTrue(source.contains("Summary ready"))
+        XCTAssertTrue(source.contains("Transcript ready"))
+        XCTAssertTrue(source.contains("Artifacts pending"))
+    }
+
     func testTodayAgendaRefreshesCleanDraftWhenSelectedMeetingRecordChanges() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
@@ -105,13 +144,43 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("resetDraftFromSelection()"))
     }
 
-    func testLiveWorkspaceShowsAgendaContextStrip() throws {
+    func testLiveWorkspaceKeepsAgendaContextInTopRow() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
-        XCTAssertTrue(source.contains("AgendaContextStrip("))
+        XCTAssertFalse(source.contains("AgendaContextStrip("))
+        XCTAssertFalse(source.contains("private struct AgendaContextStrip"))
         XCTAssertTrue(source.contains("meeting.attendees"))
-        XCTAssertTrue(source.contains("meeting.agendaTopics"))
-        XCTAssertTrue(source.contains("meeting.meetingGoal?.title"))
+        XCTAssertTrue(source.contains("meeting.meetingGoals"))
+        XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
+        XCTAssertTrue(source.contains("title: goalDisplay"))
+        XCTAssertTrue(source.contains("title: attendeesDisplay"))
+        XCTAssertFalse(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
+    }
+
+    func testMeetingWorkspaceBackButtonReturnsToSourceBucket() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("@State private var workspaceReturnDestination: MainWindowDestination = .today"))
+        XCTAssertTrue(source.contains("private func openWorkspace(from destination: MainWindowDestination, selecting meeting: MeetingRecord)"))
+        XCTAssertTrue(source.contains("workspaceReturnDestination = destination.agendaReturnDestination"))
+        XCTAssertTrue(source.contains("let returnDestination = destination.agendaReturnDestination"))
+        XCTAssertTrue(source.contains("workspaceReturnDestination = returnDestination"))
+        XCTAssertTrue(source.contains("destination = .workspace"))
+        XCTAssertTrue(source.contains("var agendaReturnDestination: MainWindowDestination"))
+        XCTAssertTrue(source.contains("case .today, .meetings, .library:"))
+        XCTAssertTrue(source.contains("case .workspace, .settings:"))
+        XCTAssertTrue(source.contains("return .today"))
+        XCTAssertFalse(source.contains("case .today, .thisWeek, .history:"))
+    }
+
+    func testMeetingWorkspaceRendersBackButton() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("backToMeetings: {"))
+        XCTAssertTrue(source.contains("destination = workspaceReturnDestination"))
+        XCTAssertTrue(source.contains("let backToMeetings: () -> Void"))
+        XCTAssertTrue(source.contains("Button(action: backToMeetings)"))
+        XCTAssertTrue(source.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
     }
 
     func testCurrentPipelineMovesDebugDetailsBehindHoverIcon() throws {
@@ -120,11 +189,11 @@ final class MainWindowViewLayoutTests: XCTestCase {
         guard let metadataRange = source.range(of: "private var metadata: some View") else {
             return XCTFail("Pipeline metadata section is missing")
         }
-        guard let actionsRange = source.range(of: "private var recordingActions: some View", range: metadataRange.upperBound..<source.endIndex) else {
-            return XCTFail("Recording actions section is missing")
+        guard let failureReasonRange = source.range(of: "private var failureReason: some View", range: metadataRange.upperBound..<source.endIndex) else {
+            return XCTFail("Pipeline metadata boundary is missing")
         }
 
-        let metadataSource = source[metadataRange.lowerBound..<actionsRange.lowerBound]
+        let metadataSource = source[metadataRange.lowerBound..<failureReasonRange.lowerBound]
         XCTAssertTrue(metadataSource.contains("Image(systemName: \"exclamationmark.circle\")"))
         XCTAssertTrue(metadataSource.contains(".help(pipelineDebugHelpText)"))
         XCTAssertTrue(metadataSource.contains("CommandCenterChip(title: transcriptionStatusText"))
@@ -143,27 +212,52 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("caption_translation_attached"))
     }
 
-    func testRecordingAndRetryButtonsShareActionRow() throws {
+    func testMeetingWorkspaceConsolidatesActionsIntoTopRow() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        guard let stopRange = source.range(of: "Button(\"Stop Recording\")") else {
-            return XCTFail("Stop Recording button is missing")
+        guard let workspaceRange = source.range(of: "private struct MeetingCommandCenterView") else {
+            return XCTFail("Meeting workspace view is missing")
         }
-        guard let retryRange = source.range(of: "Button(\"Retry Transcription\")") else {
-            return XCTFail("Retry Transcription button is missing")
+        guard let transcriptPaneRange = source.range(of: "private struct TranscriptPaneView", range: workspaceRange.upperBound..<source.endIndex) else {
+            return XCTFail("Meeting workspace boundary is missing")
         }
-        XCTAssertLessThan(stopRange.lowerBound, retryRange.lowerBound)
+        let workspaceSource = source[workspaceRange.lowerBound..<transcriptPaneRange.lowerBound]
 
-        let precedingSource = source[..<stopRange.lowerBound]
-        guard let actionRowStart = precedingSource.range(of: "HStack", options: .backwards) else {
-            return XCTFail("Recording action row is missing")
-        }
+        XCTAssertTrue(workspaceSource.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Stop Recording\", systemImage: \"stop.fill\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Record\", systemImage: \"record.circle\")"))
+        XCTAssertTrue(workspaceSource.contains("Menu {"))
+        XCTAssertTrue(workspaceSource.contains("Image(systemName: \"ellipsis.circle\")"))
+        XCTAssertTrue(workspaceSource.contains(".accessibilityLabel(\"Meeting actions\")"))
+        XCTAssertTrue(workspaceSource.contains(".help(\"Meeting actions\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Copy Summary\", systemImage: \"doc.on.clipboard\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.summaryURL == nil)"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export Transcript\", systemImage: \"doc.text\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.transcriptURL == nil)"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export Meeting JSON\", systemImage: \"curlybraces\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Retry Transcription\", systemImage: \"arrow.clockwise\")"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.audioURL == nil)"))
 
-        let actionRow = source[actionRowStart.lowerBound..<retryRange.upperBound]
-        XCTAssertTrue(actionRow.contains("Button(\"Stop Recording\")"))
-        XCTAssertTrue(actionRow.contains("Button(\"Retry Transcription\")"))
+        guard let transcriptRange = source.range(of: "private struct TranscriptPaneView") else {
+            return XCTFail("Transcript pane is missing")
+        }
+        guard let insightRange = source.range(of: "private struct InsightPaneView", range: transcriptRange.upperBound..<source.endIndex) else {
+            return XCTFail("Insight pane boundary is missing")
+        }
+        let transcriptSource = source[transcriptRange.lowerBound..<insightRange.lowerBound]
+        XCTAssertFalse(transcriptSource.contains("private var recordingActions: some View"))
+        XCTAssertFalse(transcriptSource.contains("Button(\"Retry Transcription\")"))
+
+        guard let nextViewRange = source.range(of: "private struct RecommendedQuestionsPanel", range: insightRange.upperBound..<source.endIndex) else {
+            return XCTFail("Insight pane boundary is missing")
+        }
+        let insightSource = source[insightRange.lowerBound..<nextViewRange.lowerBound]
+        XCTAssertFalse(insightSource.contains("private var exports: some View"))
+        XCTAssertFalse(insightSource.contains("Text(\"Exports\")"))
     }
 
     func testSummaryDownloadAndRegenerateControlsAreRemoved() throws {
@@ -173,6 +267,43 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertFalse(source.contains("Label(\"Summary\", systemImage: \"text.badge.checkmark\")"))
         XCTAssertFalse(source.contains("Button(\"Regenerate Summary\")"))
+    }
+
+    func testInsightPaneDoesNotRenderSummaryStatusBadges() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let insightRange = source.range(of: "private struct InsightPaneView") else {
+            return XCTFail("InsightPaneView is missing")
+        }
+        guard let summaryListRange = source.range(of: "private struct SummaryListView", range: insightRange.upperBound..<source.endIndex) else {
+            return XCTFail("InsightPaneView boundary is missing")
+        }
+
+        let insightSource = source[insightRange.lowerBound..<summaryListRange.lowerBound]
+        XCTAssertTrue(insightSource.contains("Text(\"Summary\").commandCenterEyebrow()"))
+        XCTAssertTrue(insightSource.contains("Meeting summary will appear here after recording stops."))
+        XCTAssertFalse(insightSource.contains("\"ACTIVE\""))
+        XCTAssertFalse(insightSource.contains("\"RECORDED\""))
+        XCTAssertFalse(insightSource.contains("\"Summary pending\""))
+        XCTAssertFalse(insightSource.contains("\"Summary ready\""))
+    }
+
+    func testWorkspaceInsightPaneShowsGoalTracker() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("meetingProgressState: viewModel.meetingProgressState"))
+        XCTAssertTrue(source.contains("let meetingProgressState: MeetingProgressState?"))
+        XCTAssertTrue(source.contains("GoalTrackerPanel("))
+        XCTAssertTrue(source.contains("private struct GoalTrackerPanel"))
+        XCTAssertTrue(source.contains("meeting.meetingGoals"))
+
+        guard let trackerRange = source.range(of: "GoalTrackerPanel(") else {
+            return XCTFail("GoalTrackerPanel call is missing")
+        }
+        guard let phaseRange = source.range(of: "phaseSummary", range: trackerRange.upperBound..<source.endIndex) else {
+            return XCTFail("phaseSummary after tracker is missing")
+        }
+        XCTAssertLessThan(trackerRange.lowerBound, phaseRange.lowerBound)
     }
 
     func testInsightsPaneShowsRecommendedQuestionsOnlyWhenAvailable() throws {
@@ -240,13 +371,20 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("destination = .settings"))
     }
 
-    func testSidebarTitleUsesCommandCenterStylingInsteadOfSystemNavigationTitle() throws {
+    func testSidebarRestoresApplicationTitleAtTopOfNavigation() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
-        XCTAssertTrue(source.contains("Text(\"Meeting Agent\")"))
-        XCTAssertTrue(source.contains(".commandCenterEyebrow()"))
+        guard let titleRange = source.range(of: "Text(\"Meeting Agent\")") else {
+            return XCTFail("Sidebar application title is missing")
+        }
+        guard let todayRange = source.range(of: "Button(\"Today\")") else {
+            return XCTFail("Today navigation button is missing")
+        }
+
+        XCTAssertLessThan(titleRange.lowerBound, todayRange.lowerBound)
+        XCTAssertFalse(source.contains("sidebarHeader"))
         XCTAssertFalse(source.contains(".navigationTitle(\"Meeting Agent\")"))
     }
 
@@ -288,6 +426,24 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
     }
 
+    func testMeetingDetailAllowsEditingAgendaGoalThroughSaveAgenda() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("saveAgenda: { meetingID, update in"))
+        XCTAssertTrue(source.contains("Button(action: beginDetailAgendaEdit)"))
+        XCTAssertTrue(source.contains(".help(\"Edit meeting goal\")"))
+        XCTAssertTrue(source.contains(".help(\"Edit attendees\")"))
+        XCTAssertTrue(source.contains("editAgendaTarget = meeting"))
+        XCTAssertTrue(source.contains("AgendaEditorView("))
+        XCTAssertTrue(source.contains("try saveAgenda(meetingID, draft.update())"))
+        XCTAssertFalse(source.contains("Label(\"Edit Agenda\", systemImage: \"square.and.pencil\")"))
+
+        let agendaSource = try appSource(named: "TodayAgendaView.swift")
+        XCTAssertTrue(agendaSource.contains("goalsEditor"))
+        XCTAssertTrue(agendaSource.contains("Button(\"Add Goal\")"))
+        XCTAssertFalse(agendaSource.contains("labeledTextEditor(\"Meeting Goal\", text: $draft.goalText)"))
+    }
+
     func testMainWindowRemovesUnimplementedMeetingGoalDashboardStructure() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
@@ -314,6 +470,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
         XCTAssertFalse(source.contains("Text(turn.isFinal ? \"final\" : \"partial\")"))
         XCTAssertFalse(source.contains("\" turns\""))
+
+        guard let unifiedRange = source.range(of: "private struct UnifiedTranscriptView") else {
+            return XCTFail("UnifiedTranscriptView is missing")
+        }
+        guard let groupRange = source.range(of: "private struct BilingualTranscriptGroup", range: unifiedRange.upperBound..<source.endIndex) else {
+            return XCTFail("UnifiedTranscriptView boundary is missing")
+        }
+        let unifiedSource = source[unifiedRange.lowerBound..<groupRange.lowerBound]
+        XCTAssertFalse(unifiedSource.contains("CommandCenterPanel"))
     }
 
     func testUnifiedTranscriptPreservesFallbackAndQuietCorrectionControls() throws {
@@ -391,15 +556,15 @@ final class MainWindowViewLayoutTests: XCTestCase {
 """))
     }
 
-    func testExportsPanelExposesImplementedExportActionsOnly() throws {
+    func testActionMenuExposesImplementedExportActionsOnly() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("exportSRT"))
         XCTAssertTrue(source.contains("exportVTT"))
-        XCTAssertTrue(source.contains("Label(\"SRT\", systemImage: \"captions.bubble\")"))
-        XCTAssertTrue(source.contains("Label(\"VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
         XCTAssertFalse(source.contains("exportReadinessReport"))

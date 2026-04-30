@@ -1,7 +1,14 @@
 import MeetingAgentCore
 import SwiftUI
 
+enum AgendaListMode {
+    case today
+    case meetings
+    case library
+}
+
 struct TodayAgendaView: View {
+    let mode: AgendaListMode
     let title: String
     let emptyTitle: String
     let emptyDescription: String
@@ -30,17 +37,19 @@ struct TodayAgendaView: View {
             }
             .frame(minWidth: 520)
 
-            Divider()
-                .overlay(CommandCenterPalette.border)
+            if showsAgendaEditor {
+                Divider()
+                    .overlay(CommandCenterPalette.border)
 
-            AgendaEditorView(
-                meeting: selectedMeeting,
-                draft: $draft,
-                saveError: saveError,
-                save: saveSelectedAgenda,
-                cancel: resetDraftFromSelection
-            )
-            .frame(minWidth: 360, idealWidth: 400, maxWidth: 440)
+                AgendaEditorView(
+                    meeting: selectedMeeting,
+                    draft: $draft,
+                    saveError: saveError,
+                    save: saveSelectedAgenda,
+                    cancel: resetDraftFromSelection
+                )
+                .frame(minWidth: 360, idealWidth: 400, maxWidth: 440)
+            }
         }
         .background(CommandCenterPalette.window)
         .onAppear(perform: resetDraftFromSelection)
@@ -69,8 +78,8 @@ struct TodayAgendaView: View {
                     .foregroundStyle(CommandCenterPalette.secondaryText)
             }
             Spacer()
-            CommandCenterChip(title: "\(sortedMeetings.count) meetings")
-            if let activeMeetingID, meetings.contains(where: { $0.id == activeMeetingID }) {
+            CommandCenterChip(title: "\(editableMeetings.count) meetings")
+            if let activeMeetingID, editableMeetings.contains(where: { $0.id == activeMeetingID }) {
                 CommandCenterChip(title: "Live recording", tint: CommandCenterPalette.primary, filled: true)
             }
         }
@@ -86,34 +95,68 @@ struct TodayAgendaView: View {
 
     @ViewBuilder
     private var agendaList: some View {
-        if sortedMeetings.isEmpty {
-            CommandCenterPanel {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(emptyTitle)
+        if mode == .today {
+            agendaFeed
+        } else if mode == .library {
+            artifactList
+        } else {
+            bucketAgendaList
+        }
+    }
+
+    private var agendaFeed: some View {
+        CommandCenterScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agenda")
                         .font(CommandCenterTypography.title)
                         .foregroundStyle(CommandCenterPalette.text)
-                    Text(emptyDescription)
-                        .font(CommandCenterTypography.secondaryBody)
+                    Text("Meeting schedule and metadata")
+                        .font(CommandCenterTypography.caption)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
-                    if let createError {
-                        Text(createError)
-                            .font(CommandCenterTypography.caption)
-                            .foregroundStyle(CommandCenterPalette.danger)
-                    }
-                    if let createMeeting {
-                        Button("Create Meeting") {
-                            do {
-                                try createMeeting()
-                                createError = nil
-                            } catch {
-                                createError = "Could not create meeting: \(error)"
-                            }
-                        }
-                        .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                }
+
+                AgendaFeedSection(title: "Today", count: todayMeetings.count) {
+                    todayFeedContent
+                }
+
+                if !completedTodayMeetings.isEmpty {
+                    AgendaFeedSection(title: "Completed Today", count: completedTodayMeetings.count) {
+                        completedTodayFeedContent
                     }
                 }
             }
-            .padding(24)
+            .padding(22)
+        }
+    }
+
+    @ViewBuilder
+    private var artifactList: some View {
+        if sortedMeetings.isEmpty {
+            emptyState
+        } else {
+            CommandCenterScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(sortedMeetings) { meeting in
+                        MeetingArtifactCard(
+                            meeting: meeting,
+                            isSelected: meeting.id == selectedMeetingID,
+                            open: {
+                                selectMeeting(meeting)
+                                openWorkspace(meeting)
+                            }
+                        )
+                    }
+                }
+                .padding(22)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bucketAgendaList: some View {
+        if sortedMeetings.isEmpty {
+            emptyState
         } else {
             CommandCenterScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -137,18 +180,110 @@ struct TodayAgendaView: View {
         }
     }
 
+    @ViewBuilder
+    private var todayFeedContent: some View {
+        if todayMeetings.isEmpty {
+            emptyState
+        } else {
+            ForEach(todayMeetings) { meeting in
+                AgendaRowView(
+                    meeting: meeting,
+                    isSelected: meeting.id == selectedMeetingID,
+                    isActive: meeting.id == activeMeetingID,
+                    actionTitle: actionTitle(for: meeting),
+                    select: {
+                        selectMeeting(meeting)
+                    },
+                    primaryAction: {
+                        primaryAction(for: meeting)
+                    }
+                )
+            }
+        }
+    }
+
+    private var completedTodayFeedContent: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(completedTodayMeetings) { meeting in
+                MeetingArtifactCard(
+                    meeting: meeting,
+                    isSelected: meeting.id == selectedMeetingID,
+                    open: {
+                        selectMeeting(meeting)
+                        openWorkspace(meeting)
+                    }
+                )
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(emptyTitle)
+                    .font(CommandCenterTypography.title)
+                    .foregroundStyle(CommandCenterPalette.text)
+                Text(emptyDescription)
+                    .font(CommandCenterTypography.secondaryBody)
+                    .foregroundStyle(CommandCenterPalette.secondaryText)
+                if let createError {
+                    Text(createError)
+                        .font(CommandCenterTypography.caption)
+                        .foregroundStyle(CommandCenterPalette.danger)
+                }
+                if let createMeeting {
+                    Button("Create Meeting") {
+                        do {
+                            try createMeeting()
+                            createError = nil
+                        } catch {
+                            createError = "Could not create meeting: \(error)"
+                        }
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle(variant: .primary))
+                }
+            }
+        }
+    }
+
     private var sortedMeetings: [MeetingRecord] {
         meetings.sorted { lhs, rhs in
             displayDate(for: lhs) < displayDate(for: rhs)
         }
     }
 
+    private var todayMeetings: [MeetingRecord] {
+        meetings.filter { meeting in
+            Calendar.current.isDate(displayDate(for: meeting), inSameDayAs: Date()) && !isCompleted(meeting)
+        }
+            .sorted { lhs, rhs in
+                displayDate(for: lhs) < displayDate(for: rhs)
+            }
+    }
+
+    private var completedTodayMeetings: [MeetingRecord] {
+        meetings.filter { meeting in
+            Calendar.current.isDate(displayDate(for: meeting), inSameDayAs: Date()) && isCompleted(meeting)
+        }
+        .sorted { lhs, rhs in
+            displayDate(for: lhs) > displayDate(for: rhs)
+        }
+    }
+
+    private var editableMeetings: [MeetingRecord] {
+        mode == .today ? todayMeetings : sortedMeetings
+    }
+
+    private var showsAgendaEditor: Bool {
+        mode != .library
+    }
+
     private var selectedMeeting: MeetingRecord? {
         if let selectedMeetingID,
-           let selected = meetings.first(where: { $0.id == selectedMeetingID }) {
+           let selected = editableMeetings.first(where: { $0.id == selectedMeetingID }) {
             return selected
         }
-        return sortedMeetings.first
+        return editableMeetings.first
     }
 
     private func actionTitle(for meeting: MeetingRecord) -> String {
@@ -178,6 +313,18 @@ struct TodayAgendaView: View {
         return FileManager.default.isReadableFile(atPath: transcriptURL.path)
     }
 
+    private func isCompleted(_ meeting: MeetingRecord) -> Bool {
+        if meeting.endedAt != nil {
+            return true
+        }
+        switch meeting.transcriptionStatus {
+        case .transcribed, .failed, .retryRequested:
+            return true
+        case .notStarted, .transcribing:
+            return false
+        }
+    }
+
     private func resetDraftFromSelection() {
         guard let selectedMeeting else {
             draft = AgendaDraft()
@@ -201,6 +348,28 @@ struct TodayAgendaView: View {
             draftMeetingID = meetingID
         } catch {
             saveError = "Could not save agenda: \(error)"
+        }
+    }
+}
+
+private struct AgendaFeedSection<Content: View>: View {
+    let title: String
+    let count: Int
+    let content: () -> Content
+
+    init(title: String, count: Int, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.count = count
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).commandCenterEyebrow()
+                CommandCenterChip(title: "\(count)")
+            }
+            content()
         }
     }
 }
@@ -276,8 +445,10 @@ private struct AgendaRowView: View {
     }
 
     private var goalText: String {
-        let title = meeting.meetingGoal?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? "No goal" : title
+        let titles = meetingGoalTitles(for: meeting)
+        guard let first = titles.first else { return "No goals" }
+        let remaining = titles.count - 1
+        return remaining > 0 ? "\(first) +\(remaining)" : first
     }
 
     private var timeRange: String {
@@ -287,7 +458,105 @@ private struct AgendaRowView: View {
     }
 }
 
-private struct AgendaEditorView: View {
+private func meetingGoalTitles(for meeting: MeetingRecord) -> [String] {
+    let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+    return goals
+        .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+}
+
+private struct MeetingArtifactCard: View {
+    let meeting: MeetingRecord
+    let isSelected: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            CommandCenterPanel {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(meeting.name)
+                            .font(CommandCenterTypography.sectionTitle)
+                            .foregroundStyle(CommandCenterPalette.text)
+                            .lineLimit(2)
+                        Spacer()
+                        Text(displayDate.formatted(date: .abbreviated, time: .shortened))
+                            .commandCenterMono()
+                    }
+
+                    HStack(spacing: 8) {
+                        CommandCenterChip(title: statusText, tint: statusTint, filled: true)
+                        CommandCenterChip(title: durationText)
+                        CommandCenterChip(title: meeting.speechLocaleIdentifier, tint: CommandCenterPalette.cyan)
+                        CommandCenterChip(title: artifactText, tint: artifactTint)
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? CommandCenterPalette.primary : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var statusText: String {
+        switch meeting.transcriptionStatus {
+        case .notStarted:
+            return "Not started"
+        case .transcribing:
+            return "Transcribing"
+        case .transcribed:
+            return "Transcribed"
+        case .failed:
+            return "Failed"
+        case .retryRequested:
+            return "Retry requested"
+        }
+    }
+
+    private var statusTint: Color {
+        switch meeting.transcriptionStatus {
+        case .failed:
+            return CommandCenterPalette.danger
+        case .transcribed:
+            return CommandCenterPalette.primary
+        case .transcribing, .retryRequested:
+            return CommandCenterPalette.warning
+        case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+
+    private var durationText: String {
+        let interval = (meeting.endedAt ?? Date()).timeIntervalSince(meeting.startedAt)
+        let minutes = max(Int(interval) / 60, 0)
+        return minutes == 1 ? "1 min" : "\(minutes) min"
+    }
+
+    private var displayDate: Date {
+        meeting.scheduledStartAt ?? meeting.startedAt
+    }
+
+    private var artifactText: String {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil {
+            return "Summary ready"
+        }
+        if meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return "Transcript ready"
+        }
+        return "Artifacts pending"
+    }
+
+    private var artifactTint: Color {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil || meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+            return CommandCenterPalette.primary
+        }
+        return CommandCenterPalette.secondaryText
+    }
+}
+
+struct AgendaEditorView: View {
     let meeting: MeetingRecord?
     @Binding var draft: AgendaDraft
     let saveError: String?
@@ -308,7 +577,7 @@ private struct AgendaEditorView: View {
                     Text("Selected Agenda")
                         .font(CommandCenterTypography.title)
                         .foregroundStyle(CommandCenterPalette.text)
-                    Text("Edit attendees, topics, time, and goal before opening the workspace.")
+                    Text("Edit attendees, topics, time, and goal for this meeting.")
                         .font(CommandCenterTypography.caption)
                         .foregroundStyle(CommandCenterPalette.secondaryText)
 
@@ -324,7 +593,7 @@ private struct AgendaEditorView: View {
                     labeledDatePicker("Scheduled End", date: $draft.scheduledEndAt)
                     labeledTextEditor("Attendees", text: $draft.attendeesText)
                     labeledTextEditor("Topics", text: $draft.topicsText)
-                    labeledTextEditor("Meeting Goal", text: $draft.goalText)
+                    goalsEditor
 
                     // Dirty navigation confirmation uses Save / Discard / Cancel.
                     HStack {
@@ -379,6 +648,39 @@ private struct AgendaEditorView: View {
         }
     }
 
+    private var goalsEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Goals").commandCenterEyebrow()
+            ForEach(draft.goalTexts.indices, id: \.self) { index in
+                HStack(spacing: 8) {
+                    TextField("Goal", text: $draft.goalTexts[index])
+                        .textFieldStyle(.plain)
+                        .font(CommandCenterTypography.secondaryBody)
+                        .foregroundStyle(CommandCenterPalette.text)
+                        .padding(10)
+                        .background(CommandCenterPalette.panelRaised)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(CommandCenterPalette.border, lineWidth: 1)
+                        )
+                    Button {
+                        draft.removeGoal(at: index)
+                    } label: {
+                        Image(systemName: "trash")
+                            .accessibilityLabel("Remove Goal")
+                    }
+                    .buttonStyle(CommandCenterIconButtonStyle())
+                    .disabled(draft.goalTexts.count == 1)
+                }
+            }
+            Button("Add Goal") {
+                draft.addGoal()
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+        }
+    }
+
     private func labeledDatePicker(_ title: String, date: Binding<Date?>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).commandCenterEyebrow()
@@ -397,13 +699,13 @@ private struct AgendaEditorView: View {
     }
 }
 
-private struct AgendaDraft: Equatable {
+struct AgendaDraft: Equatable {
     var name = ""
     var attendeesText = ""
     var topicsText = ""
     var scheduledStartAt: Date?
     var scheduledEndAt: Date?
-    var goalText = ""
+    var goalTexts: [String] = [""]
 
     init() {}
 
@@ -420,11 +722,25 @@ private struct AgendaDraft: Equatable {
         topicsText = meeting.agendaTopics.map(\.title).joined(separator: "\n")
         scheduledStartAt = meeting.scheduledStartAt ?? meeting.startedAt
         scheduledEndAt = meeting.scheduledEndAt
-        goalText = meeting.meetingGoal?.title ?? ""
+        let goals = meeting.meetingGoals.isEmpty ? meeting.meetingGoal.map { [$0] } ?? [] : meeting.meetingGoals
+        goalTexts = goals.map(\.title)
+        ensureGoalRow()
     }
 
     func update() -> MeetingAgendaUpdate {
-        MeetingAgendaUpdate(
+        let goalValues = goalTexts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map {
+                MeetingGoal(
+                    title: $0,
+                    objectives: [],
+                    requiredQuestions: [],
+                    expectedDecisions: [],
+                    keyTerms: []
+                )
+            }
+        return MeetingAgendaUpdate(
             name: name,
             attendees: attendeesText
                 .split(whereSeparator: \.isNewline)
@@ -437,13 +753,24 @@ private struct AgendaDraft: Equatable {
                 .map { MeetingAgendaTopic(title: String($0)) },
             scheduledStartAt: scheduledStartAt,
             scheduledEndAt: scheduledEndAt,
-            meetingGoal: MeetingGoal(
-                title: goalText,
-                objectives: [],
-                requiredQuestions: [],
-                expectedDecisions: [],
-                keyTerms: []
-            )
+            meetingGoal: goalValues.first,
+            meetingGoals: goalValues
         )
+    }
+
+    mutating func addGoal() {
+        goalTexts.append("")
+    }
+
+    mutating func removeGoal(at index: Int) {
+        guard goalTexts.indices.contains(index) else { return }
+        goalTexts.remove(at: index)
+        ensureGoalRow()
+    }
+
+    private mutating func ensureGoalRow() {
+        if goalTexts.isEmpty {
+            goalTexts = [""]
+        }
     }
 }
