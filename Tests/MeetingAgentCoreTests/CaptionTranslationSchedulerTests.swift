@@ -38,6 +38,30 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
                 request: request
             )
         )
+        XCTAssertTrue(CaptionTranslationUpdate(
+            turnID: turn.id,
+            key: "key-1",
+            result: .draftText("草稿"),
+            request: request
+        ).attachesVisibleText)
+        XCTAssertEqual(CaptionTranslationUpdate(
+            turnID: turn.id,
+            key: "key-1",
+            result: .finalText("最终"),
+            request: request
+        ).visibleTextLength, 2)
+        XCTAssertFalse(CaptionTranslationUpdate(
+            turnID: turn.id,
+            key: "key-1",
+            result: .completeWithoutText,
+            request: request
+        ).attachesVisibleText)
+        XCTAssertNil(CaptionTranslationUpdate(
+            turnID: turn.id,
+            key: "key-1",
+            result: .failed("timeout"),
+            request: request
+        ).visibleTextLength)
     }
 
     func testSameLanguageCompletesWithoutProviderCall() async {
@@ -266,6 +290,32 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         })
         XCTAssertFalse(events.contains { $0.event == "caption_translation_attached" })
         XCTAssertNil(currentStore.turns.first?.translatedText)
+    }
+
+    func testDiscardStaleLogsUpdateAgainstCurrentStore() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(draftTurn(text: "old draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        currentStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "旧草稿"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+        )
+
+        let updates = await scheduler.liveTranslationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        scheduler.discardStale(update, against: currentStore)
+
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_stale"
+                && $0.metadata["reason"] == "draft_no_longer_current"
+        })
     }
 
     func testProviderFailureLogsSanitizedErrorCount() async throws {

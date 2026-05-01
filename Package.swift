@@ -21,7 +21,8 @@ let package = Package(
         ),
         .testTarget(
             name: "MeetingAgentCoreTests",
-            dependencies: ["MeetingAgentCore"]
+            dependencies: ["MeetingAgentCore"],
+            exclude: ["Fixtures"]
         )
     ]
 )

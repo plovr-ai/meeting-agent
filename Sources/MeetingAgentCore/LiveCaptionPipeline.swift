@@ -131,13 +131,17 @@ public final class LiveCaptionPipeline {
         storeGeneration += 1
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
-        store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        resetCaptionProjection(sourceLocale: sourceLocale, targetLocale: targetLocale)
         translationScheduler = CaptionTranslationScheduler(
             provider: translationProvider,
             performanceEventLogger: performanceEventLogger,
             persistTranslation: persistTranslation
         )
+    }
+
+    private func resetCaptionProjection(sourceLocale: String, targetLocale: String) {
+        store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
         interimSegmentsByID = [:]
     }
 
@@ -251,8 +255,7 @@ public final class LiveCaptionPipeline {
 
     private func replayCaptions(_ document: TranscriptDocument) {
         let previousTranslatedTurns = store.turns.filter { $0.translatedText?.isEmpty == false }
-        let previousTranslationScheduler = translationScheduler
-        reset(sourceLocale: sourceLocale, targetLocale: targetLocale)
+        resetCaptionProjection(sourceLocale: sourceLocale, targetLocale: targetLocale)
         for segment in document.segments where segment.isFinal {
             logSegmentIngestedIfNeeded(segment, path: "final")
             applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
@@ -280,7 +283,7 @@ public final class LiveCaptionPipeline {
                 }
             }
         }
-        previousTranslationScheduler.cancelDraftsSuperseded(by: store.turns)
+        translationScheduler.cancelDraftsSuperseded(by: store.turns)
     }
 
     private func logSegmentIngestedIfNeeded(_ segment: TranscriptSegment, path: String) {

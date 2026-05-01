@@ -35,7 +35,28 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nhello world\n")
     }
 
-    func testTranslationPatchDoesNotSnapshotBeforeDebounce() throws {
+    func testDraftTranslationPatchDoesNotSnapshotBeforeDebounce() throws {
+        let fixture = try StoreFixture()
+        let store = try RecordingTranscriptPersistenceStore(
+            transcriptURL: fixture.transcriptURL,
+            snapshotInterval: 10,
+            now: fixture.now
+        )
+
+        try store.apply(.upsert(TranscriptSegment(id: "segment-1", text: "Confirm owner.", isFinal: true)))
+        try store.apply(.translationPatch(
+            segmentID: "segment-1",
+            text: "确认负责人。",
+            targetLocale: "zh-CN",
+            isFinal: false
+        ))
+
+        XCTAssertEqual(store.currentDocument.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "")
+        XCTAssertEqual(try fixture.eventLogLineCount(), 2)
+    }
+
+    func testFinalTranslationPatchForcesSnapshot() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
             transcriptURL: fixture.transcriptURL,
@@ -51,8 +72,10 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
             isFinal: true
         ))
 
-        XCTAssertEqual(store.currentDocument.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "")
+        let document = try TranscriptFileWriter.readDocument(from: fixture.structuredURL)
+        XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
+        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nConfirm owner.\n")
         XCTAssertEqual(try fixture.eventLogLineCount(), 2)
     }
 

@@ -319,7 +319,7 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(try transcriptEventLogLineCount(for: record), 1)
     }
 
-    func testRecorderPatchesActiveTranscriptTranslationWithoutImmediateArtifactRewrite() async throws {
+    func testRecorderPatchesActiveFinalTranscriptTranslationWithImmediateArtifactRewrite() async throws {
         let fixture = try RecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
@@ -342,10 +342,10 @@ final class MeetingRecorderTests: XCTestCase {
 
         XCTAssertTrue(didPatch)
         XCTAssertEqual(updates.last?.document.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "")
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "User A:\nConfirm owner.\n")
         XCTAssertEqual(
-            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments,
-            []
+            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments.first?.translatedText,
+            "确认负责人。"
         )
 
         _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))

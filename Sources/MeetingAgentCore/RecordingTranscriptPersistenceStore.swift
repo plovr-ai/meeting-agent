@@ -102,7 +102,9 @@ final class RecordingTranscriptPersistenceStore {
         switch update {
         case .replaceAll, .replaceWithPlainText:
             return true
-        case .upsert, .translationPatch:
+        case .translationPatch(_, _, _, let isFinal):
+            return isFinal
+        case .upsert:
             return false
         }
     }

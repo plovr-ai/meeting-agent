@@ -129,6 +129,10 @@ final class OpenRouterChatClientTests: XCTestCase {
             "key"
         )
         XCTAssertEqual(
+            OpenRouterChatConfiguration(apiKey: " key \n", model: " model ").model,
+            "model"
+        )
+        XCTAssertEqual(
             OpenRouterChatConfiguration.environment(
                 model: "openai/test",
                 environment: ["MEETING_AGENT_OPENROUTER_API_KEY": " env-key "]
@@ -142,6 +146,16 @@ final class OpenRouterChatClientTests: XCTestCase {
         XCTAssertEqual(
             OpenRouterChatConfiguration(apiKey: "key", model: "\n"),
             .unavailable("OpenRouter model is not configured")
+        )
+        XCTAssertEqual(OpenRouterChatConfiguration(apiKey: nil, model: "model").apiKey, "")
+        XCTAssertEqual(OpenRouterChatConfiguration(apiKey: "key", model: nil).model, "")
+    }
+
+    func testOpenRouterChatErrorDescriptionsCoverNilDetails() {
+        XCTAssertEqual(String(describing: OpenRouterChatError.httpStatus(500, nil)), "HTTP 500")
+        XCTAssertEqual(
+            String(describing: OpenRouterChatError.invalidJSONContent),
+            "response content did not contain a JSON object"
         )
     }
 }

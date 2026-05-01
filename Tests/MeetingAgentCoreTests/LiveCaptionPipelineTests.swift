@@ -582,6 +582,122 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
     }
 
+    func testRepeatedReplayDoesNotDuplicateInFlightFinalTranslation() async throws {
+        let provider = PipelineRecordingTranslationProvider(
+            translations: ["segment-1": "最终翻译"],
+            delayNanoseconds: 100_000_000
+        )
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "final text",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        _ = pipeline.replayCaptionsOnly(document)
+        let firstSchedule = Task {
+            await pipeline.schedulePendingTranslations()
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        _ = pipeline.replayCaptionsOnly(document)
+        let secondSnapshot = await pipeline.schedulePendingTranslations()
+        let firstSnapshot = await firstSchedule.value
+
+        XCTAssertEqual(provider.requests, ["final text"])
+        XCTAssertEqual(firstSnapshot.turns.first?.translatedText, "最终翻译")
+        XCTAssertNil(secondSnapshot.turns.first?.translatedText)
+        XCTAssertEqual(secondSnapshot.turns.first?.translationHealth, .pending)
+    }
+
+    func testLatestMeetingDeepgramLogReplayDoesNotDuplicateInFlightFinalTranslations() async throws {
+        let rawSegments = try latestMeetingDeepgramStreamingSegments()
+        let finalSegments = rawSegments.filter(\.isFinal)
+        XCTAssertEqual(rawSegments.count, 57)
+        XCTAssertEqual(finalSegments.count, 10)
+        XCTAssertEqual(finalSegments.first?.text, "You check out this site, and if you scroll down to the bottom,")
+        XCTAssertEqual(finalSegments.last?.text, "select settings and look at all the different languages, nine of them that we")
+
+        var accumulator = TranscriptSegmentAccumulator()
+        for segment in rawSegments {
+            _ = accumulator.apply(.upsert(segment))
+        }
+        let document = TranscriptDocument(segments: accumulator.currentDocument.segments.filter(\.isFinal))
+        XCTAssertEqual(document.segments.count, 10)
+
+        let provider = PipelineRecordingTranslationProvider(
+            translations: Dictionary(uniqueKeysWithValues: document.segments.map { ($0.id, "translated:\($0.id)") }),
+            delayNanoseconds: 100_000_000
+        )
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+
+        _ = pipeline.replayCaptionsOnly(document)
+        let firstSchedule = Task {
+            await pipeline.schedulePendingTranslations()
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        _ = pipeline.replayCaptionsOnly(document)
+        let secondSchedule = Task {
+            await pipeline.schedulePendingTranslations()
+        }
+        _ = await firstSchedule.value
+        _ = await secondSchedule.value
+
+        XCTAssertFalse(provider.requests.isEmpty)
+        XCTAssertEqual(provider.requests.count, Set(provider.requests).count)
+    }
+
+    func testResetClearsCaptionStateAndUsesNewLocales() async {
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-2": "hello"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        _ = await pipeline.replay(TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "hello",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ]))
+
+        pipeline.reset(sourceLocale: "zh-CN", targetLocale: "en-US")
+        let snapshot = await pipeline.replay(TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-2",
+                text: "你好",
+                language: "zh-CN",
+                isFinal: true,
+                speechFinal: true
+            )
+        ]))
+
+        XCTAssertEqual(snapshot.turns.map(\.sourceSegmentID), ["segment-2"])
+        XCTAssertEqual(snapshot.turns.first?.sourceLocale, "zh-CN")
+        XCTAssertEqual(snapshot.turns.first?.targetLocale, "en-US")
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "hello")
+        XCTAssertEqual(provider.requests, ["hello", "你好"])
+    }
+
     func testScheduleLivePendingTranslationsLogsSnapshotPublished() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -816,6 +932,22 @@ private func readPipelineEvents(from url: URL) throws -> [PerformanceEvent] {
         .map { try decoder.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
+private func latestMeetingDeepgramStreamingSegments() throws -> [TranscriptSegment] {
+    let logURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/latest-meeting-deepgram-x.log")
+    let lines = try String(contentsOf: logURL, encoding: .utf8)
+        .split(whereSeparator: \.isNewline)
+        .map(String.init)
+        .filter { $0.hasPrefix("{") }
+    return lines.flatMap { line in
+        DeepgramStreamingResponseMapper.segments(
+            from: Data(line.utf8),
+            providerID: "deepgram-transcribe"
+        )
+    }
+}
+
 private final class SuspendedPipelineTranslationProvider: TextTranslationProvider {
     struct PendingRequest {
         let transcript: TranscriptDocument
@@ -873,10 +1005,12 @@ private final class SuspendedPipelineTranslationProvider: TextTranslationProvide
 
 private final class PipelineRecordingTranslationProvider: TextTranslationProvider {
     var translations: [String: String]
+    private let delayNanoseconds: UInt64
     private(set) var requests: [String] = []
 
-    init(translations: [String: String]) {
+    init(translations: [String: String], delayNanoseconds: UInt64 = 0) {
         self.translations = translations
+        self.delayNanoseconds = delayNanoseconds
     }
 
     var descriptor: ProviderDescriptor {
@@ -894,6 +1028,9 @@ private final class PipelineRecordingTranslationProvider: TextTranslationProvide
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
         requests.append(transcript.segments.map(\.text).joined(separator: " "))
+        if delayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: delayNanoseconds)
+        }
         return TranslatedTranscript(
             sourceLocale: options.sourceLocale,
             targetLocale: options.targetLocale,
