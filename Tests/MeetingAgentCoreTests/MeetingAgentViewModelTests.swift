@@ -549,6 +549,30 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.meetingProgressHealth.caption, .live)
     }
 
+    func testDefaultLiveCaptionSnapshotPublicationIsImmediate() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        var accumulator = TranscriptSegmentAccumulator()
+        let result = accumulator.apply(.upsert(TranscriptSegment(
+            id: "default-draft",
+            text: "default debounce should not hold this",
+            language: "en-US",
+            isFinal: false
+        )))
+
+        await viewModel.applyTranscriptAccumulationResultsForTesting([result])
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.sourceSegmentID, "default-draft")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "default debounce should not hold this")
+    }
+
     func testDraftCaptionSnapshotsAreDebouncedBeforePublication() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")

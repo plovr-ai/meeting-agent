@@ -75,7 +75,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         exportService: MeetingExportService = MeetingExportService(),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
-        liveCaptionSnapshotDebounceNanoseconds: UInt64 = 75_000_000,
+        liveCaptionSnapshotDebounceNanoseconds: UInt64 = 0,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
