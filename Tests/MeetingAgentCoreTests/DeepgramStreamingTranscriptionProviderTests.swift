@@ -265,6 +265,56 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(audioFrameSent.metadata["timestampNanos"], "10")
     }
 
+    func testStreamingProviderPublishesAssignedSpeakerLabelsToLiveUpdateSink() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-live-speaker-label-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let session = FakeDeepgramStreamingSession()
+        let client = FakeDeepgramStreamingClient(session: session)
+        let updateSink = RecordingTranscriptUpdateSinkForTests()
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 48_000,
+            channelCount: 1,
+            transcriptUpdateSink: updateSink
+        ))
+
+        session.yieldJSON("""
+        {
+          "is_final": false,
+          "channel": {
+            "alternatives": [
+              {
+                "transcript": "hello live",
+                "confidence": 0.7,
+                "words": [
+                  { "word": "hello", "punctuated_word": "hello", "start": 0.0, "end": 0.4, "speaker": 0 },
+                  { "word": "live", "punctuated_word": "live", "start": 0.4, "end": 0.8, "speaker": 0 }
+                ]
+              }
+            ]
+          }
+        }
+        """)
+        try await waitFor { updateSink.updates.count == 1 }
+        transcriber.finish()
+
+        guard case .upsert(let updatedSegment) = updateSink.updates.first else {
+            return XCTFail("Expected upsert update")
+        }
+        XCTAssertEqual(updatedSegment.speakerID, "deepgram-speaker-0")
+        XCTAssertEqual(updatedSegment.speakerLabel, "User A")
+    }
+
     func testStreamingResponseMapsInterimTranscriptToNonFinalSegment() throws {
         let data = Data("""
         {

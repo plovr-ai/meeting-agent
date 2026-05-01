@@ -22,9 +22,7 @@ public final class TranscriptFileWriter {
 
     public func replace(with segments: [TranscriptSegment]) throws {
         guard !isClosed else { return }
-        let labeledSegments = Self.assignSpeakerLabels(to: segments)
-        try writeDocument(TranscriptDocument(segments: labeledSegments))
-        try (TranscriptFormatter.render(labeledSegments) + "\n").write(to: url, atomically: true, encoding: .utf8)
+        _ = try replaceWithLabeledSegments(segments)
     }
 
     public func append(_ segment: TranscriptSegment) throws {
@@ -34,13 +32,15 @@ public final class TranscriptFileWriter {
         try replace(with: document.segments)
     }
 
-    public func upsert(_ segment: TranscriptSegment) throws {
-        guard !isClosed else { return }
+    @discardableResult
+    public func upsert(_ segment: TranscriptSegment) throws -> TranscriptSegment {
+        guard !isClosed else { return segment }
         var accumulator = TranscriptSegmentAccumulator(
             document: try Self.readDocument(from: structuredURL)
         )
         let result = accumulator.apply(.upsert(segment))
-        try replace(with: result.document.segments)
+        let labeledSegments = try replaceWithLabeledSegments(result.document.segments)
+        return labeledSegments.first { $0.id == segment.id } ?? segment
     }
 
     public func close() throws {
@@ -225,6 +225,13 @@ public final class TranscriptFileWriter {
     private func writeDocument(_ document: TranscriptDocument) throws {
         let data = try JSONEncoder.meetingAgent.encode(document)
         try data.write(to: structuredURL, options: .atomic)
+    }
+
+    private func replaceWithLabeledSegments(_ segments: [TranscriptSegment]) throws -> [TranscriptSegment] {
+        let labeledSegments = Self.assignSpeakerLabels(to: segments)
+        try writeDocument(TranscriptDocument(segments: labeledSegments))
+        try (TranscriptFormatter.render(labeledSegments) + "\n").write(to: url, atomically: true, encoding: .utf8)
+        return labeledSegments
     }
 
     private static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {

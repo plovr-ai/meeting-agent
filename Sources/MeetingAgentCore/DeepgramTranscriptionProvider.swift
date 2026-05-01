@@ -516,15 +516,16 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
-        transcriptUpdateSink?.receive(.upsert(segment))
         guard segment.isFinal else {
-            try writer.upsert(segment)
-            performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
+            let writtenSegment = try writer.upsert(segment)
+            transcriptUpdateSink?.receive(.upsert(writtenSegment))
+            performanceEventLogger?.logSegment("transcript_segment_written", segment: writtenSegment)
             return
         }
-        try writer.upsert(segment)
-        performanceEventLogger?.logSegment("transcript_segment_written", segment: segment)
-        advanceFallbackSegmentIndexIfNeeded(for: segment)
+        let writtenSegment = try writer.upsert(segment)
+        transcriptUpdateSink?.receive(.upsert(writtenSegment))
+        performanceEventLogger?.logSegment("transcript_segment_written", segment: writtenSegment)
+        advanceFallbackSegmentIndexIfNeeded(for: writtenSegment)
     }
 
     private func stableFallbackSegment(_ segment: TranscriptSegment) -> TranscriptSegment {
