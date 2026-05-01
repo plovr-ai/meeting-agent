@@ -29,6 +29,28 @@ final class LiveCaptionChunkerTests: XCTestCase {
         XCTAssertEqual(updates.first?.turn.freezeReason, .speakerChanged)
     }
 
+    func testSameSpeakerShortFragmentsMergeWhenTimingIsClose() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(
+                readableCharacterLimit: 80,
+                shortFragmentCharacters: 24,
+                maxMergeGapSeconds: 1.25,
+                minSentenceBoundaryCharacters: 30
+            )
+        )
+
+        _ = chunker.append(segment(id: "s1", text: "Let's align", start: 0, end: 0.7))
+        let updates = chunker.append(segment(id: "s2", text: "on the launch owner", start: 0.9, end: 1.8))
+
+        XCTAssertEqual(updates.single?.turn.originalText, "Let's align on the launch owner")
+        XCTAssertEqual(updates.single?.turn.sourceSegmentIDs, ["s1", "s2"])
+        XCTAssertEqual(updates.single?.turn.displayState, .draft)
+        XCTAssertNil(updates.single?.turn.boundaryReason)
+        XCTAssertNil(updates.single?.turn.boundaryStrength)
+    }
+
     func testMaxLengthFreezesLongDraft() {
         var chunker = LiveCaptionChunker(
             sourceLocale: "en-US",
@@ -40,6 +62,27 @@ final class LiveCaptionChunkerTests: XCTestCase {
 
         XCTAssertEqual(updates.last?.turn.chunkState, .frozen)
         XCTAssertEqual(updates.last?.turn.freezeReason, .maxLength)
+    }
+
+    func testReadableCharacterLimitFreezesBeforeHardMaximum() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(
+                maxCharacters: 120,
+                readableCharacterLimit: 48,
+                minSentenceBoundaryCharacters: 80
+            )
+        )
+
+        let updates = chunker.append(segment(
+            id: "s1",
+            text: "This caption is already long enough to become difficult to scan"
+        ))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .maxLength)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .soft)
     }
 
     func testMaxDurationDoesNotFreezeMidSentenceDraft() {
@@ -67,10 +110,39 @@ final class LiveCaptionChunkerTests: XCTestCase {
             policy: LiveCaptionChunkingPolicy(minPunctuationCharacters: 10)
         )
 
-        let updates = chunker.append(segment(id: "s1", text: "That sounds good."))
+        let updates = chunker.append(segment(id: "s1", text: "That sounds very good."))
 
         XCTAssertEqual(updates.last?.turn.chunkState, .frozen)
         XCTAssertEqual(updates.last?.turn.freezeReason, .punctuation)
+    }
+
+    func testTerminalSentencePunctuationCreatesSoftBoundaryAtReadableLength() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minSentenceBoundaryCharacters: 18)
+        )
+
+        let updates = chunker.append(segment(id: "s1", text: "That sounds very good."))
+
+        XCTAssertEqual(updates.last?.turn.displayState, .sealed)
+        XCTAssertEqual(updates.last?.turn.boundaryReason, .punctuation)
+        XCTAssertEqual(updates.last?.turn.boundaryStrength, .soft)
+        XCTAssertEqual(updates.last?.turn.translationState, .draft)
+    }
+
+    func testInlinePunctuationDoesNotCreateSentenceBoundary() {
+        var chunker = LiveCaptionChunker(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minSentenceBoundaryCharacters: 10)
+        )
+
+        let updates = chunker.append(segment(id: "s1", text: "Yes, we can continue with rollout planning"))
+
+        XCTAssertEqual(updates.single?.turn.displayState, .draft)
+        XCTAssertNil(updates.single?.turn.boundaryReason)
+        XCTAssertNil(updates.single?.turn.boundaryStrength)
     }
 
     func testSoftPunctuationBoundarySealsDisplayButKeepsDraftTranslation() {

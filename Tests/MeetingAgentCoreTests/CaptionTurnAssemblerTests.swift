@@ -49,6 +49,27 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         XCTAssertEqual(sealed.originalText, "First part second part.")
     }
 
+    func testAssemblerUsesReadableChunkingPolicyForSoftSentenceBoundary() {
+        var assembler = CaptionTurnAssembler(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            policy: LiveCaptionChunkingPolicy(minSentenceBoundaryCharacters: 18)
+        )
+
+        let events = assembler.apply(segment(
+            id: "segment-1",
+            text: "That sounds very good.",
+            speechFinal: false
+        ))
+
+        guard case .sealed(let sealed) = events.last else {
+            XCTFail("Expected readable sentence punctuation to seal a soft boundary")
+            return
+        }
+        XCTAssertEqual(sealed.boundaryReason, .punctuation)
+        XCTAssertEqual(sealed.boundaryStrength, .soft)
+    }
+
     func testInterimSegmentProducesInterimEvent() {
         var assembler = CaptionTurnAssembler(sourceLocale: "ja-JP", targetLocale: "en-US")
 
