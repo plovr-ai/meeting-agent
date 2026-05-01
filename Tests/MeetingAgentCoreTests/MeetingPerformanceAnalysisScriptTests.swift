@@ -14,15 +14,34 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
 
         XCTAssertEqual(result.status, 0, result.stderr)
         XCTAssertTrue(result.stdout.contains("Experience KPIs"))
-        XCTAssertTrue(result.stdout.contains("TTFLC: 0.90s"))
+        XCTAssertTrue(result.stdout.contains("Time to First Live Caption: 0.90s"))
         XCTAssertTrue(result.stdout.contains("Caption Lag p50/p95/max: 1.00s / 1.00s / 1.00s"))
-        XCTAssertTrue(result.stdout.contains("TTFT: 2.40s"))
+        XCTAssertTrue(result.stdout.contains("Time to First Translation: 2.40s"))
         XCTAssertTrue(result.stdout.contains("Translation Lag p50/p95/max: 2.30s / 2.30s / 2.30s"))
         XCTAssertTrue(result.stdout.contains("Caption Stability: 2.00 updates/final caption"))
         XCTAssertTrue(result.stdout.contains("Translation Success Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Success Rate: unavailable"))
+        XCTAssertTrue(result.stdout.contains("Final Translation Success Rate: 100.0%"))
         XCTAssertTrue(result.stdout.contains("Process Metrics"))
         XCTAssertTrue(result.stdout.contains("First caption path: audio sent -> Deepgram response 0.60s"))
         XCTAssertTrue(result.stdout.contains("Translation path p50: scheduled -> started 0.20s"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptExcludesBatchCaptionEventsFromPrimaryLag() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-batch-analysis-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try (fixtureEvents() + batchCaptionEvents()).write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Caption Lag p50/p95/max: 1.00s / 1.00s / 1.00s"))
+        XCTAssertTrue(result.stdout.contains("Batch/Flush Caption Events: 4 excluded from primary caption lag"))
+        XCTAssertTrue(result.stdout.contains("Diagnostics"))
+        XCTAssertTrue(result.stdout.contains("Caption lag KPI protected: batch/flush visible events excluded"))
     }
 
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
@@ -85,6 +104,24 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
                 "sourceSegmentID": "segment-1"
             ])
         ].joined(separator: "\n") + "\n"
+    }
+
+    private func batchCaptionEvents() -> String {
+        (0..<4).map { index in
+            event(
+                "caption_turn_visible",
+                wallTime: "2026-05-01T00:03:00Z",
+                audio: Double(index + 1),
+                segmentID: "batch-\(index)",
+                isFinal: true,
+                textLength: 20,
+                metadata: [
+                    "turnID": "batch-\(index)",
+                    "captionState": "sealed",
+                    "boundaryStrength": "soft"
+                ]
+            )
+        }.joined(separator: "\n") + "\n"
     }
 
     private func event(

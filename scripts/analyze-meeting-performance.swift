@@ -9,6 +9,16 @@ struct PerformanceEvent: Decodable {
     let isFinal: Bool?
     let textLength: Int?
     let metadata: [String: String]
+
+    var identity: String {
+        [
+            event,
+            wallTime.timeIntervalSince1970.description,
+            segmentID ?? "",
+            metadata["turnID"] ?? "",
+            metadata["sourceSegmentID"] ?? ""
+        ].joined(separator: "|")
+    }
 }
 
 struct Stats {
@@ -91,18 +101,27 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Events: \(events.count)")
         lines.append("")
         lines.append("Experience KPIs")
-        lines.append("TTFLC: \(format(duration: timeToFirstLiveCaption()))")
+        lines.append("Time to First Live Caption: \(format(duration: timeToFirstLiveCaption()))")
         lines.append("Caption Lag p50/p95/max: \(format(stats: captionLagStats()))")
-        lines.append("TTFT: \(format(duration: timeToFirstTranslation()))")
+        lines.append("Time to First Translation: \(format(duration: timeToFirstTranslation()))")
         lines.append("Translation Lag p50/p95/max: \(format(stats: translationLagStats()))")
         lines.append("Caption Stability: \(format(updatesPerFinalCaption())) updates/final caption")
         lines.append("Translation Success Rate: \(format(percent: translationSuccessRate()))")
+        lines.append("Draft Translation Success Rate: \(format(percent: translationSuccessRate(kind: "draft")))")
+        lines.append("Final Translation Success Rate: \(format(percent: translationSuccessRate(kind: "final")))")
         lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
         lines.append("Caption visible lag p50/p95/max: \(format(stats: captionVisiblePipelineStats()))")
         lines.append("Translation path p50: \(translationPathText())")
         lines.append("Translation outcomes: scheduled \(translationEvents("caption_translation_scheduled").count), attached \(translationEvents("caption_translation_attached").count), stale \(translationEvents("caption_translation_stale").count), cancelled \(translationEvents("caption_translation_cancelled").count), provider_error \(translationEvents("caption_translation_provider_error").count)")
+        lines.append("Batch/Flush Caption Events: \(batchOrFlushCaptionEvents.count) excluded from primary caption lag")
+        let diagnostics = diagnosticLines()
+        if !diagnostics.isEmpty {
+            lines.append("")
+            lines.append("Diagnostics")
+            lines.append(contentsOf: diagnostics)
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -118,6 +137,37 @@ struct MeetingPerformanceAnalyzer {
         events.filter { $0.event == "caption_turn_visible" && $0.isFinal == true }
     }
 
+    private var primaryFinalCaptionVisibleEvents: [PerformanceEvent] {
+        let excludedIDs = batchOrFlushCaptionEventIDs
+        var seenSegmentIDs = Set<String>()
+        return finalCaptionVisibleEvents.filter { event in
+            guard !excludedIDs.contains(event.identity) else {
+                return false
+            }
+            guard let segmentID = event.segmentID else {
+                return true
+            }
+            return seenSegmentIDs.insert(segmentID).inserted
+        }
+    }
+
+    private var batchOrFlushCaptionEvents: [PerformanceEvent] {
+        let ids = batchOrFlushCaptionEventIDs
+        return finalCaptionVisibleEvents.filter { event in
+            ids.contains(event.identity)
+        }
+    }
+
+    private var batchOrFlushCaptionEventIDs: Set<String> {
+        let groupedBySecond = Dictionary(grouping: finalCaptionVisibleEvents) { event in
+            Int(event.wallTime.timeIntervalSince1970.rounded(.down))
+        }
+        let burstIDs = groupedBySecond.values
+            .filter { $0.count >= 3 }
+            .flatMap { $0.map(\.identity) }
+        return Set(burstIDs)
+    }
+
     private func timeToFirstLiveCaption() -> Double? {
         guard let start = firstAudioSent?.wallTime,
               let caption = firstCaptionVisible?.wallTime else {
@@ -127,12 +177,12 @@ struct MeetingPerformanceAnalyzer {
     }
 
     private func captionLagStats() -> Stats {
-        Stats(values: finalCaptionVisibleEvents.compactMap(audioLag))
+        Stats(values: primaryFinalCaptionVisibleEvents.compactMap(audioLag))
     }
 
     private func captionVisiblePipelineStats() -> Stats {
         let sttBySegmentID = Dictionary(grouping: events.filter { $0.event == "stt_segment_received" }) { $0.segmentID ?? "" }
-        let values = finalCaptionVisibleEvents.compactMap { caption -> Double? in
+        let values = primaryFinalCaptionVisibleEvents.compactMap { caption -> Double? in
             guard let segmentID = caption.segmentID,
                   let stt = sttBySegmentID[segmentID]?.last(where: { $0.wallTime <= caption.wallTime }) else {
                 return nil
@@ -151,7 +201,7 @@ struct MeetingPerformanceAnalyzer {
     }
 
     private func translationLagStats() -> Stats {
-        let finalCaptionBySegmentID = Dictionary(grouping: finalCaptionVisibleEvents) { $0.segmentID ?? "" }
+        let finalCaptionBySegmentID = Dictionary(grouping: primaryFinalCaptionVisibleEvents) { $0.segmentID ?? "" }
         let values = translationEvents("caption_translation_attached").compactMap { attached -> Double? in
             let sourceID = attached.metadata["sourceSegmentID"] ?? attached.segmentID ?? ""
             guard let sourceCaption = finalCaptionBySegmentID[sourceID]?.last,
@@ -165,7 +215,7 @@ struct MeetingPerformanceAnalyzer {
     }
 
     private func updatesPerFinalCaption() -> Double? {
-        let finalCount = max(1, finalCaptionVisibleEvents.count)
+        let finalCount = max(1, primaryFinalCaptionVisibleEvents.count)
         let draftCount = events.filter { $0.event == "caption_turn_visible" && $0.isFinal == false }.count
         return Double(draftCount) / Double(finalCount)
     }
@@ -174,6 +224,17 @@ struct MeetingPerformanceAnalyzer {
         let scheduled = translationEvents("caption_translation_scheduled").count
         guard scheduled > 0 else { return nil }
         let attached = translationEvents("caption_translation_attached").count
+        return Double(attached) / Double(scheduled) * 100
+    }
+
+    private func translationSuccessRate(kind: String) -> Double? {
+        let scheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == kind }
+            .count
+        guard scheduled > 0 else { return nil }
+        let attached = translationEvents("caption_translation_attached")
+            .filter { $0.metadata["translationKind"] == kind }
+            .count
         return Double(attached) / Double(scheduled) * 100
     }
 
@@ -233,6 +294,39 @@ struct MeetingPerformanceAnalyzer {
 
     private func translationEvents(_ name: String) -> [PerformanceEvent] {
         events.filter { $0.event == name }
+    }
+
+    private func diagnosticLines() -> [String] {
+        var lines: [String] = []
+        if !batchOrFlushCaptionEvents.isEmpty {
+            lines.append("Caption lag KPI protected: batch/flush visible events excluded")
+        }
+        if let firstRaw = events.first(where: { $0.event == "deepgram_raw_response_received" }),
+           let firstAudio = firstAudioSent {
+            let firstResponse = max(0, firstRaw.wallTime.timeIntervalSince(firstAudio.wallTime))
+            if firstResponse >= 1.5 {
+                lines.append("Primary first-caption bottleneck: Deepgram first response")
+            }
+        }
+        if let providerLatency = translationProviderLatencyP50(), providerLatency >= 1 {
+            lines.append("Primary translation bottleneck: provider latency")
+        }
+        let draftScheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == "draft" }
+            .count
+        let draftStale = translationEvents("caption_translation_stale")
+            .filter { $0.metadata["translationKind"] == "draft" }
+            .count
+        if draftScheduled > 0, Double(draftStale) / Double(draftScheduled) >= 0.3 {
+            lines.append("High draft stale rate: source text changes faster than translations return")
+        }
+        return lines
+    }
+
+    private func translationProviderLatencyP50() -> Double? {
+        let requests = groupedTranslationRequests()
+        let startedToFinished = requests.compactMap { duration(from: "caption_translation_started", to: "caption_translation_finished", in: $0.value) }
+        return Stats(values: startedToFinished).percentile(50)
     }
 
     private func format(stats: Stats) -> String {
