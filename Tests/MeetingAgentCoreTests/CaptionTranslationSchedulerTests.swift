@@ -367,6 +367,29 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(provider.maximumConcurrentRequests, 2)
     }
 
+    func testCancellingSchedulingTaskDoesNotCancelProviderRequest() async throws {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(hardSealedTurn(text: "do not cancel network", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = CancellationRecordingTextTranslationProvider()
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+        )
+
+        let task = Task {
+            await scheduler.translationUpdates(for: store)
+        }
+        try await waitForSchedulerCondition { provider.startedRequestCount == 1 }
+        task.cancel()
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        XCTAssertEqual(provider.cancelledRequestCount, 0)
+        provider.completeAll()
+        let updates = await task.value
+        XCTAssertEqual(updates.first?.result, .finalText("translated"))
+    }
+
     private func hardSealedTurn(
         id: String = "segment-1",
         text: String = "hello",
@@ -532,5 +555,95 @@ private final class DelayedRecordingTextTranslationProvider: TextTranslationProv
         lock.lock()
         activeRequestCount -= 1
         lock.unlock()
+    }
+}
+
+private final class CancellationRecordingTextTranslationProvider: TextTranslationProvider {
+    private let lock = NSLock()
+    private var continuations: [CheckedContinuation<TranslatedTranscript, Error>] = []
+    private var cancelledRequests = 0
+    private var startedRequests = 0
+
+    var startedRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return startedRequests
+    }
+
+    var cancelledRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelledRequests
+    }
+
+    var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: "cancellation-recording-translation",
+            displayName: "Cancellation Recording Translation",
+            capability: .textTranslation,
+            executionMode: .hosted,
+            supportedSourceLocales: ["*"],
+            supportedTargetLocales: ["*"],
+            requiresNetwork: true,
+            requiresAPIKey: true
+        )
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                startedRequests += 1
+                continuations.append(continuation)
+                lock.unlock()
+            }
+        } onCancel: {
+            lock.lock()
+            cancelledRequests += 1
+            let pending = continuations
+            continuations = []
+            lock.unlock()
+            for continuation in pending {
+                continuation.resume(throwing: CancellationError())
+            }
+        }
+    }
+
+    func completeAll() {
+        lock.lock()
+        let pending = continuations
+        continuations = []
+        lock.unlock()
+        for continuation in pending {
+            continuation.resume(returning: TranslatedTranscript(
+                sourceLocale: "en-US",
+                targetLocale: "zh-CN",
+                segments: [
+                    BilingualSubtitleSegment(
+                        id: "segment-1",
+                        speaker: .default,
+                        sourceText: "do not cancel network",
+                        targetText: "translated",
+                        status: .complete,
+                        providerChain: [descriptor.id]
+                    )
+                ],
+                provenance: PipelineProvenance(profileID: "cancellation-recording")
+            ))
+        }
+    }
+}
+
+private func waitForSchedulerCondition(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: @escaping () -> Bool
+) async throws {
+    let start = DispatchTime.now().uptimeNanoseconds
+    while !condition() {
+        if DispatchTime.now().uptimeNanoseconds - start > timeoutNanoseconds {
+            XCTFail("Timed out waiting for scheduler condition")
+            return
+        }
+        try await Task.sleep(nanoseconds: 1_000_000)
     }
 }

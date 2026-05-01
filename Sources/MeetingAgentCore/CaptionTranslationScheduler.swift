@@ -339,8 +339,9 @@ public final class CaptionTranslationScheduler {
                 textLength: request.turn.originalText.count,
                 metadata: metadata
             )
-            let translated = try await provider.translate(
-                transcript: TranscriptDocument(segments: [segment]),
+            let translated = try await performProviderTranslation(
+                provider: provider,
+                segment: segment,
                 options: execution.options
             )
             var finishedMetadata = metadata
@@ -391,6 +392,20 @@ public final class CaptionTranslationScheduler {
                 resultReceivedAt: Date()
             )
         }
+    }
+
+    private static func performProviderTranslation(
+        provider: TextTranslationProvider,
+        segment: TranscriptSegment,
+        options: TranslationOptions
+    ) async throws -> TranslatedTranscript {
+        let task = Task.detached {
+            try await provider.translate(
+                transcript: TranscriptDocument(segments: [segment]),
+                options: options
+            )
+        }
+        return try await task.value
     }
 
     private func translationKey(for turn: LiveCaptionTurn, isFinalTranslation: Bool) -> String {
