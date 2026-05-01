@@ -83,7 +83,7 @@ public final class LiveCaptionPipeline {
 
     public func replay(_ document: TranscriptDocument) async -> LiveCaptionPipelineSnapshot {
         replayCaptions(document)
-        await scheduleLiveTranslations()
+        await scheduleFinalTranslationsOnly()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -100,7 +100,11 @@ public final class LiveCaptionPipeline {
 
     public func flush(reason: LiveCaptionFreezeReason) async -> LiveCaptionPipelineSnapshot {
         _ = flushCaptionsOnly(reason: reason)
-        return await schedulePendingTranslations()
+        await scheduleFinalTranslationsOnly()
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: currentTranslationHealth()
+        )
     }
 
     public func flushCaptionsOnly(reason: LiveCaptionFreezeReason) -> LiveCaptionPipelineSnapshot {
@@ -112,7 +116,7 @@ public final class LiveCaptionPipeline {
     }
 
     public func schedulePendingTranslations() async -> LiveCaptionPipelineSnapshot {
-        await scheduleLiveTranslations()
+        await scheduleFinalTranslationsOnly()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -338,6 +342,23 @@ public final class LiveCaptionPipeline {
     private func scheduleLiveTranslations() async {
         let generation = storeGeneration
         let updates = await translationScheduler.liveTranslationUpdates(for: store)
+        guard generation == storeGeneration else {
+            for update in updates {
+                translationScheduler.discardStale(update, against: store)
+            }
+            return
+        }
+        for update in updates {
+            let outcome = translationScheduler.apply(update, to: &store)
+            if outcome.publishedVisibleText {
+                logCaptionSnapshotPublished(for: update, publishedAt: Date())
+            }
+        }
+    }
+
+    private func scheduleFinalTranslationsOnly() async {
+        let generation = storeGeneration
+        let updates = await translationScheduler.finalTranslationUpdates(for: store)
         guard generation == storeGeneration else {
             for update in updates {
                 translationScheduler.discardStale(update, against: store)

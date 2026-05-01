@@ -43,6 +43,10 @@ public final class CaptionTranslationScheduler {
     }
 
     func translationUpdates(for store: LiveCaptionStore) async -> [CaptionTranslationUpdate] {
+        await finalTranslationUpdates(for: store)
+    }
+
+    func finalTranslationUpdates(for store: LiveCaptionStore) async -> [CaptionTranslationUpdate] {
         await translationUpdates(for: store, includingDrafts: false)
     }
 

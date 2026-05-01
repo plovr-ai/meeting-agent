@@ -582,6 +582,32 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
     }
 
+    func testReplayDoesNotScheduleDraftTranslations() async {
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "草稿翻译"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "draft text from replay",
+                language: "en-US",
+                isFinal: false,
+                speechFinal: false
+            )
+        ])
+
+        let snapshot = await pipeline.replay(document)
+
+        XCTAssertTrue(provider.requests.isEmpty)
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.translationHealth, .pending)
+    }
+
     func testRepeatedReplayDoesNotDuplicateInFlightFinalTranslation() async throws {
         let provider = PipelineRecordingTranslationProvider(
             translations: ["segment-1": "最终翻译"],
@@ -619,7 +645,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(secondSnapshot.turns.first?.translationHealth, .pending)
     }
 
-    func testLatestMeetingDeepgramLogReplayDoesNotDuplicateInFlightFinalTranslations() async throws {
+    func testLatestMeetingDeepgramLogReplayDoesNotScheduleSoftDraftTranslations() async throws {
         let rawSegments = try latestMeetingDeepgramStreamingSegments()
         let finalSegments = rawSegments.filter(\.isFinal)
         XCTAssertEqual(rawSegments.count, 57)
@@ -658,8 +684,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         _ = await firstSchedule.value
         _ = await secondSchedule.value
 
-        XCTAssertFalse(provider.requests.isEmpty)
-        XCTAssertEqual(provider.requests.count, Set(provider.requests).count)
+        XCTAssertTrue(provider.requests.isEmpty)
     }
 
     func testResetClearsCaptionStateAndUsesNewLocales() async {
@@ -759,8 +784,8 @@ final class LiveCaptionPipelineTests: XCTestCase {
                 id: "new-segment",
                 text: "new text",
                 language: "en-US",
-                isFinal: false,
-                speechFinal: false
+                isFinal: true,
+                speechFinal: true
             )
         ])
 
