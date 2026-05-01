@@ -639,6 +639,81 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         _ = await firstTask.value
     }
 
+    func testDraftTriggerPolicyLogsTriggeredAndSkippedReasons() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var now = Date(timeIntervalSince1970: 1_000)
+        var firstStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        firstStore.upsert(draftTurn(text: "hello team", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "大家好"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1,
+                followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
+                followUpDraftMaximumWaitNanoseconds: 3_000_000_000,
+                minimumDraftWordDelta: 8,
+                minimumDraftCharacterDelta: 48
+            ),
+            now: { now }
+        )
+
+        for update in await scheduler.liveTranslationUpdates(for: firstStore) {
+            scheduler.apply(update, to: &firstStore)
+        }
+
+        now = now.addingTimeInterval(0.4)
+        var secondStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        secondStore.upsert(draftTurn(text: "hello team now", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let skippedUpdates = await scheduler.liveTranslationUpdates(for: secondStore)
+
+        let events = try readEvents(from: eventsURL)
+        let triggered = try XCTUnwrap(events.first { $0.event == "caption_translation_draft_triggered" })
+        XCTAssertEqual(triggered.metadata["reason"], "initial")
+        XCTAssertEqual(triggered.metadata["wordDelta"], "2")
+        XCTAssertEqual(triggered.metadata["characterDelta"], "10")
+        XCTAssertEqual(triggered.metadata["hasSemanticBoundary"], "false")
+
+        let skipped = try XCTUnwrap(events.first { $0.event == "caption_translation_draft_skipped" })
+        XCTAssertEqual(skipped.metadata["reason"], "min_interval")
+        XCTAssertEqual(skipped.metadata["wordDelta"], "1")
+        XCTAssertEqual(skipped.metadata["characterDelta"], "4")
+        XCTAssertEqual(skipped.metadata["millisecondsSinceLastDraftRequest"], "400")
+        XCTAssertEqual(skipped.metadata["millisecondsSinceLastVisibleDraftTranslation"], "400")
+        XCTAssertTrue(skippedUpdates.isEmpty)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["hello team"])
+    }
+
+    func testHardFinalTranslationBypassesDraftTriggerMinimumInterval() async {
+        var now = Date(timeIntervalSince1970: 1_000)
+        var draftStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        draftStore.upsert(draftTurn(text: "same words", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1,
+                followUpDraftMinimumIntervalNanoseconds: 10_000_000_000
+            ),
+            now: { now }
+        )
+        _ = await scheduler.liveTranslationUpdates(for: draftStore)
+
+        now = now.addingTimeInterval(0.2)
+        var finalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        finalStore.upsert(hardSealedTurn(text: "same words", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let finalUpdates = await scheduler.finalTranslationUpdates(for: finalStore)
+
+        XCTAssertEqual(finalUpdates.count, 1)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["same words", "same words"])
+    }
+
     func testNilProviderLeavesHardSealedTranslationPending() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
