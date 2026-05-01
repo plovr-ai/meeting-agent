@@ -127,6 +127,70 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(logger.entries[1].data, dataPayload)
     }
 
+    func testURLSessionStreamingSessionLogsStructuredDeepgramResponseMetrics() async throws {
+        let task = FakeDeepgramWebSocketTask()
+        let performanceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-raw-response-\(UUID().uuidString)")
+            .appendingPathExtension("jsonl")
+        defer { try? FileManager.default.removeItem(at: performanceURL) }
+        let session = URLSessionDeepgramStreamingSession(
+            task: task,
+            performanceEventLogger: PerformanceEventLogger(url: performanceURL)
+        )
+        let received = TranscriptSegmentCollector()
+        let receiveTask = Task {
+            for await segment in session.segments {
+                await received.append(segment)
+            }
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let payload = """
+        {
+          "type": "Results",
+          "start": 1.25,
+          "duration": 2.5,
+          "is_final": false,
+          "speech_final": true,
+          "channel": {
+            "alternatives": [
+              {
+                "transcript": "hello world",
+                "confidence": 0.8,
+                "words": [
+                  { "word": "hello", "punctuated_word": "hello", "start": 1.25, "end": 1.7, "speaker": 0 },
+                  { "word": "world", "punctuated_word": "world.", "start": 1.7, "end": 2.1, "speaker": 0 }
+                ]
+              }
+            ]
+          },
+          "metadata": { "request_id": "request-1" }
+        }
+        """
+        task.completeReceive(.success(.string(payload)))
+        task.completeReceive(.failure(ProbeError.speechRecognition("closed")))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        await session.close()
+        await receiveTask.value
+
+        let events = try performanceEvents(at: performanceURL)
+        let response = try XCTUnwrap(events.first { $0.event == "deepgram_raw_response_received" })
+        XCTAssertEqual(response.audioTimeSeconds, 3.75)
+        XCTAssertEqual(response.isFinal, false)
+        XCTAssertEqual(response.textLength, 11)
+        XCTAssertEqual(response.metadata["providerID"], "deepgram-transcribe")
+        XCTAssertEqual(response.metadata["transport"], "webSocket")
+        XCTAssertEqual(response.metadata["payloadBytes"], String(Data(payload.utf8).count))
+        XCTAssertEqual(response.metadata["responseType"], "Results")
+        XCTAssertEqual(response.metadata["responseStartSeconds"], "1.25")
+        XCTAssertEqual(response.metadata["responseDurationSeconds"], "2.5")
+        XCTAssertEqual(response.metadata["speechFinal"], "true")
+        XCTAssertEqual(response.metadata["requestID"], "request-1")
+        XCTAssertEqual(response.metadata["firstWordStartSeconds"], "1.25")
+        XCTAssertEqual(response.metadata["lastWordEndSeconds"], "2.1")
+        XCTAssertEqual(response.metadata["wordCount"], "2")
+    }
+
     func testStreamingProviderSendsAudioFramesAndWritesIncomingTranscriptSegments() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-\(UUID().uuidString)")
@@ -189,9 +253,16 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         )
         XCTAssertEqual(document.segments.first?.text, "hello live")
         XCTAssertEqual(document.segments.first?.sourceProvider, "deepgram-transcribe")
-        let performanceEvents = try performanceEventNames(at: performanceURL)
-        XCTAssertTrue(performanceEvents.contains("stt_segment_received"))
-        XCTAssertTrue(performanceEvents.contains("transcript_segment_written"))
+        let eventNames = try performanceEventNames(at: performanceURL)
+        XCTAssertTrue(eventNames.contains("stt_segment_received"))
+        XCTAssertTrue(eventNames.contains("transcript_segment_written"))
+        let audioFrameSent = try XCTUnwrap(try performanceEvents(at: performanceURL)
+            .first { $0.event == "deepgram_audio_frame_sent" })
+        XCTAssertEqual(audioFrameSent.audioTimeSeconds, 2.0 / 48_000.0)
+        XCTAssertEqual(audioFrameSent.metadata["pcmBytes"], "4")
+        XCTAssertEqual(audioFrameSent.metadata["sampleRate"], "48000")
+        XCTAssertEqual(audioFrameSent.metadata["channelCount"], "1")
+        XCTAssertEqual(audioFrameSent.metadata["timestampNanos"], "10")
     }
 
     func testStreamingResponseMapsInterimTranscriptToNonFinalSegment() throws {
@@ -661,7 +732,8 @@ private final class FakeDeepgramStreamingClient: DeepgramStreamingTranscriptionC
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger?
     ) async throws -> DeepgramStreamingTranscriptionSession {
         requests.append(Request(
             apiKey: configuration.apiKey,
@@ -687,9 +759,13 @@ private final class RecordingDeepgramRawResponseLogger: DeepgramRawResponseLogge
 }
 
 private func performanceEventNames(at url: URL) throws -> [String] {
+    try performanceEvents(at: url).map(\.event)
+}
+
+private func performanceEvents(at url: URL) throws -> [PerformanceEvent] {
     try String(contentsOf: url, encoding: .utf8)
         .split(separator: "\n")
-        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)).event }
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
 private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {

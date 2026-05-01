@@ -1,0 +1,125 @@
+import XCTest
+
+final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
+    func testAnalyzeMeetingPerformanceScriptReportsExperienceAndProcessMetrics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-analysis-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try fixtureEvents().write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Experience KPIs"))
+        XCTAssertTrue(result.stdout.contains("TTFLC: 0.90s"))
+        XCTAssertTrue(result.stdout.contains("Caption Lag p50/p95/max: 1.00s / 1.00s / 1.00s"))
+        XCTAssertTrue(result.stdout.contains("TTFT: 2.40s"))
+        XCTAssertTrue(result.stdout.contains("Translation Lag p50/p95/max: 2.30s / 2.30s / 2.30s"))
+        XCTAssertTrue(result.stdout.contains("Caption Stability: 2.00 updates/final caption"))
+        XCTAssertTrue(result.stdout.contains("Translation Success Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Process Metrics"))
+        XCTAssertTrue(result.stdout.contains("First caption path: audio sent -> Deepgram response 0.60s"))
+        XCTAssertTrue(result.stdout.contains("Translation path p50: scheduled -> started 0.20s"))
+    }
+
+    private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["swift", "scripts/analyze-meeting-performance.swift"] + arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        return (
+            process.terminationStatus,
+            String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+            String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        )
+    }
+
+    private func fixtureEvents() -> String {
+        [
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-01T00:00:00Z", audio: 0.1, metadata: [
+                "pcmBytes": "9600",
+                "sampleRate": "48000",
+                "channelCount": "1"
+            ]),
+            event("deepgram_raw_response_received", wallTime: "2026-05-01T00:00:00.600Z", audio: 0.9, isFinal: false, textLength: 5, metadata: [
+                "responseStartSeconds": "0",
+                "responseDurationSeconds": "0.9",
+                "speechFinal": "false"
+            ]),
+            event("stt_segment_received", wallTime: "2026-05-01T00:00:00.700Z", audio: 0.9, segmentID: "segment-1", isFinal: false, textLength: 5),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:00.900Z", audio: 0.9, segmentID: "segment-1", isFinal: false, textLength: 5, metadata: [
+                "turnID": "turn-1"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:01.200Z", audio: 1.2, segmentID: "segment-1", isFinal: false, textLength: 11, metadata: [
+                "turnID": "turn-1"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:02.000Z", audio: 1.0, segmentID: "segment-1", isFinal: true, textLength: 11, metadata: [
+                "turnID": "turn-1"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:02.100Z", segmentID: "turn-1", isFinal: true, textLength: 11, metadata: [
+                "translationRequestID": "translation-1",
+                "translationKind": "final"
+            ]),
+            event("caption_translation_started", wallTime: "2026-05-01T00:00:02.300Z", segmentID: "turn-1", isFinal: true, textLength: 11, metadata: [
+                "translationRequestID": "translation-1",
+                "translationKind": "final"
+            ]),
+            event("caption_translation_finished", wallTime: "2026-05-01T00:00:03.100Z", segmentID: "turn-1", isFinal: true, textLength: 11, metadata: [
+                "translationRequestID": "translation-1",
+                "translationKind": "final"
+            ]),
+            event("caption_translation_attached", wallTime: "2026-05-01T00:00:03.300Z", segmentID: "turn-1", isFinal: true, textLength: 4, metadata: [
+                "translationRequestID": "translation-1",
+                "translationKind": "final",
+                "sourceSegmentID": "segment-1"
+            ])
+        ].joined(separator: "\n") + "\n"
+    }
+
+    private func event(
+        _ name: String,
+        wallTime: String,
+        audio: Double? = nil,
+        segmentID: String? = nil,
+        isFinal: Bool? = nil,
+        textLength: Int? = nil,
+        metadata: [String: String] = [:]
+    ) -> String {
+        var fields: [String] = [
+            #""event":"\#(name)""#,
+            #""wallTime":"\#(wallTime)""#,
+            #""metadata":\#(metadataJSON(metadata))"#
+        ]
+        if let audio {
+            fields.append(#""audioTimeSeconds":\#(audio)"#)
+        }
+        if let segmentID {
+            fields.append(#""segmentID":"\#(segmentID)""#)
+        }
+        if let isFinal {
+            fields.append(#""isFinal":\#(isFinal)"#)
+        }
+        if let textLength {
+            fields.append(#""textLength":\#(textLength)"#)
+        }
+        return "{\(fields.joined(separator: ","))}"
+    }
+
+    private func metadataJSON(_ metadata: [String: String]) -> String {
+        let pairs = metadata
+            .sorted { $0.key < $1.key }
+            .map { #""\#($0.key)":"\#($0.value)""# }
+        return "{\(pairs.joined(separator: ","))}"
+    }
+}

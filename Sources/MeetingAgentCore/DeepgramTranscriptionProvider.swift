@@ -93,7 +93,8 @@ public protocol DeepgramStreamingTranscriptionClient {
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger?
     ) async throws -> DeepgramStreamingTranscriptionSession
 }
 
@@ -175,7 +176,8 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
     public func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger? = nil
     ) async throws -> DeepgramStreamingTranscriptionSession {
         guard case .available(let apiKey, let model) = configuration else {
             throw DeepgramTranscriptionError.unavailable("Deepgram configuration is unavailable")
@@ -201,9 +203,35 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         let task = webSocketFactory(request)
-        let session = URLSessionDeepgramStreamingSession(task: task, rawResponseLogger: rawResponseLogger)
+        let session = URLSessionDeepgramStreamingSession(
+            task: task,
+            rawResponseLogger: rawResponseLogger,
+            performanceEventLogger: performanceEventLogger
+        )
         task.resume()
+        performanceEventLogger?.log(
+            "deepgram_ws_connected",
+            metadata: [
+                "providerID": "deepgram-transcribe",
+                "model": model,
+                "sampleRate": Self.metricString(sampleRate.rounded()),
+                "channelCount": String(max(1, channelCount)),
+                "encoding": "linear16",
+                "interimResults": "true",
+                "endpointingMilliseconds": "500",
+                "smartFormat": "true",
+                "punctuate": "true",
+                "diarize": "true"
+            ]
+        )
         return session
+    }
+
+    private static func metricString(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(value)
     }
 }
 
@@ -219,14 +247,17 @@ extension URLSessionWebSocketTask: DeepgramWebSocketTask {}
 final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private let task: DeepgramWebSocketTask
     private let rawResponseLogger: DeepgramRawResponseLogger
+    private let performanceEventLogger: PerformanceEventLogger?
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
 
     init(
         task: DeepgramWebSocketTask,
-        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger()
+        rawResponseLogger: DeepgramRawResponseLogger = DeepgramEnvironmentRawResponseLogger(),
+        performanceEventLogger: PerformanceEventLogger? = nil
     ) {
         self.task = task
         self.rawResponseLogger = rawResponseLogger
+        self.performanceEventLogger = performanceEventLogger
     }
 
     var segments: AsyncStream<TranscriptSegment> {
@@ -267,6 +298,10 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
 
     private func yieldSegments(from data: Data) {
         rawResponseLogger.logRawResponse(
+            data,
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe", transport: .webSocket)
+        )
+        performanceEventLogger?.logDeepgramRawResponse(
             data,
             context: DeepgramRawResponseContext(providerID: "deepgram-transcribe", transport: .webSocket)
         )
@@ -408,7 +443,8 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
         let session = try await client.connect(
             configuration: configuration,
             sampleRate: context.sampleRate,
-            channelCount: context.channelCount
+            channelCount: context.channelCount,
+            performanceEventLogger: context.performanceEventLogger
         )
         let writer = try TranscriptFileWriter(url: context.transcriptURL)
         return DeepgramStreamingTranscriber(
@@ -447,7 +483,10 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         self.writer = writer
         self.transcriptUpdateSink = transcriptUpdateSink
         self.performanceEventLogger = performanceEventLogger
-        self.sendQueue = DeepgramFrameSendQueue(session: session)
+        self.sendQueue = DeepgramFrameSendQueue(
+            session: session,
+            performanceEventLogger: performanceEventLogger
+        )
         self.sendQueue.onFailure = { [weak self] error in
             self?.recordSendFailure(error)
         }
@@ -523,14 +562,20 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
 private final class DeepgramFrameSendQueue {
     private let session: DeepgramStreamingTranscriptionSession
+    private let performanceEventLogger: PerformanceEventLogger?
     private let lock = NSLock()
     private var frames: [AudioFrame] = []
     private var isSending = false
     private var isFinishing = false
+    private var sentAudioSeconds: Double = 0
     var onFailure: ((Error) -> Void)?
 
-    init(session: DeepgramStreamingTranscriptionSession) {
+    init(
+        session: DeepgramStreamingTranscriptionSession,
+        performanceEventLogger: PerformanceEventLogger? = nil
+    ) {
         self.session = session
+        self.performanceEventLogger = performanceEventLogger
     }
 
     func append(_ frame: AudioFrame) {
@@ -575,6 +620,7 @@ private final class DeepgramFrameSendQueue {
         while let frame = nextFrame() {
             do {
                 try await session.send(frame)
+                logFrameSent(frame)
             } catch {
                 onFailure?(error)
                 clearAfterFailure()
@@ -599,6 +645,41 @@ private final class DeepgramFrameSendQueue {
         isSending = false
         isFinishing = true
         lock.unlock()
+    }
+
+    private func logFrameSent(_ frame: AudioFrame) {
+        let durationSeconds = frameDurationSeconds(frame)
+        lock.lock()
+        sentAudioSeconds += durationSeconds
+        let audioTimeSeconds = sentAudioSeconds
+        let queuedFrameCount = frames.count
+        lock.unlock()
+        performanceEventLogger?.log(
+            "deepgram_audio_frame_sent",
+            audioTimeSeconds: audioTimeSeconds,
+            metadata: [
+                "pcmBytes": String(frame.pcm.count),
+                "sampleRate": Self.metricString(frame.sampleRate),
+                "channelCount": String(frame.channelCount),
+                "timestampNanos": String(frame.timestampNanos),
+                "frameDurationSeconds": String(durationSeconds),
+                "queuedFrameCount": String(queuedFrameCount)
+            ]
+        )
+    }
+
+    private func frameDurationSeconds(_ frame: AudioFrame) -> Double {
+        guard frame.sampleRate > 0, frame.channelCount > 0 else { return 0 }
+        let bytesPerSample = 2
+        let sampleCount = frame.pcm.count / bytesPerSample / frame.channelCount
+        return Double(sampleCount) / frame.sampleRate
+    }
+
+    private static func metricString(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(value)
     }
 }
 
@@ -758,12 +839,18 @@ private struct DeepgramResponse: Decodable {
 }
 
 public struct DeepgramStreamingResponse: Decodable {
+    let type: String?
+    let start: Double?
+    let duration: Double?
     let isFinal: Bool?
     let speechFinal: Bool?
     let metadata: Metadata?
     let channel: Channel?
 
     enum CodingKeys: String, CodingKey {
+        case type
+        case start
+        case duration
         case isFinal = "is_final"
         case speechFinal = "speech_final"
         case metadata
@@ -772,9 +859,11 @@ public struct DeepgramStreamingResponse: Decodable {
 
     struct Metadata: Decodable {
         let detectedLanguage: String?
+        let requestID: String?
 
         enum CodingKeys: String, CodingKey {
             case detectedLanguage = "detected_language"
+            case requestID = "request_id"
         }
     }
 

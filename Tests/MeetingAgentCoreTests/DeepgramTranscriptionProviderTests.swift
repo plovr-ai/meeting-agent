@@ -520,7 +520,8 @@ private final class RecordingDeepgramStreamingClient: DeepgramStreamingTranscrip
     func connect(
         configuration: DeepgramTranscriptionConfiguration,
         sampleRate: Double,
-        channelCount: Int
+        channelCount: Int,
+        performanceEventLogger: PerformanceEventLogger?
     ) async throws -> DeepgramStreamingTranscriptionSession {
         RecordingDeepgramStreamingSession()
     }
