@@ -774,6 +774,102 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(firedEvent?.metadata["latestChangedSegmentID"], "telemetry-draft")
     }
 
+    func testSelectingAnotherMeetingCancelsPendingDraftCaptionInputThrottle() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            draftCaptionInputThrottleNanoseconds: 1_000_000_000,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let secondMeeting = try fixture.store.createMeeting(name: "Second", startedAt: Date()).record
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "switch-throttle",
+            text: "visible draft",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.originalText == "visible draft" }
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "switch-throttle",
+            text: "pending draft after switch",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        viewModel.selectMeeting(secondMeeting.id)
+
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertNotEqual(viewModel.liveCaptionTurns.first?.originalText, "pending draft after switch")
+    }
+
+    func testReplayBypassesDraftCaptionInputThrottle() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "meeting-vm-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(
+            url: XCTUnwrap(record.transcriptURL),
+            structuredURL: XCTUnwrap(record.transcriptJSONURL)
+        )
+        try writer.replace(with: [
+            TranscriptSegment(id: "replay-draft", text: "historical draft", language: "en-US", isFinal: false)
+        ])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            draftCaptionInputThrottleNanoseconds: 1_000_000_000,
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+        await viewModel.waitForLiveCaptionReplayForTesting()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "historical draft")
+    }
+
+    func testDraftCaptionInputThrottleCanBeDisabled() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            draftCaptionInputThrottleNanoseconds: 0,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "disabled-throttle",
+            text: "first draft",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor { viewModel.liveCaptionTurns.first?.originalText == "first draft" }
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "disabled-throttle",
+            text: "second draft immediately visible",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.originalText == "second draft immediately visible"
+        }
+    }
+
     func testDraftCaptionSnapshotsAreDebouncedBeforePublication() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
