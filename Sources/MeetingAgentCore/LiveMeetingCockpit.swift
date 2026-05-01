@@ -67,6 +67,13 @@ public enum LiveCaptionTranslationState: String, Codable, Equatable {
     case final
 }
 
+public enum LiveCaptionTranslationFreshness: String, Codable, Equatable {
+    case fresh
+    case approximate
+    case carried
+    case final
+}
+
 public enum LiveCaptionBoundaryStrength: String, Codable, Equatable {
     case soft
     case hard
@@ -148,6 +155,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
     public var stableOriginalTextPrefix: String
     public var unstableOriginalTextTail: String
     public var translatedText: String?
+    public var translationFreshness: LiveCaptionTranslationFreshness?
+    public var translationSourceText: String?
+    public var translationSourceCreatedAt: Date?
+    public var visibleTranslationUpdatedAt: Date?
     public var sourceLocale: String
     public var targetLocale: String
     public var isFinal: Bool
@@ -171,6 +182,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         stableOriginalTextPrefix: String? = nil,
         unstableOriginalTextTail: String? = nil,
         translatedText: String? = nil,
+        translationFreshness: LiveCaptionTranslationFreshness? = nil,
+        translationSourceText: String? = nil,
+        translationSourceCreatedAt: Date? = nil,
+        visibleTranslationUpdatedAt: Date? = nil,
         sourceLocale: String = "en-US",
         targetLocale: String = "zh-CN",
         isFinal: Bool,
@@ -202,6 +217,13 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
             return String(originalText.dropFirst(resolvedStablePrefix.count))
         }()
         self.translatedText = translatedText
+        self.translationFreshness = translationFreshness ?? Self.defaultTranslationFreshness(
+            translatedText: translatedText,
+            isFinal: isFinal
+        )
+        self.translationSourceText = translationSourceText
+        self.translationSourceCreatedAt = translationSourceCreatedAt
+        self.visibleTranslationUpdatedAt = visibleTranslationUpdatedAt
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         self.isFinal = isFinal
@@ -231,6 +253,10 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         case stableOriginalTextPrefix
         case unstableOriginalTextTail
         case translatedText
+        case translationFreshness
+        case translationSourceText
+        case translationSourceCreatedAt
+        case visibleTranslationUpdatedAt
         case sourceLocale
         case targetLocale
         case isFinal
@@ -265,6 +291,11 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
             unstableOriginalTextTail = String(originalText.dropFirst(resolvedStablePrefix.count))
         }
         translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
+        translationFreshness = try container.decodeIfPresent(LiveCaptionTranslationFreshness.self, forKey: .translationFreshness)
+            ?? Self.defaultTranslationFreshness(translatedText: translatedText, isFinal: isFinal)
+        translationSourceText = try container.decodeIfPresent(String.self, forKey: .translationSourceText)
+        translationSourceCreatedAt = try container.decodeIfPresent(Date.self, forKey: .translationSourceCreatedAt)
+        visibleTranslationUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .visibleTranslationUpdatedAt)
         sourceLocale = try container.decode(String.self, forKey: .sourceLocale)
         targetLocale = try container.decode(String.self, forKey: .targetLocale)
         captionHealth = try container.decode(LivePipelineHealth.self, forKey: .captionHealth)
@@ -288,6 +319,16 @@ public struct LiveCaptionTurn: Codable, Equatable, Identifiable {
         translationState = resolvedTranslationState
         boundaryReason = decodedBoundaryReason
         boundaryStrength = decodedBoundaryStrength
+    }
+
+    private static func defaultTranslationFreshness(
+        translatedText: String?,
+        isFinal: Bool
+    ) -> LiveCaptionTranslationFreshness? {
+        guard translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        return isFinal ? .final : .fresh
     }
 }
 
@@ -431,6 +472,10 @@ public struct LiveCaptionStore: Equatable {
             var updated = turn
             if previousTurn.originalText == turn.originalText {
                 updated.translatedText = previousTurn.translatedText
+                updated.translationFreshness = previousTurn.translationFreshness
+                updated.translationSourceText = previousTurn.translationSourceText
+                updated.translationSourceCreatedAt = previousTurn.translationSourceCreatedAt
+                updated.visibleTranslationUpdatedAt = previousTurn.visibleTranslationUpdatedAt
                 updated.translationHealth = previousTurn.translationHealth
                 updated.translationRevision = previousTurn.translationRevision
             } else {
@@ -439,6 +484,10 @@ public struct LiveCaptionStore: Equatable {
                    let translatedText = previousTurn.translatedText,
                    !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     updated.translatedText = translatedText
+                    updated.translationFreshness = .carried
+                    updated.translationSourceText = previousTurn.translationSourceText
+                    updated.translationSourceCreatedAt = previousTurn.translationSourceCreatedAt
+                    updated.visibleTranslationUpdatedAt = previousTurn.visibleTranslationUpdatedAt
                 }
                 updated.translationRevision = previousTurn.translationRevision + 1
             }
@@ -465,6 +514,10 @@ public struct LiveCaptionStore: Equatable {
             if !((previous.translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
                updated.translatedText == nil {
                 updated.translatedText = previous.translatedText
+                updated.translationFreshness = .carried
+                updated.translationSourceText = previous.translationSourceText
+                updated.translationSourceCreatedAt = previous.translationSourceCreatedAt
+                updated.visibleTranslationUpdatedAt = previous.visibleTranslationUpdatedAt
             }
             turns[index] = updated
             return updated
@@ -683,6 +736,10 @@ public struct LiveCaptionStore: Equatable {
             speaker: lastSegment.speaker,
             originalText: originalText,
             translatedText: textChanged ? nil : previous.translatedText,
+            translationFreshness: textChanged ? nil : previous.translationFreshness,
+            translationSourceText: textChanged ? nil : previous.translationSourceText,
+            translationSourceCreatedAt: textChanged ? nil : previous.translationSourceCreatedAt,
+            visibleTranslationUpdatedAt: textChanged ? nil : previous.visibleTranslationUpdatedAt,
             sourceLocale: lastSegment.language ?? sourceLocale,
             targetLocale: targetLocale,
             isFinal: allSegmentsFinal,
@@ -789,9 +846,20 @@ public struct LiveCaptionStore: Equatable {
         return remaining <= 0 ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    public mutating func attachTranslation(_ text: String, toTurnID turnID: String) {
+    public mutating func attachTranslation(
+        _ text: String,
+        toTurnID turnID: String,
+        freshness: LiveCaptionTranslationFreshness = .fresh,
+        sourceText: String? = nil,
+        sourceCreatedAt: Date? = nil,
+        visibleUpdatedAt: Date = Date()
+    ) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        turns[index].translationFreshness = freshness
+        turns[index].translationSourceText = sourceText
+        turns[index].translationSourceCreatedAt = sourceCreatedAt
+        turns[index].visibleTranslationUpdatedAt = visibleUpdatedAt
         turns[index].translationHealth = .live
     }
 
@@ -803,12 +871,18 @@ public struct LiveCaptionStore: Equatable {
     public mutating func appendTranslation(_ text: String, toTurnID turnID: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = joinedTranscriptText(turns[index].translatedText ?? "", text)
+        turns[index].translationFreshness = .fresh
+        turns[index].visibleTranslationUpdatedAt = Date()
         turns[index].translationHealth = .live
     }
 
     public mutating func markTranslationCompleteWithoutText(forTurnID turnID: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translatedText = nil
+        turns[index].translationFreshness = nil
+        turns[index].translationSourceText = nil
+        turns[index].translationSourceCreatedAt = nil
+        turns[index].visibleTranslationUpdatedAt = nil
         turns[index].translationHealth = .live
     }
 
@@ -820,6 +894,9 @@ public struct LiveCaptionStore: Equatable {
     public mutating func markTranslationFinal(forTurnID turnID: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnID }) else { return }
         turns[index].translationState = .final
+        if turns[index].translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            turns[index].translationFreshness = .final
+        }
     }
 
     public mutating func reset(sourceLocale: String, targetLocale: String) {

@@ -736,4 +736,52 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(updated.stableOriginalTextPrefix, "select German and hear the customer")
         XCTAssertEqual(updated.unstableOriginalTextTail, "")
     }
+
+    func testDraftTranslationCarriesForwardWhenDraftTextChanges() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We should review the rollout plan",
+            isFinal: false,
+            chunkState: .draft
+        ))
+        store.attachTranslation(
+            "我们应该审查发布计划",
+            toTurnID: "segment-1",
+            freshness: .approximate,
+            sourceText: "We should review the rollout plan",
+            sourceCreatedAt: Date(timeIntervalSince1970: 10)
+        )
+
+        let updated = store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We should review the rollout plan today",
+            isFinal: false,
+            chunkState: .draft
+        ))
+
+        XCTAssertEqual(updated.translatedText, "我们应该审查发布计划")
+        XCTAssertEqual(updated.translationFreshness, .carried)
+        XCTAssertEqual(updated.translationSourceText, "We should review the rollout plan")
+    }
+
+    func testFinalTranslationMarksFreshnessFinal() {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "Final words",
+            isFinal: true
+        ))
+
+        store.attachTranslation(
+            "最终内容",
+            toTurnID: "segment-1",
+            freshness: .fresh,
+            sourceText: "Final words"
+        )
+        store.markTranslationFinal(forTurnID: "segment-1")
+
+        XCTAssertEqual(store.turns.first?.translationFreshness, .final)
+        XCTAssertEqual(store.turns.first?.translationState, .final)
+    }
 }
