@@ -129,6 +129,7 @@ public final class CaptionTranslationScheduler {
                 return .none
             }
             store.attachTranslation(text, toTurnID: update.turnID)
+            markDraftTranslationVisible(forTurnID: update.turnID)
             if let request = update.request {
                 logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
             }
@@ -193,6 +194,7 @@ public final class CaptionTranslationScheduler {
             }
             logCancelled(request, reason: "superseded_by_final")
             activeRequestsByKey.removeValue(forKey: request.key)
+            markDraftRequestFinished(forTurnID: request.turn.id)
         }
     }
 
@@ -226,11 +228,6 @@ public final class CaptionTranslationScheduler {
             cancelDraftsSuperseded(by: [turn])
             pendingDraftTokensByTurnID[turn.id] = nil
         }
-        guard !requestedFinalTranslationKeys.contains(key) else {
-            logSkipped(turn: turn, key: key, isFinalTranslation: isFinalTranslation, reason: "duplicate_key")
-            return nil
-        }
-        requestedFinalTranslationKeys.insert(key)
         let requestID = "caption-translation-\(UUID().uuidString)"
         let requestOrdinal = nextRequestOrdinal(forTurnID: turn.id)
         let attachmentTarget = CaptionTranslationAttachmentTarget(turn: turn, sourceText: sourceText)
@@ -246,7 +243,6 @@ public final class CaptionTranslationScheduler {
             providerID: provider.descriptor.id,
             configuration: configuration
         )
-        activeRequestsByKey[key] = request
         if request.isDraft,
            configuration.draftDebounceNanoseconds > 0 {
             let token = UUID()
@@ -259,9 +255,7 @@ public final class CaptionTranslationScheduler {
                 metadata: translationMetadata(for: request)
             )
             try? await Task.sleep(nanoseconds: configuration.draftDebounceNanoseconds)
-            guard pendingDraftTokensByTurnID[turn.id] == token,
-                  activeRequestsByKey[key] != nil
-            else {
+            guard pendingDraftTokensByTurnID[turn.id] == token else {
                 return nil
             }
             pendingDraftTokensByTurnID[turn.id] = nil
@@ -273,7 +267,40 @@ public final class CaptionTranslationScheduler {
                 metadata: translationMetadata(for: request)
             )
         }
-        let metadata = translationMetadata(for: request)
+        var draftDecisionMetadata: [String: String] = [:]
+        if request.isDraft {
+            let decision = draftTriggerDecision(for: turn, sourceText: sourceText)
+            switch decision {
+            case .trigger(let reason, let metadata):
+                draftDecisionMetadata = metadata
+                performanceEventLogger?.log(
+                    "caption_translation_draft_triggered",
+                    segmentID: turn.id,
+                    isFinal: false,
+                    textLength: turn.originalText.count,
+                    metadata: metadata.merging(["reason": reason]) { current, _ in current }
+                )
+            case .skip(let reason, let metadata):
+                performanceEventLogger?.log(
+                    "caption_translation_draft_skipped",
+                    segmentID: turn.id,
+                    isFinal: false,
+                    textLength: turn.originalText.count,
+                    metadata: metadata.merging(["reason": reason]) { current, _ in current }
+                )
+                return nil
+            }
+        }
+        guard !requestedFinalTranslationKeys.contains(key) else {
+            logSkipped(turn: turn, key: key, isFinalTranslation: isFinalTranslation, reason: "duplicate_key")
+            return nil
+        }
+        requestedFinalTranslationKeys.insert(key)
+        activeRequestsByKey[key] = request
+        if request.isDraft {
+            markDraftRequestStarted(forTurnID: turn.id)
+        }
+        let metadata = translationMetadata(for: request, extra: request.isDraft ? draftDecisionMetadata : [:])
         performanceEventLogger?.log(
             "caption_translation_scheduled",
             segmentID: turn.id,
@@ -353,6 +380,9 @@ public final class CaptionTranslationScheduler {
         }
         for update in updates {
             activeRequestsByKey.removeValue(forKey: update.key)
+            if let request = update.request, request.isDraft {
+                markDraftRequestFinished(forTurnID: request.turn.id)
+            }
         }
         return immediateUpdates + updates
     }
@@ -685,6 +715,24 @@ public final class CaptionTranslationScheduler {
             && draftTranslationKey(for: current) == update.key
     }
 
+    private func markDraftRequestStarted(forTurnID turnID: String) {
+        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
+        state.isInFlight = true
+        draftTriggerStatesByTurnID[turnID] = state
+    }
+
+    private func markDraftRequestFinished(forTurnID turnID: String) {
+        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
+        state.isInFlight = false
+        draftTriggerStatesByTurnID[turnID] = state
+    }
+
+    private func markDraftTranslationVisible(forTurnID turnID: String) {
+        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
+        state.lastVisibleTranslationAt = now()
+        draftTriggerStatesByTurnID[turnID] = state
+    }
+
     private func draftTriggerDecision(for turn: LiveCaptionTurn, sourceText: String) -> DraftTranslationTriggerDecision {
         var state = draftTriggerStatesByTurnID[turn.id, default: DraftTranslationTriggerState()]
         let currentWordCount = wordCount(in: sourceText)
@@ -716,7 +764,6 @@ public final class CaptionTranslationScheduler {
             state.lastRequestedWordCount = currentWordCount
             state.lastRequestedCharacterCount = currentCharacterCount
             state.lastRequestAt = currentTime
-            state.isInFlight = true
             draftTriggerStatesByTurnID[turn.id] = state
             return .trigger(reason: "initial", metadata: metadata)
         }
@@ -751,7 +798,6 @@ public final class CaptionTranslationScheduler {
         state.lastRequestedWordCount = currentWordCount
         state.lastRequestedCharacterCount = currentCharacterCount
         state.lastRequestAt = currentTime
-        state.isInFlight = true
         draftTriggerStatesByTurnID[turn.id] = state
         return .trigger(reason: reason, metadata: metadata)
     }
