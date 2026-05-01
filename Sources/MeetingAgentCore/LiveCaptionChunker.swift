@@ -4,15 +4,27 @@ public struct LiveCaptionChunkingPolicy: Equatable {
     public var maxCharacters: Int
     public var maxDurationSeconds: Double
     public var minPunctuationCharacters: Int
+    public var readableCharacterLimit: Int
+    public var shortFragmentCharacters: Int
+    public var maxMergeGapSeconds: Double
+    public var minSentenceBoundaryCharacters: Int
 
     public init(
         maxCharacters: Int = 240,
         maxDurationSeconds: Double = 10,
-        minPunctuationCharacters: Int = 80
+        minPunctuationCharacters: Int = 80,
+        readableCharacterLimit: Int = 140,
+        shortFragmentCharacters: Int = 24,
+        maxMergeGapSeconds: Double = 1.25,
+        minSentenceBoundaryCharacters: Int = 36
     ) {
         self.maxCharacters = maxCharacters
         self.maxDurationSeconds = maxDurationSeconds
         self.minPunctuationCharacters = minPunctuationCharacters
+        self.readableCharacterLimit = readableCharacterLimit
+        self.shortFragmentCharacters = shortFragmentCharacters
+        self.maxMergeGapSeconds = maxMergeGapSeconds
+        self.minSentenceBoundaryCharacters = minSentenceBoundaryCharacters
     }
 }
 
@@ -117,10 +129,12 @@ public struct LiveCaptionChunker: Equatable {
                 return OpenChunk(
                     turn: draft,
                     startTimeSeconds: startTimeSeconds,
-                    endTimeSeconds: endTimeSeconds
+                    endTimeSeconds: endTimeSeconds,
+                    previousEndTimeSeconds: openChunk.previousEndTimeSeconds
                 )
             }
 
+            let previousEndTimeSeconds = openChunk.endTimeSeconds
             let draft = LiveCaptionTurn(
                 id: openChunk.turn.id,
                 sourceSegmentID: segment.id,
@@ -145,7 +159,8 @@ public struct LiveCaptionChunker: Equatable {
             return OpenChunk(
                 turn: draft,
                 startTimeSeconds: [openChunk.startTimeSeconds, segment.startTimeSeconds].compactMap { $0 }.min(),
-                endTimeSeconds: [openChunk.endTimeSeconds, segment.endTimeSeconds].compactMap { $0 }.max()
+                endTimeSeconds: [openChunk.endTimeSeconds, segment.endTimeSeconds].compactMap { $0 }.max(),
+                previousEndTimeSeconds: previousEndTimeSeconds
             )
         }
 
@@ -170,7 +185,8 @@ public struct LiveCaptionChunker: Equatable {
         return OpenChunk(
             turn: draft,
             startTimeSeconds: segment.startTimeSeconds,
-            endTimeSeconds: segment.endTimeSeconds
+            endTimeSeconds: segment.endTimeSeconds,
+            previousEndTimeSeconds: nil
         )
     }
 
@@ -178,12 +194,17 @@ public struct LiveCaptionChunker: Equatable {
         if latestSegment.speechFinal { return .speechFinal }
         if chunk.turn.originalText.count >= policy.maxCharacters { return .maxLength }
         if durationSeconds(for: chunk) >= policy.maxDurationSeconds,
-           hasStrongPunctuation(chunk.turn.originalText) {
+           hasSentenceEndingPunctuation(chunk.turn.originalText) {
             return .maxDuration
         }
-        if chunk.turn.originalText.count >= policy.minPunctuationCharacters,
-           hasStrongPunctuation(chunk.turn.originalText) {
+        if chunk.turn.originalText.count >= sentenceBoundaryCharacterLimit(for: chunk.turn.originalText),
+           hasSentenceEndingPunctuation(chunk.turn.originalText),
+           !shouldKeepMergingShortFragment(chunk, latestSegment: latestSegment) {
             return .punctuation
+        }
+        if chunk.turn.originalText.count >= policy.readableCharacterLimit,
+           !shouldKeepMergingShortFragment(chunk, latestSegment: latestSegment) {
+            return .maxLength
         }
         return nil
     }
@@ -195,6 +216,37 @@ public struct LiveCaptionChunker: Equatable {
             return 0
         }
         return max(0, end - start)
+    }
+
+    private func shouldKeepMergingShortFragment(_ chunk: OpenChunk, latestSegment: TranscriptSegment) -> Bool {
+        guard chunk.turn.sourceSegmentIDs.count > 1 else { return false }
+        let latestText = latestSegment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard latestText.count <= policy.shortFragmentCharacters else {
+            return false
+        }
+        guard let previousEnd = chunk.previousEndTimeSeconds,
+              let latestStart = latestSegment.startTimeSeconds
+        else {
+            return false
+        }
+        return max(0, latestStart - previousEnd) <= policy.maxMergeGapSeconds
+    }
+
+    private func sentenceBoundaryCharacterLimit(for text: String) -> Int {
+        let configuredLimit = min(policy.minPunctuationCharacters, policy.minSentenceBoundaryCharacters)
+        if containsCJKCharacter(text) {
+            return max(12, configuredLimit / 2)
+        }
+        return configuredLimit
+    }
+
+    private func containsCJKCharacter(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            let value = Int(scalar.value)
+            return (0x4E00...0x9FFF).contains(value)
+                || (0x3040...0x30FF).contains(value)
+                || (0xAC00...0xD7AF).contains(value)
+        }
     }
 
     private func frozen(_ turn: LiveCaptionTurn, reason: LiveCaptionFreezeReason) -> LiveCaptionTurn {
@@ -230,7 +282,7 @@ public struct LiveCaptionChunker: Equatable {
         return "\(first) \(second)"
     }
 
-    private func hasStrongPunctuation(_ text: String) -> Bool {
+    private func hasSentenceEndingPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         for marker in [".", "!", "?", "。", "！", "？"] where trimmed.contains(marker) {
             return true
@@ -242,5 +294,6 @@ public struct LiveCaptionChunker: Equatable {
         var turn: LiveCaptionTurn
         var startTimeSeconds: Double?
         var endTimeSeconds: Double?
+        var previousEndTimeSeconds: Double?
     }
 }

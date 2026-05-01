@@ -23,7 +23,7 @@ Issue #122 asks for bilingual subtitle chunks that read naturally instead of mir
 
 Enhance `LiveCaptionChunkingPolicy` and `LiveCaptionChunker` directly. The existing chunker already owns open-caption state, speaker-change detection, timing windows, punctuation checks, and freeze reasons, so the smallest reliable change is to make those heuristics more expressive there.
 
-The chunker will keep hard boundaries for speaker changes and provider `speechFinal` segments. It will treat sentence-ending punctuation as a soft boundary when the caption has reached a readable minimum length. It will continue merging short same-speaker fragments while their timing gap is close and the combined text remains below the readable length limit. Long captions will freeze with `.maxLength`, preserving existing boundary observability.
+The chunker will keep hard boundaries for speaker changes and provider `speechFinal` segments. It will treat sentence-ending punctuation as a soft boundary when the caption has reached a readable minimum length, including provider chunks that contain a complete sentence followed by more same-speaker text. It will continue merging short same-speaker fragments while their timing gap is close and the combined text remains below the readable length limit. Long captions will freeze with `.maxLength`, preserving existing boundary observability.
 
 ## Policy Shape
 
@@ -43,7 +43,7 @@ The existing `maxCharacters`, `maxDurationSeconds`, and `minPunctuationCharacter
 3. If the latest segment is `speechFinal`, freeze the merged turn with `.speechFinal` and `.hard`.
 4. If the merged turn reaches `maxCharacters`, freeze with `.maxLength`.
 5. If the merged turn exceeds the readable character limit, freeze with `.maxLength` after emitting the draft update.
-6. If the merged turn ends with sentence-ending punctuation and meets the sentence-boundary minimum, freeze with `.punctuation` and `.soft`.
+6. If the merged turn contains sentence-ending punctuation and meets the sentence-boundary minimum, freeze with `.punctuation` and `.soft`.
 7. If duration exceeds `maxDurationSeconds` and the turn has terminal sentence punctuation, freeze with `.maxDuration`.
 8. Otherwise keep the turn open so nearby same-speaker fragments can merge.
 
