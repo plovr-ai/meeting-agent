@@ -8,6 +8,10 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
     public var minimumDraftWordDelta: Int
     public var minimumDraftCharacterDelta: Int
     public var semanticBoundaryCharacters: Set<Character>
+    public var minimumApproximateDraftCharacters: Int
+    public var minimumApproximateDraftWords: Int
+    public var maximumApproximateDraftAgeNanoseconds: UInt64
+    public var approximateDraftSimilarityThreshold: Double
 
     public init(
         draftDebounceNanoseconds: UInt64 = 200_000_000,
@@ -16,7 +20,11 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
         followUpDraftMaximumWaitNanoseconds: UInt64 = 3_000_000_000,
         minimumDraftWordDelta: Int = 8,
         minimumDraftCharacterDelta: Int = 48,
-        semanticBoundaryCharacters: Set<Character> = Set(".?!,;:。？！、，；：\n")
+        semanticBoundaryCharacters: Set<Character> = Set(".?!,;:。？！、，；：\n"),
+        minimumApproximateDraftCharacters: Int = 24,
+        minimumApproximateDraftWords: Int = 5,
+        maximumApproximateDraftAgeNanoseconds: UInt64 = 6_000_000_000,
+        approximateDraftSimilarityThreshold: Double = 0.75
     ) {
         self.draftDebounceNanoseconds = draftDebounceNanoseconds
         self.maxConcurrentTranslationRequests = max(1, maxConcurrentTranslationRequests)
@@ -25,6 +33,10 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
         self.minimumDraftWordDelta = max(1, minimumDraftWordDelta)
         self.minimumDraftCharacterDelta = max(1, minimumDraftCharacterDelta)
         self.semanticBoundaryCharacters = semanticBoundaryCharacters
+        self.minimumApproximateDraftCharacters = max(1, minimumApproximateDraftCharacters)
+        self.minimumApproximateDraftWords = max(1, minimumApproximateDraftWords)
+        self.maximumApproximateDraftAgeNanoseconds = maximumApproximateDraftAgeNanoseconds
+        self.approximateDraftSimilarityThreshold = approximateDraftSimilarityThreshold
     }
 }
 
@@ -119,23 +131,50 @@ public final class CaptionTranslationScheduler {
             store.markTranslationCompleteWithoutText(forTurnID: update.turnID)
             return .none
         case .draftText(let text):
-            guard let current = store.turns.first(where: { $0.id == update.turnID }),
-                  isCurrentDraftUpdate(update, current: current)
-            else {
-                if let request = update.request,
-                   let current = store.turns.first(where: { $0.id == update.turnID }) {
-                    logStale(update: update, request: request, current: current)
-                }
+            guard let current = store.turns.first(where: { $0.id == update.turnID }) else {
                 return .none
             }
-            store.attachTranslation(text, toTurnID: update.turnID)
-            markDraftTranslationVisible(forTurnID: update.turnID)
-            if let request = update.request {
-                logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
+            if isCurrentDraftUpdate(update, current: current) {
+                store.attachTranslation(
+                    text,
+                    toTurnID: update.turnID,
+                    freshness: .fresh,
+                    sourceText: current.originalText,
+                    sourceCreatedAt: current.createdAt,
+                    visibleUpdatedAt: now()
+                )
+                markDraftTranslationVisible(forTurnID: update.turnID)
+                if let request = update.request {
+                    logExactAttached(request: request, current: current, textLength: text.count)
+                    logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
+                }
+                let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: current.originalText)
+                _ = persistTranslation?(target, text, false)
+                return .attached(turnID: current.id)
             }
-            let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: current.originalText)
-            _ = persistTranslation?(target, text, false)
-            return .attached(turnID: current.id)
+            guard let request = update.request else {
+                return .none
+            }
+            if let decision = approximateDraftAttachDecision(request: request, current: current) {
+                store.attachTranslation(
+                    text,
+                    toTurnID: update.turnID,
+                    freshness: .approximate,
+                    sourceText: request.sourceText,
+                    sourceCreatedAt: request.turn.createdAt,
+                    visibleUpdatedAt: now()
+                )
+                markDraftTranslationVisible(forTurnID: update.turnID)
+                logApproximateAttached(request: request, current: current, textLength: text.count, decision: decision)
+                logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
+                let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: request.sourceText)
+                _ = persistTranslation?(target, text, false)
+                return .attached(turnID: current.id)
+            } else {
+                logHiddenStale(update: update, request: request, current: current)
+                logStale(update: update, request: request, current: current)
+                return .none
+            }
         case .finalText(let text):
             guard let request = update.request, !request.isDraft else {
                 return .none
@@ -600,6 +639,101 @@ public final class CaptionTranslationScheduler {
         logCount("caption_translation_completed_count", request: request)
     }
 
+    private func logExactAttached(
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn,
+        textLength: Int
+    ) {
+        performanceEventLogger?.log(
+            "caption_translation_exact_attached",
+            segmentID: current.id,
+            isFinal: false,
+            textLength: textLength,
+            metadata: translationMetadata(
+                for: request,
+                extra: draftVisibilityMetadata(
+                    request: request,
+                    current: current,
+                    decision: "exact_attach",
+                    freshness: "fresh"
+                )
+            )
+        )
+    }
+
+    private func logApproximateAttached(
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn,
+        textLength: Int,
+        decision: ApproximateDraftAttachDecision
+    ) {
+        performanceEventLogger?.log(
+            "caption_translation_approximate_attached",
+            segmentID: current.id,
+            isFinal: false,
+            textLength: textLength,
+            metadata: translationMetadata(
+                for: request,
+                extra: draftVisibilityMetadata(
+                    request: request,
+                    current: current,
+                    decision: "approximate_attach",
+                    freshness: "approximate",
+                    similarity: decision.similarity
+                )
+            )
+        )
+    }
+
+    private func logHiddenStale(
+        update: CaptionTranslationUpdate,
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn
+    ) {
+        performanceEventLogger?.log(
+            "caption_translation_hidden_stale",
+            segmentID: update.turnID,
+            isFinal: false,
+            textLength: request.turn.originalText.count,
+            metadata: translationMetadata(
+                for: request,
+                extra: draftVisibilityMetadata(
+                    request: request,
+                    current: current,
+                    decision: "hidden_stale",
+                    freshness: "none",
+                    rejectReason: approximateDraftAttachRejectReason(request: request, current: current)
+                )
+            )
+        )
+    }
+
+    private func draftVisibilityMetadata(
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn,
+        decision: String,
+        freshness: String,
+        similarity: Double? = nil,
+        rejectReason: String? = nil
+    ) -> [String: String] {
+        let sourceWords = wordCount(in: request.sourceText)
+        let currentWords = wordCount(in: current.originalText)
+        var metadata: [String: String] = [
+            "translationFreshness": freshness,
+            "currentTextLength": String(current.originalText.count),
+            "sourceLagCharacters": String(max(0, current.originalText.count - request.sourceText.count)),
+            "sourceLagWords": String(max(0, currentWords - sourceWords)),
+            "sourceLagMilliseconds": String(milliseconds(from: request.turn.createdAt, to: current.createdAt)),
+            "attachDecision": decision,
+            "visibleTranslationAgeMilliseconds": String(milliseconds(from: request.turn.createdAt, to: now()))
+        ]
+        metadata["sourceSimilarity"] = String(format: "%.3f", similarity ?? draftSourceSimilarity(request.sourceText, current.originalText))
+        if let rejectReason {
+            metadata["attachRejectReason"] = rejectReason
+        }
+        return metadata
+    }
+
     private func translationMetadata(
         for request: ActiveCaptionTranslationRequest,
         extra: [String: String] = [:]
@@ -713,6 +847,62 @@ public final class CaptionTranslationScheduler {
         return request.isDraft
             && current.translationHealth == .pending
             && draftTranslationKey(for: current) == update.key
+    }
+
+    private func approximateDraftAttachDecision(
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn
+    ) -> ApproximateDraftAttachDecision? {
+        guard approximateDraftAttachRejectReason(request: request, current: current) == nil else {
+            return nil
+        }
+        return ApproximateDraftAttachDecision(similarity: draftSourceSimilarity(request.sourceText, current.originalText))
+    }
+
+    private func approximateDraftAttachRejectReason(
+        request: ActiveCaptionTranslationRequest,
+        current: LiveCaptionTurn
+    ) -> String? {
+        guard request.isDraft else { return "not_draft" }
+        guard current.id == request.turn.id else { return "different_turn" }
+        guard current.sourceLocale == request.turn.sourceLocale,
+              current.targetLocale == request.turn.targetLocale
+        else {
+            return "locale_changed"
+        }
+        guard !(current.displayState == .sealed && current.boundaryStrength == .hard) else {
+            return "hard_final"
+        }
+        let requestWordCount = wordCount(in: request.sourceText)
+        guard request.sourceText.count >= configuration.minimumApproximateDraftCharacters
+                || requestWordCount >= configuration.minimumApproximateDraftWords
+        else {
+            return "source_too_short"
+        }
+        guard nanoseconds(from: request.turn.createdAt, to: now()) <= configuration.maximumApproximateDraftAgeNanoseconds else {
+            return "result_too_old"
+        }
+        let normalizedRequest = normalizedTranslationSourceText(request.sourceText)
+        let normalizedCurrent = normalizedTranslationSourceText(current.originalText)
+        if normalizedCurrent.hasPrefix(normalizedRequest) {
+            return nil
+        }
+        let similarity = draftSourceSimilarity(normalizedRequest, normalizedCurrent)
+        guard similarity >= configuration.approximateDraftSimilarityThreshold else {
+            return "low_similarity"
+        }
+        return nil
+    }
+
+    private func draftSourceSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        let lhsTokens = Set(normalizedTranslationSourceText(lhs).split(separator: " ").map(String.init))
+        let rhsTokens = Set(normalizedTranslationSourceText(rhs).split(separator: " ").map(String.init))
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else {
+            return normalizedTranslationSourceText(lhs) == normalizedTranslationSourceText(rhs) ? 1 : 0
+        }
+        let intersection = lhsTokens.intersection(rhsTokens).count
+        let union = lhsTokens.union(rhsTokens).count
+        return Double(intersection) / Double(union)
     }
 
     private func markDraftRequestStarted(forTurnID turnID: String) {
@@ -937,6 +1127,10 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
     var queueDepth: Int?
     var inFlightCount: Int?
+}
+
+private struct ApproximateDraftAttachDecision: Equatable {
+    var similarity: Double
 }
 
 private struct DraftTranslationTriggerState: Equatable {

@@ -950,6 +950,59 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(updates.first?.result, .finalText("translated"))
     }
 
+    func testDraftTranslationApproximateAttachesForStablePrefix() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let scheduler = CaptionTranslationScheduler(
+            provider: RecordingTextTranslationProvider(translations: ["segment-1": "我们应该审查发布计划"]),
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1),
+            now: { Date(timeIntervalSince1970: 12) }
+        )
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(draftTurn(text: "We should review the rollout plan", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let updates = await scheduler.liveTranslationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        currentStore.upsert(draftTurn(text: "We should review the rollout plan today", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let outcome = scheduler.apply(update, to: &currentStore)
+
+        XCTAssertEqual(outcome, .attached(turnID: "segment-1"))
+        XCTAssertEqual(currentStore.turns.first?.translatedText, "我们应该审查发布计划")
+        XCTAssertEqual(currentStore.turns.first?.translationFreshness, .approximate)
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_approximate_attached" })
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_hidden_stale" })
+    }
+
+    func testDraftTranslationHiddenStaleForUnrelatedCurrentText() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let scheduler = CaptionTranslationScheduler(
+            provider: RecordingTextTranslationProvider(translations: ["segment-1": "旧翻译"]),
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+        )
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(draftTurn(text: "We should review the rollout plan", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let updates = await scheduler.liveTranslationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        currentStore.upsert(draftTurn(text: "Completely different speaker content", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let outcome = scheduler.apply(update, to: &currentStore)
+
+        XCTAssertEqual(outcome, .none)
+        XCTAssertNil(currentStore.turns.first?.translatedText)
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_hidden_stale" })
+    }
+
     private func hardSealedTurn(
         id: String = "segment-1",
         text: String = "hello",
