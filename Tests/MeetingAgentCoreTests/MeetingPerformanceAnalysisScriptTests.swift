@@ -25,9 +25,39 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Final Visible Attach Rate: 100.0%"))
         XCTAssertTrue(result.stdout.contains("Final Persist-Only Rate: 0.0%"))
         XCTAssertTrue(result.stdout.contains("Final True Failure Rate: 0.0%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Trigger Rate: unavailable"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Skip Rate: unavailable"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation In-Flight Skip Count: 0"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Semantic Boundary Trigger Count: 0"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Max-Wait Trigger Count: 0"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Stale Rate: unavailable"))
+        XCTAssertTrue(result.stdout.contains("Time to First Draft Translation: unavailable"))
+        XCTAssertTrue(result.stdout.contains("Draft Visible Update Interval p50/p95: unavailable"))
         XCTAssertTrue(result.stdout.contains("Process Metrics"))
         XCTAssertTrue(result.stdout.contains("First caption path: audio sent -> Deepgram response 0.60s"))
         XCTAssertTrue(result.stdout.contains("Translation path p50: scheduled -> started 0.20s"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptReportsDraftTriggerMetrics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-draft-trigger-analysis-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try draftTriggerFixtureEvents().write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Draft Translation Success Rate: 66.7%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Trigger Rate: 75.0%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Skip Rate: 25.0%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation In-Flight Skip Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Semantic Boundary Trigger Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Max-Wait Trigger Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Stale Rate: 33.3%"))
+        XCTAssertTrue(result.stdout.contains("Time to First Draft Translation: 1.50s"))
+        XCTAssertTrue(result.stdout.contains("Draft Visible Update Interval p50/p95: 3.00s / 3.00s"))
     }
 
     func testFinalPersistedTranslationCountsAsFinalSuccess() throws {
@@ -156,6 +186,64 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
                 ]
             )
         }.joined(separator: "\n") + "\n"
+    }
+
+    private func draftTriggerFixtureEvents() -> String {
+        [
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-01T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:00.500Z", segmentID: "segment-1", isFinal: false, textLength: 10, metadata: [
+                "turnID": "turn-1"
+            ]),
+            event("caption_translation_draft_triggered", wallTime: "2026-05-01T00:00:01.000Z", segmentID: "turn-1", isFinal: false, textLength: 10, metadata: [
+                "reason": "initial",
+                "wordDelta": "2",
+                "characterDelta": "10",
+                "hasSemanticBoundary": "false"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:01.100Z", segmentID: "turn-1", isFinal: false, textLength: 10, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-1"
+            ]),
+            event("caption_translation_attached", wallTime: "2026-05-01T00:00:02.000Z", segmentID: "turn-1", isFinal: false, textLength: 4, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-1"
+            ]),
+            event("caption_translation_draft_triggered", wallTime: "2026-05-01T00:00:03.000Z", segmentID: "turn-1", isFinal: false, textLength: 20, metadata: [
+                "reason": "semantic_boundary",
+                "wordDelta": "3",
+                "characterDelta": "10",
+                "hasSemanticBoundary": "true"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:03.100Z", segmentID: "turn-1", isFinal: false, textLength: 20, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-2"
+            ]),
+            event("caption_translation_stale", wallTime: "2026-05-01T00:00:04.000Z", segmentID: "turn-1", isFinal: false, textLength: 20, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-2",
+                "reason": "draft_no_longer_current"
+            ]),
+            event("caption_translation_draft_skipped", wallTime: "2026-05-01T00:00:04.200Z", segmentID: "turn-1", isFinal: false, textLength: 22, metadata: [
+                "reason": "in_flight",
+                "wordDelta": "1",
+                "characterDelta": "2",
+                "hasSemanticBoundary": "false"
+            ]),
+            event("caption_translation_draft_triggered", wallTime: "2026-05-01T00:00:04.800Z", segmentID: "turn-1", isFinal: false, textLength: 24, metadata: [
+                "reason": "max_wait",
+                "wordDelta": "1",
+                "characterDelta": "4",
+                "hasSemanticBoundary": "false"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:04.900Z", segmentID: "turn-1", isFinal: false, textLength: 24, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-3"
+            ]),
+            event("caption_translation_attached", wallTime: "2026-05-01T00:00:05.000Z", segmentID: "turn-1", isFinal: false, textLength: 5, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-draft-3"
+            ])
+        ].joined(separator: "\n") + "\n"
     }
 
     private func event(

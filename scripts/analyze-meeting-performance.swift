@@ -132,6 +132,14 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Final Visible Attach Rate: \(format(percent: finalVisibleAttachRate()))")
         lines.append("Final Persist-Only Rate: \(format(percent: finalPersistOnlyRate()))")
         lines.append("Final True Failure Rate: \(format(percent: finalTrueFailureRate()))")
+        lines.append("Draft Translation Trigger Rate: \(format(percent: draftTranslationTriggerRate()))")
+        lines.append("Draft Translation Skip Rate: \(format(percent: draftTranslationSkipRate()))")
+        lines.append("Draft Translation In-Flight Skip Count: \(draftTranslationSkipCount(reason: "in_flight"))")
+        lines.append("Draft Translation Semantic Boundary Trigger Count: \(draftTranslationTriggerCount(reason: "semantic_boundary"))")
+        lines.append("Draft Translation Max-Wait Trigger Count: \(draftTranslationTriggerCount(reason: "max_wait"))")
+        lines.append("Draft Translation Stale Rate: \(format(percent: draftTranslationStaleRate()))")
+        lines.append("Time to First Draft Translation: \(format(duration: timeToFirstDraftTranslation()))")
+        lines.append("Draft Visible Update Interval p50/p95: \(formatP50P95(stats: draftVisibleUpdateIntervalStats()))")
         lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
@@ -308,6 +316,58 @@ struct MeetingPerformanceAnalyzer {
         return Double(staleFailures + providerFailures) / Double(scheduled) * 100
     }
 
+    private func draftTranslationTriggerRate() -> Double? {
+        let triggered = draftTriggerEvents.count
+        let skipped = draftSkipEvents.count
+        guard triggered + skipped > 0 else { return nil }
+        return Double(triggered) / Double(triggered + skipped) * 100
+    }
+
+    private func draftTranslationSkipRate() -> Double? {
+        let triggered = draftTriggerEvents.count
+        let skipped = draftSkipEvents.count
+        guard triggered + skipped > 0 else { return nil }
+        return Double(skipped) / Double(triggered + skipped) * 100
+    }
+
+    private func draftTranslationTriggerCount(reason: String) -> Int {
+        draftTriggerEvents.filter { $0.metadata["reason"] == reason }.count
+    }
+
+    private func draftTranslationSkipCount(reason: String) -> Int {
+        draftSkipEvents.filter { $0.metadata["reason"] == reason }.count
+    }
+
+    private func draftTranslationStaleRate() -> Double? {
+        let scheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == "draft" }
+            .count
+        guard scheduled > 0 else { return nil }
+        let stale = translationEvents("caption_translation_stale")
+            .filter { $0.metadata["translationKind"] == "draft" }
+            .count
+        return Double(stale) / Double(scheduled) * 100
+    }
+
+    private func timeToFirstDraftTranslation() -> Double? {
+        guard let firstDraftCaption = events.first(where: { $0.event == "caption_turn_visible" && $0.isFinal == false })?.wallTime,
+              let firstDraftAttached = draftAttachedEvents.first?.wallTime else {
+            return nil
+        }
+        return max(0, firstDraftAttached.timeIntervalSince(firstDraftCaption))
+    }
+
+    private func draftVisibleUpdateIntervalStats() -> Stats {
+        let attached = draftAttachedEvents.sorted { $0.wallTime < $1.wallTime }
+        guard attached.count >= 2 else {
+            return Stats(values: [])
+        }
+        let values = zip(attached, attached.dropFirst()).map { previous, current in
+            max(0, current.wallTime.timeIntervalSince(previous.wallTime))
+        }
+        return Stats(values: values)
+    }
+
     private func firstCaptionPathText() -> String {
         guard let audio = firstAudioSent else {
             return "unavailable"
@@ -366,6 +426,19 @@ struct MeetingPerformanceAnalyzer {
         events.filter { $0.event == name }
     }
 
+    private var draftTriggerEvents: [PerformanceEvent] {
+        translationEvents("caption_translation_draft_triggered")
+    }
+
+    private var draftSkipEvents: [PerformanceEvent] {
+        translationEvents("caption_translation_draft_skipped")
+    }
+
+    private var draftAttachedEvents: [PerformanceEvent] {
+        translationEvents("caption_translation_attached")
+            .filter { $0.metadata["translationKind"] == "draft" }
+    }
+
     private func diagnosticLines() -> [String] {
         var lines: [String] = []
         if !batchOrFlushCaptionEvents.isEmpty {
@@ -402,6 +475,11 @@ struct MeetingPerformanceAnalyzer {
     private func format(stats: Stats) -> String {
         guard stats.count > 0 else { return "unavailable" }
         return "\(format(duration: stats.percentile(50))) / \(format(duration: stats.percentile(95))) / \(format(duration: stats.max))"
+    }
+
+    private func formatP50P95(stats: Stats) -> String {
+        guard stats.count > 0 else { return "unavailable" }
+        return "\(format(duration: stats.percentile(50))) / \(format(duration: stats.percentile(95)))"
     }
 
     private func format(duration: Double?) -> String {

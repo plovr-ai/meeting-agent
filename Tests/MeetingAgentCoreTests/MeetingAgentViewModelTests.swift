@@ -1360,6 +1360,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         ])
         provider.translations = ["segment-2": "第一部分和第二部分"]
 
+        try await Task.sleep(nanoseconds: 1_600_000_000)
         viewModel.drainRecordingFrames()
         try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第一部分和第二部分" }
 
@@ -1407,6 +1408,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 speechFinal: false
             )
         ])
+        try await Task.sleep(nanoseconds: 1_600_000_000)
         viewModel.drainRecordingFrames()
         try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第二版" }
 
@@ -1785,7 +1787,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.requests.count, 1)
     }
 
-    func testOlderDraftTranslationDoesNotOverwriteNewerDraft() async throws {
+    func testInFlightDraftTranslationDoesNotOverwriteNewerDraftText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -1811,12 +1813,19 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "second draft adds enough detail about owners timelines risks and next steps to refresh the draft translation", language: "en-US")
         ])
         viewModel.drainRecordingFrames()
-        try await waitFor { provider.pendingRequestCount == 2 }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(provider.pendingRequestCount, 1)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, nil)
 
-        provider.completeRequest(at: 1, targetText: "newer translation")
-        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "newer translation" }
         provider.completeRequest(at: 0, targetText: "older translation")
         try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertNil(viewModel.liveCaptionTurns.first?.translatedText)
+
+        try await Task.sleep(nanoseconds: 1_600_000_000)
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 2 }
+        provider.completeRequest(at: 1, targetText: "newer translation")
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "newer translation" }
 
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "newer translation")
     }

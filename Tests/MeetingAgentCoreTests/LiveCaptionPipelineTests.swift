@@ -582,13 +582,16 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
     }
 
-    func testReplayDoesNotScheduleDraftTranslations() async {
+    func testReplayDoesNotScheduleDraftTranslations() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
         let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "草稿翻译"])
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
             translationProvider: provider,
-            performanceEventLogger: nil
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
         )
         let document = TranscriptDocument(segments: [
             TranscriptSegment(
@@ -606,6 +609,11 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertTrue(provider.requests.isEmpty)
         XCTAssertNil(snapshot.turns.first?.translatedText)
         XCTAssertEqual(snapshot.translationHealth, .pending)
+        let events = FileManager.default.fileExists(atPath: eventsURL.path)
+            ? try readPipelineEvents(from: eventsURL)
+            : []
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_draft_triggered" })
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_draft_skipped" })
     }
 
     func testRepeatedReplayDoesNotDuplicateInFlightFinalTranslation() async throws {
@@ -893,6 +901,42 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .sealed)
         XCTAssertEqual(snapshot.turns.first?.boundaryReason, .manualStop)
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
+    }
+
+    func testFlushDoesNotScheduleAdditionalDraftTriggerDecisions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let provider = PipelineRecordingTranslationProvider(translations: ["segment-1": "草稿"])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "Open caption draft",
+                    language: "en-US",
+                    isFinal: false,
+                    speechFinal: false
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let beforeFlushDraftDecisionCount = try readPipelineEvents(from: eventsURL)
+            .filter { $0.event == "caption_translation_draft_triggered" || $0.event == "caption_translation_draft_skipped" }
+            .count
+
+        _ = await pipeline.flush(reason: .manualStop)
+
+        let afterFlushDraftDecisionCount = try readPipelineEvents(from: eventsURL)
+            .filter { $0.event == "caption_translation_draft_triggered" || $0.event == "caption_translation_draft_skipped" }
+            .count
+        XCTAssertEqual(afterFlushDraftDecisionCount, beforeFlushDraftDecisionCount)
     }
 
     func testReplayFinalReplacementAfterInterimRequestsFinalTranslation() async {
