@@ -1100,7 +1100,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
     }
 
-    func testStaleFinalTranslationLogsStaleOutcome() async throws {
+    func testFinalTranslationCompletionAfterReplayStateChangeDoesNotLogNoLongerCurrentStale() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -1142,13 +1142,18 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await waitFor {
             let events = (try? readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))) ?? []
             return events.contains { event in
-                event.event == "caption_translation_stale"
+                event.event == "caption_translation_attached"
                     && event.segmentID == "segment-1"
                     && event.metadata["translationKind"] == "final"
-                    && event.metadata["reason"] == "final_no_longer_current"
                     && event.metadata["translationRequestID"] != nil
             }
         }
+        let events = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+        XCTAssertFalse(events.contains {
+            $0.event == "caption_translation_stale"
+                && $0.metadata["translationKind"] == "final"
+                && $0.metadata["reason"] == "final_no_longer_current"
+        })
     }
 
     func testDrainRecordingFramesSkipsCaptionTranslationWhenSourceAndTargetLanguagesMatch() async throws {

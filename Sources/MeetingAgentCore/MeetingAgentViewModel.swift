@@ -1008,7 +1008,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
             guard liveCaptionReplaySequence == sequence else { return }
-            let snapshot = await liveCaptionPipeline.schedulePendingTranslations()
+            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
             guard liveCaptionReplaySequence == sequence else { return }
             publishLiveCaptionPipelineSnapshot(snapshot)
         }

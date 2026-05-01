@@ -44,4 +44,45 @@ final class PerformanceEventLoggerTests: XCTestCase {
 
         XCTAssertEqual(metadata["durationMilliseconds"], "124")
     }
+
+    func testDeepgramRawResponseLogsWordTimingMetadataWhenResponseHasNoTopLevelTiming() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("performance-events-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("performance-events.jsonl")
+        let logger = PerformanceEventLogger(url: url)
+        let payload = Data(#"""
+        {
+          "type": "Results",
+          "is_final": false,
+          "speech_final": false,
+          "channel": {
+            "alternatives": [
+              {
+                "transcript": "hello world",
+                "confidence": 0.99,
+                "words": [
+                  {"word": "hello", "start": 1.1, "end": 1.4, "confidence": 0.9},
+                  {"word": "world", "start": 1.4, "end": 1.9, "confidence": 0.9}
+                ]
+              }
+            ]
+          }
+        }
+        """#.utf8)
+
+        logger.logDeepgramRawResponse(
+            payload,
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe-stream", transport: .webSocket)
+        )
+
+        let line = try XCTUnwrap(String(contentsOf: url, encoding: .utf8).split(separator: "\n").first)
+        let event = try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data(line.utf8))
+        XCTAssertEqual(event.event, "deepgram_raw_response_received")
+        XCTAssertEqual(event.audioTimeSeconds, 1.9)
+        XCTAssertEqual(event.textLength, 11)
+        XCTAssertEqual(event.metadata["firstWordStartSeconds"], "1.1")
+        XCTAssertEqual(event.metadata["lastWordEndSeconds"], "1.9")
+        XCTAssertEqual(event.metadata["wordCount"], "2")
+        XCTAssertEqual(event.metadata["transport"], "webSocket")
+    }
 }
