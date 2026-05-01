@@ -683,7 +683,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )))
         viewModel.drainRecordingFrames()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "final text")
+        try await waitFor { viewModel.liveCaptionTurns.first?.originalText == "final text" }
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
 
         try await Task.sleep(nanoseconds: 150_000_000)
