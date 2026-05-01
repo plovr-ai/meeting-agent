@@ -132,6 +132,43 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertFalse(visible.metadata.values.contains("Sensitive customer launch detail"))
     }
 
+    func testApplyLogsCarriedForwardTranslationWhenDraftTextChanges() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "segment-1": "我们应该审查发布计划"
+        ])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan", language: "en-US", isFinal: false)
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan today", language: "en-US", isFinal: false)
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        let events = try readPipelineEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_carried_forward"
+                && $0.segmentID == "segment-1"
+                && $0.metadata["translationFreshness"] == "carried"
+        })
+    }
+
     func testApplySameIDInterimUpdatePreservesMergedTurn() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",

@@ -233,6 +233,43 @@ public final class LiveCaptionPipeline {
             textLength: sourceSegment.text.count,
             metadata: metadata
         )
+        if turn.translationFreshness == .carried,
+           turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            performanceEventLogger?.log(
+                "caption_translation_carried_forward",
+                audioTimeSeconds: sourceSegment.endTimeSeconds,
+                segmentID: turn.id,
+                isFinal: false,
+                textLength: turn.translatedText?.count,
+                metadata: carriedTranslationMetadata(for: turn)
+            )
+        }
+    }
+
+    private func carriedTranslationMetadata(for turn: LiveCaptionTurn) -> [String: String] {
+        var metadata: [String: String] = [
+            "turnID": turn.id,
+            "sourceSegmentID": turn.sourceSegmentID,
+            "sourceSegmentIDs": turn.sourceSegmentIDs.joined(separator: ","),
+            "sourceLocale": turn.sourceLocale,
+            "targetLocale": turn.targetLocale,
+            "translationKind": "draft",
+            "translationFreshness": "carried",
+            "currentTextLength": String(turn.originalText.count),
+            "sourceTextLength": String(turn.translationSourceText?.count ?? 0),
+            "sourceLagCharacters": String(max(0, turn.originalText.count - (turn.translationSourceText?.count ?? 0)))
+        ]
+        if let sourceText = turn.translationSourceText {
+            metadata["sourceLagWords"] = String(max(0, wordCount(in: turn.originalText) - wordCount(in: sourceText)))
+        }
+        if let sourceCreatedAt = turn.translationSourceCreatedAt {
+            metadata["sourceLagMilliseconds"] = String(max(0, Int(turn.createdAt.timeIntervalSince(sourceCreatedAt) * 1_000)))
+        }
+        return metadata
+    }
+
+    private func wordCount(in text: String) -> Int {
+        text.split { $0.isWhitespace || $0.isNewline }.count
     }
 
     private func captionMetadata(for turn: LiveCaptionTurn, sourceSegment: TranscriptSegment) -> [String: String] {
