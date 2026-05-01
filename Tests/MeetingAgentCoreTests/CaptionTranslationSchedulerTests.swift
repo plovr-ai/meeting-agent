@@ -108,6 +108,99 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(store.turns.first?.translationState, .final)
     }
 
+    func testFinalTranslationKeyIgnoresMutableLiveTurnState() async throws {
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(hardSealedTurn(text: "confirm the launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+        )
+
+        let updates = await scheduler.translationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        var changedTurn = hardSealedTurn(text: "confirm the launch owner", sourceLocale: "en-US", targetLocale: "zh-CN")
+        changedTurn.displayState = .sealed
+        changedTurn.boundaryStrength = .soft
+        changedTurn.boundaryReason = .punctuation
+        changedTurn.translationRevision = 42
+        var changedStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        changedStore.upsert(changedTurn)
+
+        let outcome = scheduler.apply(update, to: &changedStore)
+
+        XCTAssertTrue(outcome.publishedVisibleText)
+        XCTAssertEqual(changedStore.turns.first?.translatedText, "确认上线负责人")
+        XCTAssertEqual(changedStore.turns.first?.translationState, .final)
+    }
+
+    func testFinalTranslationRebindsWhenOriginalTurnWasMerged() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(hardSealedTurn(id: "segment-1", text: "confirm launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+        )
+
+        let updates = await scheduler.translationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        var merged = hardSealedTurn(id: "segment-2", text: "confirm launch owner and timeline", sourceLocale: "en-US", targetLocale: "zh-CN")
+        merged.id = "merged-turn"
+        merged.sourceSegmentID = "segment-2"
+        merged.sourceSegmentIDs = ["segment-1", "segment-2"]
+        currentStore.upsert(merged)
+
+        let outcome = scheduler.apply(update, to: &currentStore)
+
+        XCTAssertEqual(outcome, .rebound(originalTurnID: "segment-1", reboundTurnID: "merged-turn"))
+        XCTAssertEqual(currentStore.turns.first?.translatedText, "确认上线负责人")
+        XCTAssertEqual(currentStore.turns.first?.translationState, .final)
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_rebound" && $0.metadata["translationKind"] == "final" })
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_attached" && $0.segmentID == "merged-turn" })
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_stale" && $0.metadata["reason"] == "final_no_longer_current" })
+    }
+
+    func testFinalTranslationPersistsWhenLiveTurnNoLongerExists() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        originalStore.upsert(hardSealedTurn(id: "segment-1", text: "confirm launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
+        var persisted: [(segmentID: String, text: String, targetLocale: String, isFinal: Bool)] = []
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            persistTranslation: { target, text, isFinal in
+                persisted.append((target.primarySourceSegmentID, text, target.targetLocale, isFinal))
+                return true
+            },
+            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+        )
+
+        let updates = await scheduler.translationUpdates(for: originalStore)
+        let update = try XCTUnwrap(updates.first)
+        var emptyStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let outcome = scheduler.apply(update, to: &emptyStore)
+
+        XCTAssertEqual(outcome, .persisted(segmentID: "segment-1"))
+        XCTAssertEqual(persisted.first?.segmentID, "segment-1")
+        XCTAssertEqual(persisted.first?.text, "确认上线负责人")
+        XCTAssertEqual(persisted.first?.targetLocale, "zh-CN")
+        XCTAssertEqual(persisted.first?.isFinal, true)
+        let events = try readEvents(from: eventsURL)
+        XCTAssertTrue(events.contains { $0.event == "caption_translation_persisted" && $0.metadata["translationKind"] == "final" })
+        XCTAssertFalse(events.contains { $0.event == "caption_translation_stale" && $0.metadata["reason"] == "final_no_longer_current" })
+    }
+
     func testHardSealedTurnMarksFailureWithNSErrorStyleMessage() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))

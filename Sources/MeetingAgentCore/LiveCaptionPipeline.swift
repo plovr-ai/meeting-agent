@@ -22,7 +22,7 @@ public final class LiveCaptionPipeline {
     private var targetLocale: String
     private let translationProvider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
-    private let persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)?
+    private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
     private var translationScheduler: CaptionTranslationScheduler
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
@@ -35,7 +35,7 @@ public final class LiveCaptionPipeline {
         targetLocale: String,
         translationProvider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
-        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil
+        persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil
     ) {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
@@ -345,8 +345,8 @@ public final class LiveCaptionPipeline {
             return
         }
         for update in updates {
-            let attachedVisibleText = translationScheduler.apply(update, to: &store)
-            if attachedVisibleText {
+            let outcome = translationScheduler.apply(update, to: &store)
+            if outcome.publishedVisibleText {
                 logCaptionSnapshotPublished(for: update, publishedAt: Date())
             }
         }

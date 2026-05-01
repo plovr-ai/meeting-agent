@@ -831,7 +831,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         configuration: SpeechTranscriptionConfiguration,
         translationProvider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger? = nil,
-        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil
+        persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil
     ) -> LiveCaptionPipeline {
         LiveCaptionPipeline(
             sourceLocale: configuration.localeIdentifier,
@@ -851,25 +851,30 @@ public final class MeetingAgentViewModel: ObservableObject {
             configuration: speechConfiguration,
             translationProvider: translationProvider,
             performanceEventLogger: currentPerformanceEventLogger(),
-            persistTranslation: { [weak self] turn, translatedText, isFinal in
+            persistTranslation: { [weak self] target, translatedText, isFinal in
                 if let self, self.activeMeetingID == self.selectedMeetingID {
                     if (try? self.recorder.updateActiveTranscriptTranslation(
-                        segmentID: turn.sourceSegmentID,
+                        segmentID: target.primarySourceSegmentID,
                         text: translatedText,
-                        targetLocale: turn.targetLocale,
+                        targetLocale: target.targetLocale,
                         isFinal: isFinal
                     )) == true {
-                        return
+                        return true
                     }
                 }
-                try? TranscriptFileWriter.updateSegmentTranslation(
-                    segmentID: turn.sourceSegmentID,
-                    text: translatedText,
-                    targetLocale: turn.targetLocale,
-                    isFinal: isFinal,
-                    textURL: textURL,
-                    structuredURL: structuredURL
-                )
+                do {
+                    try TranscriptFileWriter.updateSegmentTranslation(
+                        segmentID: target.primarySourceSegmentID,
+                        text: translatedText,
+                        targetLocale: target.targetLocale,
+                        isFinal: isFinal,
+                        textURL: textURL,
+                        structuredURL: structuredURL
+                    )
+                    return true
+                } catch {
+                    return false
+                }
             }
         )
     }

@@ -17,7 +17,7 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
 public final class CaptionTranslationScheduler {
     private let provider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
-    private let persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)?
+    private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
     private let configuration: CaptionTranslationSchedulerConfiguration
     private var requestedFinalTranslationKeys: Set<String> = []
     private var activeRequestsByKey: [String: ActiveCaptionTranslationRequest] = [:]
@@ -27,7 +27,7 @@ public final class CaptionTranslationScheduler {
     public init(
         provider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
-        persistTranslation: ((LiveCaptionTurn, String, Bool) -> Void)? = nil,
+        persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
         configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
     ) {
         self.provider = provider
@@ -87,44 +87,56 @@ public final class CaptionTranslationScheduler {
     }
 
     @discardableResult
-    func apply(_ update: CaptionTranslationUpdate, to store: inout LiveCaptionStore) -> Bool {
-        guard let current = store.turns.first(where: { $0.id == update.turnID }) else {
-            return false
-        }
-        let currentIsFinalTranslation = update.request.map { !$0.isDraft }
-            ?? (current.displayState == .sealed && current.boundaryStrength == .hard)
-        let currentKey = translationKey(for: current, isFinalTranslation: currentIsFinalTranslation)
-        guard current.translationHealth == .pending,
-              currentKey == update.key
-        else {
-            if let request = update.request {
-                logStale(update: update, request: request, current: current)
-            }
-            return false
-        }
-
+    func apply(_ update: CaptionTranslationUpdate, to store: inout LiveCaptionStore) -> CaptionTranslationApplyOutcome {
         switch update.result {
         case .completeWithoutText:
+            guard store.turns.contains(where: { $0.id == update.turnID }) else {
+                return .none
+            }
             store.markTranslationCompleteWithoutText(forTurnID: update.turnID)
-            return false
+            return .none
         case .draftText(let text):
+            guard let current = store.turns.first(where: { $0.id == update.turnID }),
+                  isCurrentDraftUpdate(update, current: current)
+            else {
+                if let request = update.request,
+                   let current = store.turns.first(where: { $0.id == update.turnID }) {
+                    logStale(update: update, request: request, current: current)
+                }
+                return .none
+            }
             store.attachTranslation(text, toTurnID: update.turnID)
             if let request = update.request {
-                logAttached(request: request, textLength: text.count)
+                logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
             }
-            persistTranslation?(current, text, false)
-            return true
+            let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: current.originalText)
+            _ = persistTranslation?(target, text, false)
+            return .attached(turnID: current.id)
         case .finalText(let text):
-            store.attachTranslation(text, toTurnID: update.turnID)
-            store.markTranslationFinal(forTurnID: update.turnID)
-            if let request = update.request {
-                logAttached(request: request, textLength: text.count)
+            guard let request = update.request, !request.isDraft else {
+                return .none
             }
-            persistTranslation?(current, text, true)
-            return true
+            guard let targetTurn = currentTurnForFinalRequest(request, in: store) else {
+                return persistFinalTranslation(text, request: request)
+            }
+            let wasRebound = targetTurn.id != request.turn.id
+            store.attachTranslation(text, toTurnID: targetTurn.id)
+            store.markTranslationFinal(forTurnID: targetTurn.id)
+            if wasRebound {
+                logRebound(request: request, reboundTurnID: targetTurn.id, textLength: text.count)
+            }
+            logAttached(request: request, attachedTurnID: targetTurn.id, textLength: text.count)
+            let target = request.attachmentTarget ?? CaptionTranslationAttachmentTarget(turn: targetTurn, sourceText: targetTurn.originalText)
+            _ = persistTranslation?(target, text, true)
+            return wasRebound
+                ? .rebound(originalTurnID: request.turn.id, reboundTurnID: targetTurn.id)
+                : .attached(turnID: targetTurn.id)
         case .failed(let message):
+            guard store.turns.contains(where: { $0.id == update.turnID }) else {
+                return .none
+            }
             store.markTranslationFailed(forTurnID: update.turnID, message: message)
-            return false
+            return .none
         }
     }
 
@@ -134,8 +146,11 @@ public final class CaptionTranslationScheduler {
         else {
             return
         }
-        let currentIsFinalTranslation = !request.isDraft
-        let currentKey = translationKey(for: current, isFinalTranslation: currentIsFinalTranslation)
+        let currentKey = translationKey(
+            for: current,
+            isFinalTranslation: !request.isDraft,
+            sourceText: request.sourceText
+        )
         guard current.translationHealth != .pending || currentKey != update.key else {
             return
         }
@@ -164,7 +179,8 @@ public final class CaptionTranslationScheduler {
         includingDrafts: Bool
     ) async -> CaptionTranslationExecution? {
         let isFinalTranslation = turn.displayState == .sealed && turn.boundaryStrength == .hard
-        let key = translationKey(for: turn, isFinalTranslation: isFinalTranslation)
+        let sourceText = translationSourceText(for: turn, in: store, final: isFinalTranslation)
+        let key = translationKey(for: turn, isFinalTranslation: isFinalTranslation, sourceText: sourceText)
         let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
         if options.isSameLanguage {
             logSkipped(turn: turn, key: key, isFinalTranslation: isFinalTranslation, reason: "same_language")
@@ -193,8 +209,8 @@ public final class CaptionTranslationScheduler {
         }
         requestedFinalTranslationKeys.insert(key)
         let requestID = "caption-translation-\(UUID().uuidString)"
-        let sourceText = translationSourceText(for: turn, in: store, final: isFinalTranslation)
         let requestOrdinal = nextRequestOrdinal(forTurnID: turn.id)
+        let attachmentTarget = CaptionTranslationAttachmentTarget(turn: turn, sourceText: sourceText)
         let request = ActiveCaptionTranslationRequest(
             id: requestID,
             turn: turn,
@@ -203,6 +219,7 @@ public final class CaptionTranslationScheduler {
             revision: turn.translationRevision,
             requestOrdinalForTurn: requestOrdinal,
             sourceText: sourceText,
+            attachmentTarget: isFinalTranslation ? attachmentTarget : nil,
             providerID: provider.descriptor.id,
             configuration: configuration
         )
@@ -408,19 +425,48 @@ public final class CaptionTranslationScheduler {
         return try await task.value
     }
 
-    private func translationKey(for turn: LiveCaptionTurn, isFinalTranslation: Bool) -> String {
+    private func translationKey(
+        for turn: LiveCaptionTurn,
+        isFinalTranslation: Bool,
+        sourceText: String? = nil
+    ) -> String {
+        if isFinalTranslation {
+            return finalTranslationKey(for: turn, sourceText: sourceText ?? turn.originalText)
+        }
+        return draftTranslationKey(for: turn)
+    }
+
+    private func finalTranslationKey(for turn: LiveCaptionTurn, sourceText: String) -> String {
+        [
+            "final",
+            turn.sourceSegmentIDs.joined(separator: ","),
+            normalizedTranslationSourceText(sourceText),
+            turn.sourceLocale,
+            turn.targetLocale
+        ].joined(separator: "\u{1F}")
+    }
+
+    private func draftTranslationKey(for turn: LiveCaptionTurn) -> String {
         [
             turn.id,
             turn.sourceSegmentIDs.joined(separator: ","),
             turn.originalText,
             turn.sourceLocale,
             turn.targetLocale,
-            isFinalTranslation ? "final" : "draft",
+            "draft",
             turn.displayState.rawValue,
             turn.boundaryStrength.map(String.init(describing:)) ?? "",
             turn.boundaryReason?.rawValue ?? "",
             String(turn.translationRevision)
         ].joined(separator: "\u{1F}")
+    }
+
+    private func normalizedTranslationSourceText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func translationSourceText(for turn: LiveCaptionTurn, in store: LiveCaptionStore, final: Bool) -> String {
@@ -476,10 +522,24 @@ public final class CaptionTranslationScheduler {
         logCount("caption_translation_stale_count", request: request, extra: ["reason": reason])
     }
 
-    private func logAttached(request: ActiveCaptionTranslationRequest, textLength: Int) {
+    private func logRebound(request: ActiveCaptionTranslationRequest, reboundTurnID: String, textLength: Int) {
+        performanceEventLogger?.log(
+            "caption_translation_rebound",
+            segmentID: reboundTurnID,
+            isFinal: true,
+            textLength: textLength,
+            metadata: translationMetadata(for: request, extra: ["reboundTurnID": reboundTurnID])
+        )
+    }
+
+    private func logAttached(
+        request: ActiveCaptionTranslationRequest,
+        attachedTurnID: String? = nil,
+        textLength: Int
+    ) {
         performanceEventLogger?.log(
             "caption_translation_attached",
-            segmentID: request.turn.id,
+            segmentID: attachedTurnID ?? request.turn.id,
             isFinal: !request.isDraft,
             textLength: textLength,
             metadata: translationMetadata(for: request)
@@ -572,6 +632,68 @@ public final class CaptionTranslationScheduler {
         requestOrdinalsByTurnID[turnID] = next
         return next
     }
+
+    private func currentTurnForFinalRequest(
+        _ request: ActiveCaptionTranslationRequest,
+        in store: LiveCaptionStore
+    ) -> LiveCaptionTurn? {
+        guard let target = request.attachmentTarget else {
+            return store.turns.first(where: { $0.id == request.turn.id })
+        }
+        let targetIDs = Set(target.sourceSegmentIDs)
+        if let original = store.turns.first(where: { $0.id == target.originalTurnID }),
+           targetIDs.isSubset(of: Set(original.sourceSegmentIDs)),
+           original.targetLocale == target.targetLocale {
+            return original
+        }
+        return store.turns.first { turn in
+            targetIDs.isSubset(of: Set(turn.sourceSegmentIDs))
+                && turn.targetLocale == target.targetLocale
+        }
+    }
+
+    private func isCurrentDraftUpdate(
+        _ update: CaptionTranslationUpdate,
+        current: LiveCaptionTurn
+    ) -> Bool {
+        guard let request = update.request else { return false }
+        return request.isDraft
+            && current.translationHealth == .pending
+            && draftTranslationKey(for: current) == update.key
+    }
+
+    private func persistFinalTranslation(
+        _ text: String,
+        request: ActiveCaptionTranslationRequest
+    ) -> CaptionTranslationApplyOutcome {
+        guard let target = request.attachmentTarget,
+              let persistTranslation,
+              persistTranslation(target, text, true)
+        else {
+            logStaleWithoutCurrent(request: request, reason: "source_segment_deleted")
+            return .none
+        }
+        performanceEventLogger?.log(
+            "caption_translation_persisted",
+            segmentID: target.primarySourceSegmentID,
+            isFinal: true,
+            textLength: text.count,
+            metadata: translationMetadata(for: request)
+        )
+        logCount("caption_translation_completed_count", request: request)
+        return .persisted(segmentID: target.primarySourceSegmentID)
+    }
+
+    private func logStaleWithoutCurrent(request: ActiveCaptionTranslationRequest, reason: String) {
+        performanceEventLogger?.log(
+            "caption_translation_stale",
+            segmentID: request.attachmentTarget?.primarySourceSegmentID ?? request.turn.id,
+            isFinal: !request.isDraft,
+            textLength: request.turn.originalText.count,
+            metadata: translationMetadata(for: request, extra: ["reason": reason])
+        )
+        logCount("caption_translation_stale_count", request: request, extra: ["reason": reason])
+    }
 }
 
 private func stableHash(_ value: String) -> String {
@@ -583,6 +705,66 @@ private func stableHash(_ value: String) -> String {
     return String(hash, radix: 16)
 }
 
+public struct CaptionTranslationAttachmentTarget: Equatable {
+    public var originalTurnID: String
+    public var primarySourceSegmentID: String
+    public var sourceSegmentIDs: [String]
+    public var sourceText: String
+    public var speaker: TranscriptSpeaker?
+    public var sourceLocale: String
+    public var targetLocale: String
+    public var createdAt: Date
+
+    public init(
+        originalTurnID: String,
+        primarySourceSegmentID: String,
+        sourceSegmentIDs: [String],
+        sourceText: String,
+        speaker: TranscriptSpeaker?,
+        sourceLocale: String,
+        targetLocale: String,
+        createdAt: Date
+    ) {
+        self.originalTurnID = originalTurnID
+        self.primarySourceSegmentID = primarySourceSegmentID
+        self.sourceSegmentIDs = sourceSegmentIDs
+        self.sourceText = sourceText
+        self.speaker = speaker
+        self.sourceLocale = sourceLocale
+        self.targetLocale = targetLocale
+        self.createdAt = createdAt
+    }
+
+    init(turn: LiveCaptionTurn, sourceText: String) {
+        self.init(
+            originalTurnID: turn.id,
+            primarySourceSegmentID: turn.sourceSegmentID,
+            sourceSegmentIDs: turn.sourceSegmentIDs,
+            sourceText: sourceText,
+            speaker: turn.speaker,
+            sourceLocale: turn.sourceLocale,
+            targetLocale: turn.targetLocale,
+            createdAt: turn.createdAt
+        )
+    }
+}
+
+enum CaptionTranslationApplyOutcome: Equatable {
+    case none
+    case attached(turnID: String)
+    case rebound(originalTurnID: String, reboundTurnID: String)
+    case persisted(segmentID: String)
+
+    var publishedVisibleText: Bool {
+        switch self {
+        case .attached, .rebound:
+            return true
+        case .none, .persisted:
+            return false
+        }
+    }
+}
+
 struct ActiveCaptionTranslationRequest: Equatable {
     var id: String
     var turn: LiveCaptionTurn
@@ -591,6 +773,7 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var revision: Int
     var requestOrdinalForTurn: Int = 1
     var sourceText: String = ""
+    var attachmentTarget: CaptionTranslationAttachmentTarget? = nil
     var providerID: String = ""
     var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
     var queueDepth: Int?
