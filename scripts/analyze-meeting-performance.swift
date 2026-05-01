@@ -43,6 +43,14 @@ struct Stats {
     }
 }
 
+private let fractionalSecondsDateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private let wholeSecondsDateFormatter = ISO8601DateFormatter()
+
 private func usage() -> Never {
     fputs("Usage: swift scripts/analyze-meeting-performance.swift <meeting-directory|performance-events.jsonl>\n", stderr)
     exit(2)
@@ -83,12 +91,24 @@ print(analyzer.report(inputPath: eventsURL.path))
 
 private func readEvents(from url: URL) throws -> [PerformanceEvent] {
     let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
+    decoder.dateDecodingStrategy = .custom(decodeISO8601Date)
     let content = try String(contentsOf: url, encoding: .utf8)
     return try content
         .split(whereSeparator: \.isNewline)
         .map { try decoder.decode(PerformanceEvent.self, from: Data($0.utf8)) }
         .sorted { $0.wallTime < $1.wallTime }
+}
+
+private func decodeISO8601Date(from decoder: Decoder) throws -> Date {
+    let container = try decoder.singleValueContainer()
+    let value = try container.decode(String.self)
+    if let date = fractionalSecondsDateFormatter.date(from: value) ?? wholeSecondsDateFormatter.date(from: value) {
+        return date
+    }
+    throw DecodingError.dataCorruptedError(
+        in: container,
+        debugDescription: "Expected date string to be ISO8601-formatted."
+    )
 }
 
 struct MeetingPerformanceAnalyzer {
