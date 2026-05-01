@@ -318,6 +318,14 @@ public struct LiveCaptionSpeakerGroup: Equatable, Identifiable {
     }
 }
 
+public enum LiveCaptionDisplayMode: String, Codable, CaseIterable, Equatable, Identifiable {
+    case both
+    case originalOnly
+    case translationOnly
+
+    public var id: String { rawValue }
+}
+
 public enum LiveCaptionDisplayState: Equatable {
     case originalOnly(String)
     case translated(primaryText: String, sourceText: String)
@@ -325,23 +333,49 @@ public enum LiveCaptionDisplayState: Equatable {
     case failed(sourceText: String, message: String)
 
     public init(turn: LiveCaptionTurn, secondLanguageEnabled: Bool) {
+        self.init(turn: turn, secondLanguageEnabled: secondLanguageEnabled, displayMode: .both)
+    }
+
+    public init(
+        turn: LiveCaptionTurn,
+        secondLanguageEnabled: Bool,
+        displayMode: LiveCaptionDisplayMode
+    ) {
         let originalText = turn.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
         let translatedText = turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard secondLanguageEnabled else {
+        switch displayMode {
+        case .originalOnly:
             self = .originalOnly(originalText)
-            return
+        case .translationOnly:
+            if translatedText.isEmpty {
+                self = Self.translationFallbackState(originalText: originalText, health: turn.translationHealth)
+            } else {
+                self = .originalOnly(translatedText)
+            }
+        case .both:
+            guard secondLanguageEnabled else {
+                self = .originalOnly(originalText)
+                return
+            }
+            if !translatedText.isEmpty {
+                self = .translated(primaryText: translatedText, sourceText: originalText)
+                return
+            }
+            self = Self.translationFallbackState(originalText: originalText, health: turn.translationHealth)
         }
-        if !translatedText.isEmpty {
-            self = .translated(primaryText: translatedText, sourceText: originalText)
-            return
-        }
-        switch turn.translationHealth {
+    }
+
+    private static func translationFallbackState(
+        originalText: String,
+        health: LivePipelineHealth
+    ) -> LiveCaptionDisplayState {
+        switch health {
         case .failed(let message), .degraded(let message):
-            self = .failed(sourceText: originalText, message: message)
+            return .failed(sourceText: originalText, message: message)
         case .pending:
-            self = .pending(sourceText: originalText)
+            return .pending(sourceText: originalText)
         case .idle, .live:
-            self = .originalOnly(originalText)
+            return .originalOnly(originalText)
         }
     }
 

@@ -18,6 +18,69 @@ final class LiveCaptionDisplayStateTests: XCTestCase {
         XCTAssertEqual(state, .translated(primaryText: "我们需要一位上线负责人。", sourceText: "We need a launch owner."))
     }
 
+    func testBothDisplayModeKeepsTranslatedState() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We need a launch owner.",
+            translatedText: "我们需要一位上线负责人。",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            translationHealth: .live
+        )
+
+        let state = LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: true, displayMode: .both)
+
+        XCTAssertEqual(state, .translated(primaryText: "我们需要一位上线负责人。", sourceText: "We need a launch owner."))
+    }
+
+    func testOriginalOnlyDisplayModeHidesTranslation() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We need a launch owner.",
+            translatedText: "我们需要一位上线负责人。",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            translationHealth: .live
+        )
+
+        let state = LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: true, displayMode: .originalOnly)
+
+        XCTAssertEqual(state, .originalOnly("We need a launch owner."))
+    }
+
+    func testTranslationOnlyDisplayModeUsesTranslatedTextAsSingleBlock() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We need a launch owner.",
+            translatedText: "我们需要一位上线负责人。",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            translationHealth: .live
+        )
+
+        let state = LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: true, displayMode: .translationOnly)
+
+        XCTAssertEqual(state, .originalOnly("我们需要一位上线负责人。"))
+    }
+
+    func testTranslationOnlyDisplayModeShowsPendingWhenTranslationIsMissing() {
+        let turn = LiveCaptionTurn(
+            sourceSegmentID: "segment-1",
+            originalText: "We need a launch owner.",
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            isFinal: true,
+            translationHealth: .pending
+        )
+
+        let state = LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: true, displayMode: .translationOnly)
+
+        XCTAssertEqual(state, .pending(sourceText: "We need a launch owner."))
+    }
+
     func testOriginalOnlyWhenSecondLanguageIsDisabled() {
         let turn = LiveCaptionTurn(
             sourceSegmentID: "segment-1",

@@ -810,6 +810,7 @@ private struct TranscriptPaneView: View {
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
     @State private var autoFollowsLatest = true
+    @State private var transcriptDisplayMode: LiveCaptionDisplayMode = .both
 
     var body: some View {
         VStack(spacing: 0) {
@@ -819,12 +820,14 @@ private struct TranscriptPaneView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         metadata
                         failureReason
+                        transcriptDisplayModePicker
                         UnifiedTranscriptView(
                             turns: liveCaptionTurns,
                             transcriptText: transcriptText,
                             isRecording: isRecording,
                             sourceLocale: sourceLocale,
                             targetLocale: targetLocale,
+                            displayMode: transcriptDisplayMode,
                             autoFollowsLatest: autoFollowsLatest,
                             returnToLatest: {
                                 returnToLatest(proxy: proxy)
@@ -872,6 +875,16 @@ private struct TranscriptPaneView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(latestID, anchor: .bottom)
         }
+    }
+
+    private var transcriptDisplayModePicker: some View {
+        Picker("Transcript display", selection: $transcriptDisplayMode) {
+            Text("Both").tag(LiveCaptionDisplayMode.both)
+            Text("Original").tag(LiveCaptionDisplayMode.originalOnly)
+            Text("Translation").tag(LiveCaptionDisplayMode.translationOnly)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 260)
     }
 
     private var header: some View {
@@ -1221,6 +1234,7 @@ private struct UnifiedTranscriptView: View {
     let isRecording: Bool
     let sourceLocale: String
     let targetLocale: String
+    let displayMode: LiveCaptionDisplayMode
     let autoFollowsLatest: Bool
     let returnToLatest: () -> Void
     let pauseFollowing: () -> Void
@@ -1249,6 +1263,7 @@ private struct UnifiedTranscriptView: View {
                             group: group,
                             sourceLocale: sourceLocale,
                             targetLocale: targetLocale,
+                            displayMode: displayMode,
                             editSpeaker: group.speaker.identifier == nil ? nil : {
                                 if let firstTurn = group.turns.first {
                                     editSpeaker(firstTurn)
@@ -1292,6 +1307,7 @@ private struct BilingualTranscriptGroup: View {
     let group: LiveCaptionSpeakerGroup
     let sourceLocale: String
     let targetLocale: String
+    let displayMode: LiveCaptionDisplayMode
     var editSpeaker: (() -> Void)? = nil
 
     var body: some View {
@@ -1300,7 +1316,8 @@ private struct BilingualTranscriptGroup: View {
             ForEach(group.turns) { turn in
                 BilingualTranscriptBlock(
                     turn: turn,
-                    secondLanguageEnabled: secondLanguageEnabled(for: turn)
+                    secondLanguageEnabled: secondLanguageEnabled(for: turn),
+                    displayMode: displayMode
                 )
                 .id(turn.id)
             }
@@ -1363,6 +1380,7 @@ private struct BilingualTranscriptGroup: View {
 private struct BilingualTranscriptBlock: View {
     let turn: LiveCaptionTurn
     let secondLanguageEnabled: Bool
+    let displayMode: LiveCaptionDisplayMode
 
     var body: some View {
         transcriptText
@@ -1372,7 +1390,7 @@ private struct BilingualTranscriptBlock: View {
     @ViewBuilder
     private var transcriptText: some View {
         VStack(alignment: .leading, spacing: 7) {
-            switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled) {
+            switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled, displayMode: displayMode) {
             case .translated(let primaryText, let sourceText):
                 Text(sourceText)
                     .font(CommandCenterTypography.transcript)

@@ -598,6 +598,20 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Text(speakerStartTimeText)"))
     }
 
+    func testTranscriptPaneDefinesDisplayModePicker() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("@State private var transcriptDisplayMode: LiveCaptionDisplayMode = .both"))
+        XCTAssertTrue(source.contains("Picker(\"Transcript display\", selection: $transcriptDisplayMode)"))
+        XCTAssertTrue(source.contains("Text(\"Both\").tag(LiveCaptionDisplayMode.both)"))
+        XCTAssertTrue(source.contains("Text(\"Original\").tag(LiveCaptionDisplayMode.originalOnly)"))
+        XCTAssertTrue(source.contains("Text(\"Translation\").tag(LiveCaptionDisplayMode.translationOnly)"))
+        XCTAssertTrue(source.contains(".pickerStyle(.segmented)"))
+        XCTAssertTrue(source.contains("displayMode: transcriptDisplayMode"))
+        XCTAssertTrue(source.contains("displayMode: displayMode"))
+        XCTAssertTrue(source.contains("LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled, displayMode: displayMode)"))
+    }
+
     func testMainWindowRemovesUnimplementedMeetingGoalComposer() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
