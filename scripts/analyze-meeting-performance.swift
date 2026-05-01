@@ -109,12 +109,15 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Translation Success Rate: \(format(percent: translationSuccessRate()))")
         lines.append("Draft Translation Success Rate: \(format(percent: translationSuccessRate(kind: "draft")))")
         lines.append("Final Translation Success Rate: \(format(percent: translationSuccessRate(kind: "final")))")
+        lines.append("Final Visible Attach Rate: \(format(percent: finalVisibleAttachRate()))")
+        lines.append("Final Persist-Only Rate: \(format(percent: finalPersistOnlyRate()))")
+        lines.append("Final True Failure Rate: \(format(percent: finalTrueFailureRate()))")
         lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
         lines.append("Caption visible lag p50/p95/max: \(format(stats: captionVisiblePipelineStats()))")
         lines.append("Translation path p50: \(translationPathText())")
-        lines.append("Translation outcomes: scheduled \(translationEvents("caption_translation_scheduled").count), attached \(translationEvents("caption_translation_attached").count), stale \(translationEvents("caption_translation_stale").count), cancelled \(translationEvents("caption_translation_cancelled").count), provider_error \(translationEvents("caption_translation_provider_error").count)")
+        lines.append("Translation outcomes: scheduled \(translationEvents("caption_translation_scheduled").count), attached \(translationEvents("caption_translation_attached").count), persisted \(translationEvents("caption_translation_persisted").count), rebound \(translationEvents("caption_translation_rebound").count), stale \(translationEvents("caption_translation_stale").count), cancelled \(translationEvents("caption_translation_cancelled").count), provider_error \(translationEvents("caption_translation_provider_error").count)")
         lines.append("Batch/Flush Caption Events: \(batchOrFlushCaptionEvents.count) excluded from primary caption lag")
         let diagnostics = diagnosticLines()
         if !diagnostics.isEmpty {
@@ -223,8 +226,8 @@ struct MeetingPerformanceAnalyzer {
     private func translationSuccessRate() -> Double? {
         let scheduled = translationEvents("caption_translation_scheduled").count
         guard scheduled > 0 else { return nil }
-        let attached = translationEvents("caption_translation_attached").count
-        return Double(attached) / Double(scheduled) * 100
+        let successful = successfulTranslationEvents().count
+        return Double(successful) / Double(scheduled) * 100
     }
 
     private func translationSuccessRate(kind: String) -> Double? {
@@ -232,10 +235,57 @@ struct MeetingPerformanceAnalyzer {
             .filter { $0.metadata["translationKind"] == kind }
             .count
         guard scheduled > 0 else { return nil }
+        let successful = successfulTranslationEvents(kind: kind).count
+        return Double(successful) / Double(scheduled) * 100
+    }
+
+    private func successfulTranslationEvents(kind: String? = nil) -> [PerformanceEvent] {
+        let successEvents = translationEvents("caption_translation_attached")
+            + translationEvents("caption_translation_persisted")
+        guard let kind else { return successEvents }
+        return successEvents.filter { $0.metadata["translationKind"] == kind }
+    }
+
+    private func finalVisibleAttachRate() -> Double? {
+        let scheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .count
+        guard scheduled > 0 else { return nil }
         let attached = translationEvents("caption_translation_attached")
-            .filter { $0.metadata["translationKind"] == kind }
+            .filter { $0.metadata["translationKind"] == "final" }
             .count
         return Double(attached) / Double(scheduled) * 100
+    }
+
+    private func finalPersistOnlyRate() -> Double? {
+        let scheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .count
+        guard scheduled > 0 else { return nil }
+        let persisted = translationEvents("caption_translation_persisted")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .count
+        return Double(persisted) / Double(scheduled) * 100
+    }
+
+    private func finalTrueFailureRate() -> Double? {
+        let scheduled = translationEvents("caption_translation_scheduled")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .count
+        guard scheduled > 0 else { return nil }
+        let trueStaleReasons: Set<String> = [
+            "source_segment_deleted",
+            "target_locale_changed",
+            "provider_configuration_changed"
+        ]
+        let staleFailures = translationEvents("caption_translation_stale")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .filter { trueStaleReasons.contains($0.metadata["reason"] ?? "") }
+            .count
+        let providerFailures = translationEvents("caption_translation_provider_error")
+            .filter { $0.metadata["translationKind"] == "final" }
+            .count
+        return Double(staleFailures + providerFailures) / Double(scheduled) * 100
     }
 
     private func firstCaptionPathText() -> String {

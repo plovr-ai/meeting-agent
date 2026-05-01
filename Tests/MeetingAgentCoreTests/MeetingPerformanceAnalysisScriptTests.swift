@@ -22,9 +22,43 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Translation Success Rate: 100.0%"))
         XCTAssertTrue(result.stdout.contains("Draft Translation Success Rate: unavailable"))
         XCTAssertTrue(result.stdout.contains("Final Translation Success Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Final Visible Attach Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Final Persist-Only Rate: 0.0%"))
+        XCTAssertTrue(result.stdout.contains("Final True Failure Rate: 0.0%"))
         XCTAssertTrue(result.stdout.contains("Process Metrics"))
         XCTAssertTrue(result.stdout.contains("First caption path: audio sent -> Deepgram response 0.60s"))
         XCTAssertTrue(result.stdout.contains("Translation path p50: scheduled -> started 0.20s"))
+    }
+
+    func testFinalPersistedTranslationCountsAsFinalSuccess() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-persisted-final-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try [
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-01T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:01Z", audio: 1, segmentID: "segment-1", isFinal: true, textLength: 12),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:02Z", segmentID: "turn-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationRequestID": "request-1",
+                "sourceSegmentID": "segment-1"
+            ]),
+            event("caption_translation_persisted", wallTime: "2026-05-01T00:00:03Z", segmentID: "segment-1", isFinal: true, textLength: 4, metadata: [
+                "translationKind": "final",
+                "translationRequestID": "request-1",
+                "sourceSegmentID": "segment-1"
+            ])
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Final Translation Success Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Final Visible Attach Rate: 0.0%"))
+        XCTAssertTrue(result.stdout.contains("Final Persist-Only Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Final True Failure Rate: 0.0%"))
+        XCTAssertTrue(result.stdout.contains("persisted 1"))
     }
 
     func testAnalyzeMeetingPerformanceScriptExcludesBatchCaptionEventsFromPrimaryLag() throws {
