@@ -45,6 +45,11 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionReplaySequence = 0
     private var activeCaptionDocumentSignature: String?
     private let liveCaptionSnapshotDebounceNanoseconds: UInt64
+    private let draftCaptionInputThrottleNanoseconds: UInt64
+    private var pendingDraftCaptionInput: PendingDraftCaptionInput?
+    private var pendingDraftCaptionInputTask: Task<Void, Never>?
+    private var pendingDraftCaptionInputGeneration = 0
+    private var hasPublishedActiveDraftCaptionInput = false
     private var pendingLiveCaptionSnapshot: LiveCaptionPipelineSnapshot?
     private var pendingLiveCaptionSnapshotTask: Task<Void, Never>?
     private var pendingLiveCaptionSnapshotGeneration = 0
@@ -65,6 +70,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         let selectedMeetingID: UUID?
     }
 
+    private struct PendingDraftCaptionInput {
+        var results: [TranscriptSegmentAccumulationResult]
+        var context: ActiveCaptionApplyContext
+        var latestChangedSegmentID: String?
+        var changedSegmentCount: Int
+    }
+
     public init(
         store: MeetingStore = MeetingStore(),
         recorder: MeetingRecorder? = nil,
@@ -75,7 +87,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         exportService: MeetingExportService = MeetingExportService(),
         captionTranslationProviderFactory: @escaping (SpeechTranscriptionConfiguration) -> TextTranslationProvider? = MeetingAgentViewModel.openRouterCaptionTranslationProvider,
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
-        liveCaptionSnapshotDebounceNanoseconds: UInt64 = 75_000_000,
+        liveCaptionSnapshotDebounceNanoseconds: UInt64 = 0,
+        draftCaptionInputThrottleNanoseconds: UInt64 = 200_000_000,
         processTargetsProvider: @escaping () -> [AudioCaptureTarget] = RunningProcessDiscovery.currentTargets
     ) {
         self.store = store
@@ -87,6 +100,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             Self.summaryProvider(for: configuration)
         }
         self.liveCaptionSnapshotDebounceNanoseconds = liveCaptionSnapshotDebounceNanoseconds
+        self.draftCaptionInputThrottleNanoseconds = draftCaptionInputThrottleNanoseconds
         self.processTargetsProvider = processTargetsProvider
         let resolvedSpeechConfiguration: SpeechTranscriptionConfiguration
         if let speechConfiguration {
@@ -361,11 +375,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             let context = beginActiveCaptionApply()
             activeCaptionApplyTask?.cancel()
-            activeCaptionApplyTask = Task { [weak self] in
-                guard let self else { return }
-                await applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults, context: context)
-                if meetingProgressCoordinator != nil {
-                    await refreshMeetingProgress()
+            if shouldThrottleDraftCaptionInput(transcriptResults, context: context) {
+                submitDraftCaptionInput(transcriptResults, context: context)
+            } else {
+                cancelPendingDraftCaptionInput(reason: "non_delayable_update")
+                activeCaptionApplyTask = Task { [weak self] in
+                    guard let self else { return }
+                    await applyTranscriptAccumulationResultsToLiveCaptions(transcriptResults, context: context)
+                    if meetingProgressCoordinator != nil {
+                        await refreshMeetingProgress()
+                    }
                 }
             }
         }
@@ -919,6 +938,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask = nil
         liveCaptionReplaySequence += 1
         activeCaptionDocumentSignature = nil
+        resetDraftCaptionInputThrottleState(reason: "pipeline_reset")
         clearLiveCaptionTurns()
         liveCaptionPipeline = makeLiveCaptionPipeline()
         liveCaptionPipelineUsesCaptionTranslationProvider = false
@@ -1157,6 +1177,29 @@ public final class MeetingAgentViewModel: ObservableObject {
         activeCaptionApplySequence += 1
         activeCaptionApplyTask?.cancel()
         activeCaptionApplyTask = nil
+        cancelPendingDraftCaptionInput(reason: "active_apply_invalidated")
+    }
+
+    private func cancelPendingDraftCaptionInput(reason: String) {
+        guard pendingDraftCaptionInput != nil || pendingDraftCaptionInputTask != nil else {
+            return
+        }
+        currentPerformanceEventLogger()?.log(
+            "caption_input_throttle_cancelled",
+            metadata: [
+                "reason": reason,
+                "delayMilliseconds": String(draftCaptionInputThrottleNanoseconds / 1_000_000)
+            ]
+        )
+        pendingDraftCaptionInputGeneration += 1
+        pendingDraftCaptionInputTask?.cancel()
+        pendingDraftCaptionInputTask = nil
+        pendingDraftCaptionInput = nil
+    }
+
+    private func resetDraftCaptionInputThrottleState(reason: String) {
+        cancelPendingDraftCaptionInput(reason: reason)
+        hasPublishedActiveDraftCaptionInput = false
     }
 
     private func isCurrentActiveCaptionApply(_ context: ActiveCaptionApplyContext) -> Bool {
@@ -1165,12 +1208,126 @@ public final class MeetingAgentViewModel: ObservableObject {
             && context.selectedMeetingID == selectedMeetingID
     }
 
+    private func shouldThrottleDraftCaptionInput(
+        _ results: [TranscriptSegmentAccumulationResult],
+        context: ActiveCaptionApplyContext
+    ) -> Bool {
+        guard draftCaptionInputThrottleNanoseconds > 0 else { return false }
+        guard isCurrentActiveCaptionApply(context) else { return false }
+        guard activeMeetingID != nil else { return false }
+        guard let latest = results.last else { return false }
+        guard latest.plainTextReplacement == nil else { return false }
+        guard !latest.changedSegmentIDs.isEmpty else { return false }
+        let changedSegmentIDs = Set(latest.changedSegmentIDs)
+        let changedSegments = latest.document.segments.filter { changedSegmentIDs.contains($0.id) }
+        guard !changedSegments.isEmpty else { return false }
+        return changedSegments.allSatisfy { segment in
+            !segment.isFinal && segment.speechFinal != true
+        }
+    }
+
+    private func latestChangedSegmentID(in results: [TranscriptSegmentAccumulationResult]) -> String? {
+        results.last?.changedSegmentIDs.last
+    }
+
+    private func changedSegmentCount(in results: [TranscriptSegmentAccumulationResult]) -> Int {
+        results.last?.changedSegmentIDs.count ?? 0
+    }
+
+    private func submitDraftCaptionInput(
+        _ results: [TranscriptSegmentAccumulationResult],
+        context: ActiveCaptionApplyContext
+    ) {
+        guard hasPublishedActiveDraftCaptionInput else {
+            hasPublishedActiveDraftCaptionInput = true
+            activeCaptionApplyTask = Task { [weak self] in
+                guard let self else { return }
+                await applyTranscriptAccumulationResultsToLiveCaptions(results, context: context)
+                if meetingProgressCoordinator != nil {
+                    await refreshMeetingProgress()
+                }
+            }
+            return
+        }
+
+        let pending = PendingDraftCaptionInput(
+            results: results,
+            context: context,
+            latestChangedSegmentID: latestChangedSegmentID(in: results),
+            changedSegmentCount: changedSegmentCount(in: results)
+        )
+        let hadPending = pendingDraftCaptionInput != nil
+        pendingDraftCaptionInput = pending
+        pendingDraftCaptionInputGeneration += 1
+        let generation = pendingDraftCaptionInputGeneration
+        let delay = draftCaptionInputThrottleNanoseconds
+        pendingDraftCaptionInputTask?.cancel()
+        currentPerformanceEventLogger()?.log(
+            hadPending ? "caption_input_throttle_coalesced" : "caption_input_throttle_scheduled",
+            segmentID: pending.latestChangedSegmentID,
+            metadata: draftCaptionInputThrottleMetadata(
+                for: pending,
+                reason: hadPending ? "replaced_pending" : "scheduled"
+            )
+        )
+        pendingDraftCaptionInputTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await self?.firePendingDraftCaptionInput(generation: generation)
+        }
+    }
+
+    private func firePendingDraftCaptionInput(generation: Int) async {
+        guard generation == pendingDraftCaptionInputGeneration,
+              let pending = pendingDraftCaptionInput
+        else {
+            return
+        }
+        pendingDraftCaptionInputTask = nil
+        pendingDraftCaptionInput = nil
+        currentPerformanceEventLogger()?.log(
+            "caption_input_throttle_fired",
+            segmentID: pending.latestChangedSegmentID,
+            metadata: draftCaptionInputThrottleMetadata(for: pending, reason: "delay_elapsed")
+        )
+        guard isCurrentActiveCaptionApply(pending.context) else { return }
+        activeCaptionApplyTask = Task { [weak self] in
+            guard let self else { return }
+            await applyTranscriptAccumulationResultsToLiveCaptions(pending.results, context: pending.context)
+            if meetingProgressCoordinator != nil {
+                await refreshMeetingProgress()
+            }
+        }
+    }
+
+    private func draftCaptionInputThrottleMetadata(
+        for pending: PendingDraftCaptionInput,
+        reason: String
+    ) -> [String: String] {
+        var metadata: [String: String] = [
+            "delayMilliseconds": String(draftCaptionInputThrottleNanoseconds / 1_000_000),
+            "changedSegmentCount": String(pending.changedSegmentCount),
+            "reason": reason
+        ]
+        if let latestChangedSegmentID = pending.latestChangedSegmentID {
+            metadata["latestChangedSegmentID"] = latestChangedSegmentID
+        }
+        if let activeMeetingID = pending.context.activeMeetingID {
+            metadata["activeMeetingID"] = activeMeetingID.uuidString
+        }
+        if let selectedMeetingID = pending.context.selectedMeetingID {
+            metadata["selectedMeetingID"] = selectedMeetingID.uuidString
+        }
+        return metadata
+    }
+
     private func isCurrentCaptionFlush(_ context: ActiveCaptionApplyContext) -> Bool {
         context.sequence == activeCaptionApplySequence
             && context.selectedMeetingID == selectedMeetingID
     }
 
     private func clearLiveCaptionTurns() {
+        cancelPendingDraftCaptionInput(reason: "caption_turns_cleared")
         cancelPendingLiveCaptionSnapshotPublication()
         liveCaptionTurns = []
     }
@@ -1261,6 +1418,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func flushLiveCaptionPipeline(reason: LiveCaptionFreezeReason) {
+        cancelPendingDraftCaptionInput(reason: "flush")
         let context = beginActiveCaptionApply()
         activeCaptionApplyTask?.cancel()
         publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.flushCaptionsOnly(reason: reason))
