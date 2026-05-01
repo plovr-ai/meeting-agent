@@ -3,13 +3,28 @@ import Foundation
 public struct CaptionTranslationSchedulerConfiguration: Equatable {
     public var draftDebounceNanoseconds: UInt64
     public var maxConcurrentTranslationRequests: Int
+    public var followUpDraftMinimumIntervalNanoseconds: UInt64
+    public var followUpDraftMaximumWaitNanoseconds: UInt64
+    public var minimumDraftWordDelta: Int
+    public var minimumDraftCharacterDelta: Int
+    public var semanticBoundaryCharacters: Set<Character>
 
     public init(
         draftDebounceNanoseconds: UInt64 = 200_000_000,
-        maxConcurrentTranslationRequests: Int = 2
+        maxConcurrentTranslationRequests: Int = 2,
+        followUpDraftMinimumIntervalNanoseconds: UInt64 = 1_500_000_000,
+        followUpDraftMaximumWaitNanoseconds: UInt64 = 3_000_000_000,
+        minimumDraftWordDelta: Int = 8,
+        minimumDraftCharacterDelta: Int = 48,
+        semanticBoundaryCharacters: Set<Character> = Set(".?!,;:。？！、，；：\n")
     ) {
         self.draftDebounceNanoseconds = draftDebounceNanoseconds
         self.maxConcurrentTranslationRequests = max(1, maxConcurrentTranslationRequests)
+        self.followUpDraftMinimumIntervalNanoseconds = followUpDraftMinimumIntervalNanoseconds
+        self.followUpDraftMaximumWaitNanoseconds = followUpDraftMaximumWaitNanoseconds
+        self.minimumDraftWordDelta = max(1, minimumDraftWordDelta)
+        self.minimumDraftCharacterDelta = max(1, minimumDraftCharacterDelta)
+        self.semanticBoundaryCharacters = semanticBoundaryCharacters
     }
 }
 
@@ -19,21 +34,25 @@ public final class CaptionTranslationScheduler {
     private let performanceEventLogger: PerformanceEventLogger?
     private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
     private let configuration: CaptionTranslationSchedulerConfiguration
+    private let now: () -> Date
     private var requestedFinalTranslationKeys: Set<String> = []
     private var activeRequestsByKey: [String: ActiveCaptionTranslationRequest] = [:]
     private var pendingDraftTokensByTurnID: [String: UUID] = [:]
     private var requestOrdinalsByTurnID: [String: Int] = [:]
+    private var draftTriggerStatesByTurnID: [String: DraftTranslationTriggerState] = [:]
 
     public init(
         provider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
         persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
-        configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
+        configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration(),
+        now: @escaping () -> Date = Date.init
     ) {
         self.provider = provider
         self.performanceEventLogger = performanceEventLogger
         self.persistTranslation = persistTranslation
         self.configuration = configuration
+        self.now = now
     }
 
     public func scheduleTranslations(in store: inout LiveCaptionStore) async {
@@ -666,6 +685,96 @@ public final class CaptionTranslationScheduler {
             && draftTranslationKey(for: current) == update.key
     }
 
+    private func draftTriggerDecision(for turn: LiveCaptionTurn, sourceText: String) -> DraftTranslationTriggerDecision {
+        var state = draftTriggerStatesByTurnID[turn.id, default: DraftTranslationTriggerState()]
+        let currentWordCount = wordCount(in: sourceText)
+        let currentCharacterCount = sourceText.count
+        let wordDelta = max(0, currentWordCount - state.lastRequestedWordCount)
+        let characterDelta = max(0, currentCharacterCount - state.lastRequestedCharacterCount)
+        let hasBoundary = hasSemanticBoundary(sourceText)
+        let currentTime = now()
+        var metadata: [String: String] = [
+            "wordDelta": String(wordDelta),
+            "characterDelta": String(characterDelta),
+            "hasSemanticBoundary": String(hasBoundary)
+        ]
+
+        if let lastRequestAt = state.lastRequestAt {
+            metadata["millisecondsSinceLastDraftRequest"] = String(milliseconds(from: lastRequestAt, to: currentTime))
+        }
+        if let lastVisibleTranslationAt = state.lastVisibleTranslationAt {
+            metadata["millisecondsSinceLastVisibleDraftTranslation"] = String(milliseconds(from: lastVisibleTranslationAt, to: currentTime))
+        }
+
+        guard !state.isInFlight else {
+            return .skip(reason: "in_flight", metadata: metadata)
+        }
+
+        guard state.hasSentInitialRequest else {
+            state.hasSentInitialRequest = true
+            state.lastRequestedSourceText = sourceText
+            state.lastRequestedWordCount = currentWordCount
+            state.lastRequestedCharacterCount = currentCharacterCount
+            state.lastRequestAt = currentTime
+            state.isInFlight = true
+            draftTriggerStatesByTurnID[turn.id] = state
+            return .trigger(reason: "initial", metadata: metadata)
+        }
+
+        if let lastRequestAt = state.lastRequestAt,
+           nanoseconds(from: lastRequestAt, to: currentTime) < configuration.followUpDraftMinimumIntervalNanoseconds {
+            return .skip(reason: "min_interval", metadata: metadata)
+        }
+
+        let exceededMaximumWait: Bool = {
+            guard let lastVisibleTranslationAt = state.lastVisibleTranslationAt ?? state.lastRequestAt else {
+                return false
+            }
+            return nanoseconds(from: lastVisibleTranslationAt, to: currentTime) >= configuration.followUpDraftMaximumWaitNanoseconds
+        }()
+        let reachedContentDelta = wordDelta >= configuration.minimumDraftWordDelta
+            || characterDelta >= configuration.minimumDraftCharacterDelta
+
+        guard hasBoundary || reachedContentDelta || exceededMaximumWait else {
+            return .skip(reason: "not_stable_enough", metadata: metadata)
+        }
+
+        let reason: String
+        if hasBoundary {
+            reason = "semantic_boundary"
+        } else if reachedContentDelta {
+            reason = "content_delta"
+        } else {
+            reason = "max_wait"
+        }
+        state.lastRequestedSourceText = sourceText
+        state.lastRequestedWordCount = currentWordCount
+        state.lastRequestedCharacterCount = currentCharacterCount
+        state.lastRequestAt = currentTime
+        state.isInFlight = true
+        draftTriggerStatesByTurnID[turn.id] = state
+        return .trigger(reason: reason, metadata: metadata)
+    }
+
+    private func hasSemanticBoundary(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else {
+            return false
+        }
+        return configuration.semanticBoundaryCharacters.contains(last)
+    }
+
+    private func wordCount(in text: String) -> Int {
+        text.split { $0.isWhitespace || $0.isNewline }.count
+    }
+
+    private func nanoseconds(from start: Date, to end: Date) -> UInt64 {
+        UInt64(max(0, end.timeIntervalSince(start)) * 1_000_000_000)
+    }
+
+    private func milliseconds(from start: Date, to end: Date) -> Int {
+        max(0, Int((end.timeIntervalSince(start) * 1_000).rounded()))
+    }
+
     private func persistFinalTranslation(
         _ text: String,
         request: ActiveCaptionTranslationRequest
@@ -782,6 +891,21 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
     var queueDepth: Int?
     var inFlightCount: Int?
+}
+
+private struct DraftTranslationTriggerState: Equatable {
+    var hasSentInitialRequest = false
+    var lastRequestedSourceText = ""
+    var lastRequestedWordCount = 0
+    var lastRequestedCharacterCount = 0
+    var lastRequestAt: Date?
+    var lastVisibleTranslationAt: Date?
+    var isInFlight = false
+}
+
+private enum DraftTranslationTriggerDecision: Equatable {
+    case trigger(reason: String, metadata: [String: String])
+    case skip(reason: String, metadata: [String: String])
 }
 
 private struct CaptionTranslationExecution {

@@ -79,6 +79,17 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertFalse(CaptionTranslationApplyOutcome.persisted(segmentID: "segment-1").publishedVisibleText)
     }
 
+    func testDraftTranslationSchedulerConfigurationExposesPolicyDefaults() {
+        let configuration = CaptionTranslationSchedulerConfiguration()
+
+        XCTAssertEqual(configuration.followUpDraftMinimumIntervalNanoseconds, 1_500_000_000)
+        XCTAssertEqual(configuration.followUpDraftMaximumWaitNanoseconds, 3_000_000_000)
+        XCTAssertEqual(configuration.minimumDraftWordDelta, 8)
+        XCTAssertEqual(configuration.minimumDraftCharacterDelta, 48)
+        XCTAssertTrue(configuration.semanticBoundaryCharacters.contains(","))
+        XCTAssertTrue(configuration.semanticBoundaryCharacters.contains("。"))
+    }
+
     func testSameLanguageCompletesWithoutProviderCall() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "en-GB")
         store.upsert(hardSealedTurn(sourceLocale: "en-US", targetLocale: "en-GB"))
