@@ -60,6 +60,26 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Draft Visible Update Interval p50/p95: 3.00s / 3.00s"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptReportsVisibleTranslationContinuityMetrics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-visible-translation-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try visibleTranslationFixtureEvents().write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Time to First Visible Translation: 2.00s"))
+        XCTAssertTrue(result.stdout.contains("Visible Translation Coverage:"))
+        XCTAssertTrue(result.stdout.contains("Visible Translation Gap p50/p95/max:"))
+        XCTAssertTrue(result.stdout.contains("Exact Draft Attach Rate: 50.0%"))
+        XCTAssertTrue(result.stdout.contains("Approximate Draft Attach Rate: 50.0%"))
+        XCTAssertTrue(result.stdout.contains("Hidden Draft Stale Rate: 33.3%"))
+        XCTAssertTrue(result.stdout.contains("Draft Translation Carry Forward Count: 1"))
+    }
+
     func testFinalPersistedTranslationCountsAsFinalSuccess() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-performance-persisted-final-\(UUID().uuidString)", isDirectory: true)
@@ -242,6 +262,53 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
             event("caption_translation_attached", wallTime: "2026-05-01T00:00:05.000Z", segmentID: "turn-1", isFinal: false, textLength: 5, metadata: [
                 "translationKind": "draft",
                 "translationRequestID": "translation-draft-3"
+            ])
+        ].joined(separator: "\n") + "\n"
+    }
+
+    private func visibleTranslationFixtureEvents() -> String {
+        [
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-01T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:00Z", segmentID: "segment-1", isFinal: false, textLength: 32, metadata: [
+                "turnID": "turn-1"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:01.000Z", segmentID: "turn-1", isFinal: false, textLength: 32, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-1"
+            ]),
+            event("caption_translation_exact_attached", wallTime: "2026-05-01T00:00:02.000Z", segmentID: "turn-1", isFinal: false, textLength: 10, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-1",
+                "translationFreshness": "fresh",
+                "sourceLagMilliseconds": "0"
+            ]),
+            event("caption_translation_carried_forward", wallTime: "2026-05-01T00:00:03.000Z", segmentID: "turn-1", isFinal: false, textLength: 10, metadata: [
+                "translationKind": "draft",
+                "translationFreshness": "carried",
+                "sourceLagMilliseconds": "1000"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:04.000Z", segmentID: "turn-1", isFinal: false, textLength: 58, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-2"
+            ]),
+            event("caption_translation_approximate_attached", wallTime: "2026-05-01T00:00:05.000Z", segmentID: "turn-1", isFinal: false, textLength: 18, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-2",
+                "translationFreshness": "approximate",
+                "sourceLagMilliseconds": "1500"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:06.000Z", segmentID: "turn-1", isFinal: false, textLength: 60, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-3"
+            ]),
+            event("caption_translation_hidden_stale", wallTime: "2026-05-01T00:00:07.000Z", segmentID: "turn-1", isFinal: false, textLength: 0, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "draft-3",
+                "attachDecision": "hidden_stale",
+                "attachRejectReason": "low_similarity"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:08.000Z", segmentID: "segment-1", isFinal: true, textLength: 64, metadata: [
+                "turnID": "turn-1"
             ])
         ].joined(separator: "\n") + "\n"
     }

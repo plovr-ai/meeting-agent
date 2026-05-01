@@ -140,6 +140,14 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Draft Translation Stale Rate: \(format(percent: draftTranslationStaleRate()))")
         lines.append("Time to First Draft Translation: \(format(duration: timeToFirstDraftTranslation()))")
         lines.append("Draft Visible Update Interval p50/p95: \(formatP50P95(stats: draftVisibleUpdateIntervalStats()))")
+        lines.append("Time to First Visible Translation: \(format(duration: timeToFirstVisibleTranslation()))")
+        lines.append("Visible Translation Coverage: \(format(percent: visibleTranslationCoverage()))")
+        lines.append("Visible Translation Gap p50/p95/max: \(format(stats: visibleTranslationGapStats()))")
+        lines.append("Translation Freshness p50/p95/max: \(format(stats: translationFreshnessStats()))")
+        lines.append("Exact Draft Attach Rate: \(format(percent: exactDraftAttachRate()))")
+        lines.append("Approximate Draft Attach Rate: \(format(percent: approximateDraftAttachRate()))")
+        lines.append("Hidden Draft Stale Rate: \(format(percent: hiddenDraftStaleRate()))")
+        lines.append("Draft Translation Carry Forward Count: \(translationEvents("caption_translation_carried_forward").count)")
         lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
@@ -368,6 +376,77 @@ struct MeetingPerformanceAnalyzer {
         return Stats(values: values)
     }
 
+    private func timeToFirstVisibleTranslation() -> Double? {
+        guard let firstCaption = firstCaptionVisible?.wallTime,
+              let firstVisible = visibleTranslationEvents().first?.wallTime else {
+            return nil
+        }
+        return max(0, firstVisible.timeIntervalSince(firstCaption))
+    }
+
+    private func visibleTranslationCoverage() -> Double? {
+        guard let firstCaption = firstCaptionVisible?.wallTime,
+              let lastCaption = events.last(where: { $0.event == "caption_turn_visible" })?.wallTime,
+              let firstVisible = visibleTranslationEvents().first?.wallTime else {
+            return nil
+        }
+        let total = max(0, lastCaption.timeIntervalSince(firstCaption))
+        guard total > 0 else { return nil }
+        let covered = max(0, lastCaption.timeIntervalSince(firstVisible))
+        return min(100, covered / total * 100)
+    }
+
+    private func visibleTranslationGapStats() -> Stats {
+        let visible = (visibleTranslationEvents() + translationEvents("caption_translation_carried_forward"))
+            .sorted { $0.wallTime < $1.wallTime }
+        guard visible.count >= 2 else {
+            return Stats(values: [])
+        }
+        let values = zip(visible, visible.dropFirst()).map { previous, current in
+            max(0, current.wallTime.timeIntervalSince(previous.wallTime))
+        }
+        return Stats(values: values)
+    }
+
+    private func translationFreshnessStats() -> Stats {
+        let values = (visibleTranslationEvents() + translationEvents("caption_translation_carried_forward"))
+            .compactMap { event -> Double? in
+                guard let value = event.metadata["sourceLagMilliseconds"],
+                      let milliseconds = Double(value) else {
+                    return nil
+                }
+                return milliseconds / 1_000
+            }
+        return Stats(values: values)
+    }
+
+    private func exactDraftAttachRate() -> Double? {
+        draftVisibleOutcomeRate(eventName: "caption_translation_exact_attached", denominatorIncludesHidden: false)
+    }
+
+    private func approximateDraftAttachRate() -> Double? {
+        draftVisibleOutcomeRate(eventName: "caption_translation_approximate_attached", denominatorIncludesHidden: false)
+    }
+
+    private func hiddenDraftStaleRate() -> Double? {
+        let exact = draftVisibilityEvents("caption_translation_exact_attached").count
+        let approximate = draftVisibilityEvents("caption_translation_approximate_attached").count
+        let hidden = draftVisibilityEvents("caption_translation_hidden_stale").count
+        let denominator = exact + approximate + hidden
+        guard denominator > 0 else { return nil }
+        return Double(hidden) / Double(denominator) * 100
+    }
+
+    private func draftVisibleOutcomeRate(eventName: String, denominatorIncludesHidden: Bool) -> Double? {
+        let exact = draftVisibilityEvents("caption_translation_exact_attached").count
+        let approximate = draftVisibilityEvents("caption_translation_approximate_attached").count
+        let hidden = denominatorIncludesHidden ? draftVisibilityEvents("caption_translation_hidden_stale").count : 0
+        let denominator = exact + approximate + hidden
+        guard denominator > 0 else { return nil }
+        let numerator = draftVisibilityEvents(eventName).count
+        return Double(numerator) / Double(denominator) * 100
+    }
+
     private func firstCaptionPathText() -> String {
         guard let audio = firstAudioSent else {
             return "unavailable"
@@ -437,6 +516,21 @@ struct MeetingPerformanceAnalyzer {
     private var draftAttachedEvents: [PerformanceEvent] {
         translationEvents("caption_translation_attached")
             .filter { $0.metadata["translationKind"] == "draft" }
+    }
+
+    private func draftVisibilityEvents(_ name: String) -> [PerformanceEvent] {
+        translationEvents(name)
+            .filter { $0.metadata["translationKind"] == "draft" || $0.isFinal == false }
+    }
+
+    private func visibleTranslationEvents() -> [PerformanceEvent] {
+        let explicitDraftVisibility = draftVisibilityEvents("caption_translation_exact_attached")
+            + draftVisibilityEvents("caption_translation_approximate_attached")
+        let legacyAttachEvents = translationEvents("caption_translation_attached")
+        let finalPersistedEvents = translationEvents("caption_translation_persisted")
+            .filter { $0.metadata["translationKind"] == "final" }
+        return (explicitDraftVisibility + legacyAttachEvents + finalPersistedEvents)
+            .sorted { $0.wallTime < $1.wallTime }
     }
 
     private func diagnosticLines() -> [String] {
