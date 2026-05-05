@@ -398,7 +398,9 @@ public struct TranscriptSegmentAccumulator {
                let overlap = suffixPrefixOverlap(previous.text, current.text),
                overlap >= 2 {
                 let text = removingPrefixTokenCount(overlap, from: current.text)
-                current = rewritten(current, text: text, startTimeSeconds: current.startTimeSeconds)
+                if !text.isEmpty {
+                    current = rewritten(current, text: text, startTimeSeconds: current.startTimeSeconds)
+                }
             }
             if !current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 output.append(current)
