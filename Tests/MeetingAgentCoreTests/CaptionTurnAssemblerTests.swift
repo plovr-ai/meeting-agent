@@ -272,6 +272,36 @@ final class CaptionTurnAssemblerTests: XCTestCase {
         XCTAssertEqual(assembler.removeSegments(notIn: ["segment-2"]), [])
     }
 
+    func testSpeechFinalFalseFinalChunksRemainOpenAndDeduplicateOverlap() {
+        var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        _ = assembler.apply(segment(
+            id: "deepgram-transcribe-stream-44.34",
+            startTimeSeconds: 44.34,
+            endTimeSeconds: 46.9,
+            text: "inside Microsoft Teams, which are outlined here, to be able to take",
+            speechFinal: false
+        ))
+        let events = assembler.apply(segment(
+            id: "deepgram-transcribe-stream-47.52",
+            startTimeSeconds: 47.52,
+            endTimeSeconds: 52.08,
+            text: "to be able to take advantage of these public preview features",
+            speechFinal: false
+        ))
+
+        guard case .draftUpdated(let draft) = events.single else {
+            XCTFail("Expected the second speechFinal=false final segment to keep updating the open draft")
+            return
+        }
+        XCTAssertEqual(
+            draft.originalText,
+            "inside Microsoft Teams, which are outlined here, to be able to take advantage of these public preview features"
+        )
+        XCTAssertNil(draft.boundaryReason)
+        XCTAssertEqual(draft.displayState, .draft)
+    }
+
     func testFlushSealsOpenFinalDraft() {
         var assembler = CaptionTurnAssembler(sourceLocale: "en-US", targetLocale: "zh-CN")
         _ = assembler.apply(segment(id: "segment-1", text: "Open draft", speechFinal: false))

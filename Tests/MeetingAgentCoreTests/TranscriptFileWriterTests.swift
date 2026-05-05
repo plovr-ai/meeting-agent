@@ -180,6 +180,54 @@ final class TranscriptFileWriterTests: XCTestCase {
         )
     }
 
+    func testUpsertRendersIssue135ShapeWithoutRepeatedAdjacentPhrase() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
+        let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: jsonURL)
+        }
+        let writer = try TranscriptFileWriter(url: url)
+
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-44.34",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+            startTimeSeconds: 44.34,
+            endTimeSeconds: 46.9,
+            text: "inside Microsoft Teams, are outlined here,",
+            sourceProvider: SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+            isFinal: true,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-44.5",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+            startTimeSeconds: 44.5,
+            endTimeSeconds: 48.42,
+            text: "inside Microsoft Teams, which are outlined here, to be able to take",
+            sourceProvider: SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+            isFinal: false,
+            timingSource: .precise
+        ))
+        try writer.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-47.52",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+            startTimeSeconds: 47.52,
+            endTimeSeconds: 52.08,
+            text: "to be able to take advantage of these public preview features.",
+            sourceProvider: SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+            isFinal: true,
+            timingSource: .precise
+        ))
+
+        let transcript = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(transcript.contains("to be able to take to be able to take"))
+        XCTAssertEqual(
+            transcript.trimmingCharacters(in: .whitespacesAndNewlines),
+            "User A:\ninside Microsoft Teams, are outlined here, to be able to take advantage of these public preview features."
+        )
+    }
+
     func testUpsertFinalSegmentReplacesOverlappingInterimWithShiftedID() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")
