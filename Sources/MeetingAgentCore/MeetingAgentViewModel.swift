@@ -86,6 +86,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         let selectedMeetingID: UUID?
     }
 
+    private enum CaptionSnapshotPublicationKind: String {
+        case original = "caption_original_snapshot_published"
+        case translationOverlay = "caption_translation_overlay_published"
+    }
+
     private struct PendingDraftCaptionInput {
         var results: [TranscriptSegmentAccumulationResult]
         var context: ActiveCaptionApplyContext
@@ -1268,6 +1273,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         let snapshot = await realtimeCaptionSession.apply(latest)
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishRealtimeCaptionPipelineSnapshot(snapshot)
+        logCaptionSnapshotPublication(.original, snapshot: snapshot, path: "realtime")
         startRealtimeCaptionTranslationPumpIfNeeded(context: currentActiveCaptionTranslationContext())
     }
 
@@ -1564,6 +1570,22 @@ public final class MeetingAgentViewModel: ObservableObject {
         meetingProgressHealth.translation = snapshot.translationHealth
     }
 
+    private func logCaptionSnapshotPublication(
+        _ kind: CaptionSnapshotPublicationKind,
+        snapshot: LiveCaptionPipelineSnapshot,
+        path: String
+    ) {
+        currentPerformanceEventLogger()?.log(
+            kind.rawValue,
+            metadata: [
+                "path": path,
+                "turnCount": String(snapshot.turns.count),
+                "captionHealth": String(describing: snapshot.captionHealth),
+                "translationHealth": String(describing: snapshot.translationHealth)
+            ]
+        )
+    }
+
     private func startRealtimeCaptionTranslationPumpIfNeeded(context: ActiveCaptionTranslationContext) {
         guard realtimeCaptionSessionHasTranslationProvider else { return }
         guard isCurrentActiveCaptionTranslation(context) else { return }
@@ -1597,6 +1619,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
 
             publishRealtimeCaptionPipelineSnapshot(snapshot)
+            logCaptionSnapshotPublication(.translationOverlay, snapshot: snapshot, path: "realtime")
 
             guard snapshot.turns.contains(where: { $0.translationHealth == .pending }) else {
                 break

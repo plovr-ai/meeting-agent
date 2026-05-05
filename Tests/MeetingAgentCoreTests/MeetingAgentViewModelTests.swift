@@ -1644,6 +1644,52 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(requestIDs.first).isEmpty)
     }
 
+    func testRealtimeCaptionAndTranslationOverlayPublishSeparatePerformanceEvents() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.selectedMeeting)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Caption first.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
+        viewModel.drainRecordingFrames()
+
+        try await waitFor {
+            ((try? readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))) ?? [])
+                .contains { $0.event == "caption_original_snapshot_published" }
+        }
+        try await waitFor { provider.pendingRequestCount == 1 }
+        provider.completeRequest(at: 0, targetText: "先显示字幕。")
+        try await waitFor {
+            ((try? readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))) ?? [])
+                .contains { $0.event == "caption_translation_overlay_published" }
+        }
+
+        let events = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_original_snapshot_published"
+                && $0.metadata["path"] == "realtime"
+        })
+        XCTAssertTrue(events.contains {
+            $0.event == "caption_translation_overlay_published"
+                && $0.metadata["path"] == "realtime"
+        })
+    }
+
     func testSupersededDraftTranslationLogsCancellation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
