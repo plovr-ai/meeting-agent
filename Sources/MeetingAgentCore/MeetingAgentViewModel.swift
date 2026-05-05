@@ -1274,7 +1274,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishRealtimeCaptionPipelineSnapshot(snapshot)
         logCaptionSnapshotPublication(.original, snapshot: snapshot, path: "realtime")
-        startRealtimeCaptionTranslationPumpIfNeeded(context: currentActiveCaptionTranslationContext())
+        startRealtimeCaptionTranslationPumpIfNeeded(
+            context: currentActiveCaptionTranslationContext(),
+            snapshot: snapshot
+        )
     }
 
     private func beginActiveCaptionApply() -> ActiveCaptionApplyContext {
@@ -1586,8 +1589,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
-    private func startRealtimeCaptionTranslationPumpIfNeeded(context: ActiveCaptionTranslationContext) {
-        guard realtimeCaptionSessionHasTranslationProvider else { return }
+    private func startRealtimeCaptionTranslationPumpIfNeeded(
+        context: ActiveCaptionTranslationContext,
+        snapshot: LiveCaptionPipelineSnapshot
+    ) {
+        guard realtimeCaptionSessionHasTranslationProvider || hasSameLanguagePendingTranslation(in: snapshot) else { return }
         guard isCurrentActiveCaptionTranslation(context) else { return }
         guard activeCaptionTranslationTask == nil else { return }
         activeCaptionTranslationGeneration += 1
@@ -1624,12 +1630,25 @@ public final class MeetingAgentViewModel: ObservableObject {
             guard snapshot.turns.contains(where: { $0.translationHealth == .pending }) else {
                 break
             }
+            guard realtimeCaptionSessionHasTranslationProvider || hasSameLanguagePendingTranslation(in: snapshot) else {
+                break
+            }
 
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
 
         if generation == activeCaptionTranslationGeneration {
             activeCaptionTranslationTask = nil
+        }
+    }
+
+    private func hasSameLanguagePendingTranslation(in snapshot: LiveCaptionPipelineSnapshot) -> Bool {
+        snapshot.turns.contains { turn in
+            turn.translationHealth == .pending
+                && TranslationOptions(
+                    sourceLocale: turn.sourceLocale,
+                    targetLocale: turn.targetLocale
+                ).isSameLanguage
         }
     }
 
