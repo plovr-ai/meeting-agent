@@ -83,8 +83,6 @@ public final class LiveCaptionPipeline {
                 visibilityPath: .realtime
             )
         }
-        await scheduleLiveTranslations()
-
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()

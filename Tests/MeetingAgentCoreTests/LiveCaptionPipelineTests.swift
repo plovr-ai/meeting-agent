@@ -89,6 +89,38 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .draft)
     }
 
+    func testRealtimeApplyDoesNotAwaitCaptionTranslationProvider() async throws {
+        let provider = PipelineRecordingTranslationProvider(
+            translations: ["segment-1": "翻译"],
+            delayNanoseconds: 500_000_000
+        )
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+        let startedAt = Date()
+
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "Caption should publish first.",
+                    language: "en-US",
+                    isFinal: false
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.2)
+        XCTAssertEqual(snapshot.turns.first?.originalText, "Caption should publish first.")
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertTrue(provider.requests.isEmpty)
+    }
+
     func testApplyLogsCaptionTurnVisibleWithoutRawText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -180,6 +212,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
             changedSegmentIDs: ["segment-1"],
             plainTextReplacement: nil
         ))
+        _ = await pipeline.scheduleLivePendingTranslations()
 
         _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
             document: TranscriptDocument(segments: [
@@ -912,31 +945,33 @@ final class LiveCaptionPipelineTests: XCTestCase {
             speechFinal: true
         )
 
-        let draftApply = Task {
-            await pipeline.apply(TranscriptSegmentAccumulationResult(
-                document: TranscriptDocument(segments: [draftSegment]),
-                changedSegmentIDs: ["segment-1"],
-                plainTextReplacement: nil
-            ))
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [draftSegment]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let draftTranslation = Task {
+            await pipeline.scheduleLivePendingTranslations()
         }
         try await waitForPipelineCondition { provider.pendingRequestCount == 1 }
 
-        let finalApply = Task {
-            await pipeline.apply(TranscriptSegmentAccumulationResult(
-                document: TranscriptDocument(segments: [finalSegment]),
-                changedSegmentIDs: ["segment-1"],
-                plainTextReplacement: nil
-            ))
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [finalSegment]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let finalTranslation = Task {
+            await pipeline.schedulePendingTranslations()
         }
         try await waitForPipelineCondition { provider.pendingRequestCount == 2 }
 
         provider.completeRequest(at: 1, targetText: "最终翻译")
-        let finalSnapshot = await finalApply.value
+        let finalSnapshot = await finalTranslation.value
         XCTAssertEqual(finalSnapshot.turns.first?.translatedText, "最终翻译")
         XCTAssertEqual(finalSnapshot.turns.first?.translationState, .final)
 
         provider.completeRequest(at: 0, targetText: "草稿翻译")
-        _ = await draftApply.value
+        _ = await draftTranslation.value
         let currentSnapshot = await pipeline.schedulePendingTranslations()
 
         XCTAssertEqual(currentSnapshot.turns.first?.translatedText, "最终翻译")
