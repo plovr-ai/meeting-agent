@@ -1281,6 +1281,57 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(document.segments.first?.translationIsFinal, true)
     }
 
+    func testSlowCaptionTranslationDoesNotBlockOriginalRealtimeCaption() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                targetLocaleIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                transcriptionExecutionMode: .hosted,
+                translationExecutionMode: .hosted,
+                hostedTranscriptionProviderID: "deepgram-transcribe",
+                hostedTranslationProviderID: "openrouter-translation",
+                hostedTranslationModelID: "google/gemini-2.5-flash",
+                openRouterAPIKey: "settings-openrouter-key",
+                deepgramAPIKey: "settings-deepgram-key"
+            ),
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
+
+        viewModel.drainRecordingFrames()
+
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.originalText == "Alex is the launch owner."
+        }
+        XCTAssertNil(viewModel.liveCaptionTurns.first?.translatedText)
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        provider.completeRequest(at: 0, targetText: "Alex 是上线负责人。")
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.translatedText == "Alex 是上线负责人。"
+        }
+    }
+
     func testReopenedMeetingHydratesPersistedCaptionTranslationWithoutProviderRequest() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

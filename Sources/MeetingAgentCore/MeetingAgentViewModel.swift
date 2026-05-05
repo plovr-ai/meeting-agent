@@ -38,12 +38,15 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let exportService: MeetingExportService
     private var realtimeCaptionSession: RealtimeCaptionSession
     private var realtimeCaptionSessionUsesCaptionTranslationProvider = false
+    private var realtimeCaptionSessionHasTranslationProvider = false
     private var latestRealtimeCaptionSnapshot: LiveCaptionPipelineSnapshot?
     private var liveCaptionPipeline: LiveCaptionPipeline
     private var liveCaptionPipelineUsesCaptionTranslationProvider = false
     private var liveCaptionPipelineHasTranslationProvider = false
     private var activeCaptionApplySequence = 0
     private var activeCaptionApplyTask: Task<Void, Never>?
+    private var activeCaptionTranslationTask: Task<Void, Never>?
+    private var activeCaptionTranslationGeneration = 0
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var liveCaptionReplaySequence = 0
     private var activeCaptionDocumentSignature: String?
@@ -74,6 +77,11 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     struct ActiveCaptionApplyContext: Equatable {
         let sequence: Int
+        let activeMeetingID: UUID?
+        let selectedMeetingID: UUID?
+    }
+
+    private struct ActiveCaptionTranslationContext: Equatable {
         let activeMeetingID: UUID?
         let selectedMeetingID: UUID?
     }
@@ -982,6 +990,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionPipelineHasTranslationProvider = false
         realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline())
         realtimeCaptionSessionUsesCaptionTranslationProvider = false
+        realtimeCaptionSessionHasTranslationProvider = false
         invalidateActiveCaptionApplyTasks()
     }
 
@@ -1253,11 +1262,13 @@ public final class MeetingAgentViewModel: ObservableObject {
             let translationProvider = captionTranslationProviderForCurrentConfiguration(document: latest.document)
             realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline(translationProvider: translationProvider))
             realtimeCaptionSessionUsesCaptionTranslationProvider = true
+            realtimeCaptionSessionHasTranslationProvider = translationProvider != nil
         }
         activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
         let snapshot = await realtimeCaptionSession.apply(latest)
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishRealtimeCaptionPipelineSnapshot(snapshot)
+        startRealtimeCaptionTranslationPumpIfNeeded(context: currentActiveCaptionTranslationContext())
     }
 
     private func beginActiveCaptionApply() -> ActiveCaptionApplyContext {
@@ -1273,7 +1284,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         activeCaptionApplySequence += 1
         activeCaptionApplyTask?.cancel()
         activeCaptionApplyTask = nil
+        invalidateActiveCaptionTranslationTasks()
         cancelPendingDraftCaptionInput(reason: "active_apply_invalidated")
+    }
+
+    private func invalidateActiveCaptionTranslationTasks() {
+        activeCaptionTranslationGeneration += 1
+        activeCaptionTranslationTask?.cancel()
+        activeCaptionTranslationTask = nil
     }
 
     private func cancelPendingDraftCaptionInput(reason: String) {
@@ -1301,6 +1319,18 @@ public final class MeetingAgentViewModel: ObservableObject {
     private func isCurrentActiveCaptionApply(_ context: ActiveCaptionApplyContext) -> Bool {
         context.sequence == activeCaptionApplySequence
             && context.activeMeetingID == activeMeetingID
+            && context.selectedMeetingID == selectedMeetingID
+    }
+
+    private func currentActiveCaptionTranslationContext() -> ActiveCaptionTranslationContext {
+        ActiveCaptionTranslationContext(
+            activeMeetingID: activeMeetingID,
+            selectedMeetingID: selectedMeetingID
+        )
+    }
+
+    private func isCurrentActiveCaptionTranslation(_ context: ActiveCaptionTranslationContext) -> Bool {
+        context.activeMeetingID == activeMeetingID
             && context.selectedMeetingID == selectedMeetingID
     }
 
@@ -1532,6 +1562,52 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionTurns = snapshot.turns
         meetingProgressHealth.caption = snapshot.captionHealth
         meetingProgressHealth.translation = snapshot.translationHealth
+    }
+
+    private func startRealtimeCaptionTranslationPumpIfNeeded(context: ActiveCaptionTranslationContext) {
+        guard realtimeCaptionSessionHasTranslationProvider else { return }
+        guard isCurrentActiveCaptionTranslation(context) else { return }
+        guard activeCaptionTranslationTask == nil else { return }
+        activeCaptionTranslationGeneration += 1
+        let generation = activeCaptionTranslationGeneration
+        activeCaptionTranslationTask = Task { [weak self] in
+            guard let self else { return }
+            await runRealtimeCaptionTranslationPump(context: context, generation: generation)
+        }
+    }
+
+    private func runRealtimeCaptionTranslationPump(
+        context: ActiveCaptionTranslationContext,
+        generation: Int
+    ) async {
+        while !Task.isCancelled {
+            guard generation == activeCaptionTranslationGeneration,
+                  isCurrentActiveCaptionTranslation(context)
+            else {
+                break
+            }
+
+            let snapshot = await realtimeCaptionSession.scheduleLivePendingTranslations()
+
+            guard !Task.isCancelled,
+                  generation == activeCaptionTranslationGeneration,
+                  isCurrentActiveCaptionTranslation(context)
+            else {
+                break
+            }
+
+            publishRealtimeCaptionPipelineSnapshot(snapshot)
+
+            guard snapshot.turns.contains(where: { $0.translationHealth == .pending }) else {
+                break
+            }
+
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        if generation == activeCaptionTranslationGeneration {
+            activeCaptionTranslationTask = nil
+        }
     }
 
     private func flushLiveCaptionPipeline(reason: LiveCaptionFreezeReason) {
