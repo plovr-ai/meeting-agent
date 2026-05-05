@@ -114,6 +114,7 @@ public struct TranscriptSegmentAccumulator {
         }
         document.segments = Self.trimmedCoveredInterimPrefixes(document.segments)
         document.segments = Self.prunedCoveredInterimSegments(document.segments)
+        document.segments = Self.deduplicatedAdjacentOverlaps(document.segments)
         let newIDs = Set(document.segments.map(\.id))
         let changed = Array(previousIDs.symmetricDifference(newIDs).union([segment.id])).sorted()
         return TranscriptSegmentAccumulationResult(
@@ -329,6 +330,241 @@ public struct TranscriptSegmentAccumulator {
         }
         let combinedFinalText = candidates.map(\.text).joined(separator: " ")
         return normalizedTextsOverlap(combinedFinalText, interim.text)
+    }
+
+    private static func deduplicatedAdjacentOverlaps(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        guard segments.count > 1 else { return segments }
+        var segments = segments
+        segments = trimmedInterimPrefixesCoveredByPreviousFinals(segments)
+        segments = trimmedInterimSuffixesCoveredByFollowingFinals(segments)
+        segments.removeAll { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return trimmedFinalPrefixesCoveredByPreviousSegments(segments)
+    }
+
+    private static func trimmedInterimPrefixesCoveredByPreviousFinals(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var output: [TranscriptSegment] = []
+        var previousFinal: TranscriptSegment?
+        for segment in segments {
+            var current = segment
+            if !current.isFinal,
+               let final = previousFinal,
+               segmentsCanShareTextBoundary(final, current),
+               let coveredTokenCount = coveredPrefixTokenCount(in: current.text, after: final.text),
+               coveredTokenCount >= 2 {
+                let text = removingPrefixTokenCount(coveredTokenCount, from: current.text)
+                current = rewritten(
+                    current,
+                    text: text,
+                    startTimeSeconds: adjustedStartTime(after: final, fallback: current.startTimeSeconds)
+                )
+            }
+            output.append(current)
+            if current.isFinal {
+                previousFinal = current
+            }
+        }
+        return output
+    }
+
+    private static func trimmedInterimSuffixesCoveredByFollowingFinals(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var output = segments
+        var nextFinal: TranscriptSegment?
+        for index in output.indices.reversed() {
+            var current = output[index]
+            if !current.isFinal,
+               let final = nextFinal,
+               segmentsCanShareTextBoundary(current, final),
+               let overlap = suffixPrefixOverlap(current.text, final.text),
+               overlap >= 2 {
+                let text = removingSuffixTokenCount(overlap, from: current.text)
+                current = rewritten(current, text: text, startTimeSeconds: current.startTimeSeconds)
+                output[index] = current
+            }
+            if current.isFinal {
+                nextFinal = current
+            }
+        }
+        return output
+    }
+
+    private static func trimmedFinalPrefixesCoveredByPreviousSegments(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var output: [TranscriptSegment] = []
+        for segment in segments {
+            var current = segment
+            if current.isFinal,
+               let previous = output.last,
+               previous.isFinal,
+               segmentsCanShareTextBoundary(previous, current),
+               let overlap = suffixPrefixOverlap(previous.text, current.text),
+               overlap >= 2 {
+                let text = removingPrefixTokenCount(overlap, from: current.text)
+                current = rewritten(current, text: text, startTimeSeconds: current.startTimeSeconds)
+            }
+            if !current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                output.append(current)
+            }
+        }
+        return output
+    }
+
+    private static func segmentsCanShareTextBoundary(_ first: TranscriptSegment, _ second: TranscriptSegment) -> Bool {
+        guard first.sourceProvider == second.sourceProvider,
+              speakersAreCompatible(first.speaker, second.speaker)
+        else {
+            return false
+        }
+        return segmentsAreNearby(first, second)
+    }
+
+    private static func segmentsAreNearby(_ first: TranscriptSegment, _ second: TranscriptSegment) -> Bool {
+        guard let firstEnd = first.endTimeSeconds,
+              let secondStart = second.startTimeSeconds
+        else {
+            return true
+        }
+        return secondStart <= firstEnd + 1.25
+    }
+
+    private static func coveredPrefixTokenCount(in text: String, after previousText: String) -> Int? {
+        let previousTokens = normalizedTokens(previousText)
+        let currentTokens = normalizedTokens(text)
+        let maxOverlap = min(previousTokens.count, currentTokens.count)
+        guard maxOverlap > 0 else { return nil }
+        for candidate in stride(from: maxOverlap, through: 2, by: -1) {
+            let suffix = Array(previousTokens.suffix(candidate))
+            if let start = firstIndex(of: suffix, in: currentTokens),
+               start <= 4 {
+                return start + candidate
+            }
+        }
+        return nil
+    }
+
+    private static func firstIndex(of needle: [String], in haystack: [String]) -> Int? {
+        guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
+        for start in 0...(haystack.count - needle.count) {
+            let end = start + needle.count
+            if Array(haystack[start..<end]) == needle {
+                return start
+            }
+        }
+        return nil
+    }
+
+    private static func suffixPrefixOverlap(_ first: String, _ second: String) -> Int? {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        let maxOverlap = min(firstTokens.count, secondTokens.count)
+        guard maxOverlap > 0 else { return nil }
+        for candidate in stride(from: maxOverlap, through: 1, by: -1) {
+            if Array(firstTokens.suffix(candidate)) == Array(secondTokens.prefix(candidate)) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private static func removingPrefixTokenCount(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.startIndex
+        var insideToken = false
+        while index < text.endIndex {
+            let scalar = text[index].unicodeScalars.first
+            let isToken = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isToken {
+                insideToken = true
+            } else if insideToken {
+                remaining -= 1
+                insideToken = false
+                if remaining == 0 {
+                    return trimmingLeadingBoundary(from: String(text[index...]))
+                }
+            }
+            index = text.index(after: index)
+        }
+        if remaining <= 1, insideToken {
+            return ""
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func removingSuffixTokenCount(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.endIndex
+        var insideToken = false
+        while index > text.startIndex {
+            index = text.index(before: index)
+            let scalar = text[index].unicodeScalars.first
+            let isToken = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isToken {
+                insideToken = true
+            } else if insideToken {
+                remaining -= 1
+                insideToken = false
+                if remaining == 0 {
+                    return trimmingTrailingBoundary(from: String(text[..<text.index(after: index)]))
+                }
+            }
+        }
+        if remaining <= 1, insideToken {
+            return ""
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func trimmingLeadingBoundary(from text: String) -> String {
+        let boundary = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:!?"))
+        var start = text.startIndex
+        while start < text.endIndex {
+            let scalar = text[start].unicodeScalars.first
+            guard scalar.map({ boundary.contains($0) }) == true else { break }
+            start = text.index(after: start)
+        }
+        return String(text[start...])
+    }
+
+    private static func trimmingTrailingBoundary(from text: String) -> String {
+        let boundary = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:!?"))
+        var end = text.endIndex
+        while end > text.startIndex {
+            let previous = text.index(before: end)
+            let scalar = text[previous].unicodeScalars.first
+            guard scalar.map({ boundary.contains($0) }) == true else { break }
+            end = previous
+        }
+        return String(text[..<end])
+    }
+
+    private static func adjustedStartTime(after previous: TranscriptSegment, fallback: Double?) -> Double? {
+        guard let previousEnd = previous.endTimeSeconds else { return fallback }
+        guard let fallback else { return previousEnd }
+        return max(previousEnd, fallback)
+    }
+
+    private static func rewritten(
+        _ segment: TranscriptSegment,
+        text: String,
+        startTimeSeconds: Double?
+    ) -> TranscriptSegment {
+        TranscriptSegment(
+            id: segment.id,
+            speaker: segment.speaker,
+            startTimeSeconds: startTimeSeconds,
+            endTimeSeconds: segment.endTimeSeconds,
+            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            language: segment.language,
+            sourceProvider: segment.sourceProvider,
+            isFinal: segment.isFinal,
+            speechFinal: segment.speechFinal,
+            confidence: segment.confidence,
+            createdAt: segment.createdAt,
+            timingSource: segment.timingSource,
+            translatedText: segment.translatedText,
+            translationTargetLocale: segment.translationTargetLocale,
+            translationIsFinal: segment.translationIsFinal
+        )
     }
 
     private static func speakersAreCompatible(_ first: TranscriptSpeaker, _ second: TranscriptSpeaker) -> Bool {

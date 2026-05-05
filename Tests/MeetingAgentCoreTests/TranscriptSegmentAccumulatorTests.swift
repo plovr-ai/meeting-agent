@@ -126,6 +126,108 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(result.document.segments.first?.translationTargetLocale, "zh-CN")
     }
 
+    func testUpsertDeduplicatesAdjacentFinalSegmentOverlap() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-44.34",
+            start: 44.34,
+            end: 46.9,
+            text: "inside Microsoft Teams, which are outlined here, to be able to take",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-47.52",
+            start: 47.52,
+            end: 52.08,
+            text: "to be able to take advantage of these public preview features.",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.text), [
+            "inside Microsoft Teams, which are outlined here, to be able to take",
+            "advantage of these public preview features."
+        ])
+    }
+
+    func testUpsertTrimsInterimCoveredBySurroundingFinalSegments() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-44.34",
+            start: 44.34,
+            end: 46.9,
+            text: "inside Microsoft Teams, are outlined here,",
+            isFinal: true
+        )))
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-44.5",
+            start: 44.5,
+            end: 48.42,
+            text: "inside Microsoft Teams, which are outlined here, to be able to take",
+            isFinal: false
+        )))
+        let result = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-47.52",
+            start: 47.52,
+            end: 52.08,
+            text: "to be able to take advantage of these public preview features.",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.id), [
+            "deepgram-transcribe-stream-44.34",
+            "deepgram-transcribe-stream-47.52"
+        ])
+        XCTAssertEqual(result.document.segments.map(\.text).joined(separator: " "), """
+        inside Microsoft Teams, are outlined here, to be able to take advantage of these public preview features.
+        """.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func testIssue135MeetingShapeDoesNotRepeatAbleToTake() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        for segment in [
+            deepgramSegment(
+                id: "deepgram-transcribe-stream-39.9",
+                start: 39.9,
+                end: 44.1,
+                text: "below, as an end user, you have to take some steps",
+                isFinal: true
+            ),
+            deepgramSegment(
+                id: "deepgram-transcribe-stream-44.34",
+                start: 44.34,
+                end: 46.9,
+                text: "inside Microsoft Teams, are outlined here,",
+                isFinal: true
+            ),
+            deepgramSegment(
+                id: "deepgram-transcribe-stream-44.5",
+                start: 44.5,
+                end: 48.42,
+                text: "inside Microsoft Teams, which are outlined here, to be able to take",
+                isFinal: false
+            ),
+            deepgramSegment(
+                id: "deepgram-transcribe-stream-47.52",
+                start: 47.52,
+                end: 52.08,
+                text: "to be able to take advantage of these public preview features. So inside the new Teams client,",
+                isFinal: true
+            )
+        ] {
+            _ = accumulator.apply(.upsert(segment))
+        }
+
+        let renderedText = accumulator.currentDocument.segments.map(\.text).joined(separator: " ")
+        XCTAssertFalse(renderedText.contains("to be able to take to be able to take"))
+        XCTAssertEqual(
+            renderedText,
+            "below, as an end user, you have to take some steps inside Microsoft Teams, are outlined here, to be able to take advantage of these public preview features. So inside the new Teams client,"
+        )
+    }
+
     func testFileBackedTranscriptUpdateSinkPersistsUpdates() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-sink-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -144,5 +246,26 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.id), ["segment-1", "segment-2"])
         XCTAssertEqual(document.segments.map(\.text), ["hello", "world"])
         XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello world\n")
+    }
+
+    private func deepgramSegment(
+        id: String,
+        speaker: String = "deepgram-speaker-0",
+        start: Double,
+        end: Double,
+        text: String,
+        isFinal: Bool
+    ) -> TranscriptSegment {
+        TranscriptSegment(
+            id: id,
+            speaker: TranscriptSpeaker(identifier: speaker),
+            startTimeSeconds: start,
+            endTimeSeconds: end,
+            text: text,
+            sourceProvider: SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+            isFinal: isFinal,
+            speechFinal: false,
+            timingSource: .precise
+        )
     }
 }
