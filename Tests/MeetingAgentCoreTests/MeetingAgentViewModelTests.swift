@@ -529,7 +529,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
                 text: "Pipeline replay works.",
-                language: "en-US",
                 isFinal: true,
                 speechFinal: true
             )
@@ -2622,7 +2621,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 attendees: [],
                 agendaTopics: [
                     MeetingAgendaTopic(title: "Budget risk"),
-                    MeetingAgendaTopic(title: "Launch readiness")
+                    MeetingAgendaTopic(title: "Launch readiness"),
+                    MeetingAgendaTopic(title: "Support handoff")
                 ],
                 scheduledStartAt: record.scheduledStartAt,
                 scheduledEndAt: record.scheduledEndAt,
@@ -2652,6 +2652,44 @@ final class MeetingAgentViewModelTests: XCTestCase {
             "Could we clarify Budget risk?",
             "Could we clarify Launch readiness?"
         ])
+    }
+
+    func testRecommendedQuestionsLimitsPersistedProgressToFirstTwo() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var created = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
+        let goal = MeetingGoal(
+            title: "Confirm launch plan",
+            objectives: [],
+            requiredQuestions: [],
+            expectedDecisions: [],
+            keyTerms: []
+        )
+        created.record.meetingGoal = goal
+        try store.save(created.record)
+        let progress = MeetingProgressState(
+            meetingID: created.record.id,
+            goal: goal,
+            status: .onTrack,
+            objectives: [],
+            confirmedItems: [],
+            unresolvedItems: [],
+            suggestedQuestions: [
+                FollowUpQuestionSuggestion(chinese: "一", english: "One", sourceObjectiveID: nil),
+                FollowUpQuestionSuggestion(chinese: "二", english: "Two", sourceObjectiveID: nil),
+                FollowUpQuestionSuggestion(chinese: "三", english: "Three", sourceObjectiveID: nil)
+            ],
+            health: MeetingProgressHealth(caption: .live, translation: .live, analysis: .live),
+            lastAnalyzedSegmentID: nil,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        try JSONEncoder.meetingAgent.encode(progress).write(to: XCTUnwrap(created.record.meetingProgressJSONURL), options: .atomic)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+
+        try viewModel.loadMeetings()
+
+        XCTAssertEqual(viewModel.recommendedQuestions.map(\.english), ["One", "Two"])
     }
 
     func testPreMeetingGoalAnalyzesAfterRecordingStarts() async throws {

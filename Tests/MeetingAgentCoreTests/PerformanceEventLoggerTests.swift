@@ -85,4 +85,42 @@ final class PerformanceEventLoggerTests: XCTestCase {
         XCTAssertEqual(event.metadata["wordCount"], "2")
         XCTAssertEqual(event.metadata["transport"], "webSocket")
     }
+
+    func testDeepgramRawResponseLogsParseFailureMetadata() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("performance-events-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("performance-events.jsonl")
+        let logger = PerformanceEventLogger(url: url)
+
+        logger.logDeepgramRawResponse(
+            Data("not json".utf8),
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe-stream", transport: .webSocket)
+        )
+
+        let line = try XCTUnwrap(String(contentsOf: url, encoding: .utf8).split(separator: "\n").first)
+        let event = try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data(line.utf8))
+        XCTAssertEqual(event.event, "deepgram_raw_response_received")
+        XCTAssertEqual(event.metadata["parseStatus"], "failed")
+        XCTAssertEqual(event.metadata["payloadBytes"], "8")
+        XCTAssertEqual(event.metadata["providerID"], "deepgram-transcribe-stream")
+    }
+
+    func testDeepgramRawResponseLogsEmptyWordCountWhenAlternativesAreMissing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("performance-events-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("performance-events.jsonl")
+        let logger = PerformanceEventLogger(url: url)
+        let payload = Data(#"{"type":"Results","is_final":false}"#.utf8)
+
+        logger.logDeepgramRawResponse(
+            payload,
+            context: DeepgramRawResponseContext(providerID: "deepgram-transcribe-stream", transport: .webSocket)
+        )
+
+        let line = try XCTUnwrap(String(contentsOf: url, encoding: .utf8).split(separator: "\n").first)
+        let event = try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data(line.utf8))
+        XCTAssertEqual(event.metadata["parseStatus"], "ok")
+        XCTAssertEqual(event.metadata["wordCount"], "0")
+        XCTAssertNil(event.audioTimeSeconds)
+    }
 }
