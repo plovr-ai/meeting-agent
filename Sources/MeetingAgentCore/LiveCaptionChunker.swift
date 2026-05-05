@@ -279,15 +279,74 @@ public struct LiveCaptionChunker: Equatable {
         let second = second.trimmingCharacters(in: .whitespacesAndNewlines)
         if first.isEmpty { return second }
         if second.isEmpty { return first }
+        if let overlap = suffixPrefixOverlap(first, second), overlap >= 2 {
+            let trimmedSecond = removingPrefixTokenCount(overlap, from: second)
+            if trimmedSecond.isEmpty { return first }
+            return "\(first) \(trimmedSecond)"
+        }
         return "\(first) \(second)"
+    }
+
+    private func suffixPrefixOverlap(_ first: String, _ second: String) -> Int? {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        let maxOverlap = min(firstTokens.count, secondTokens.count)
+        guard maxOverlap > 0 else { return nil }
+        for candidate in stride(from: maxOverlap, through: 1, by: -1) {
+            if Array(firstTokens.suffix(candidate)) == Array(secondTokens.prefix(candidate)) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private func normalizedTokens(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private func removingPrefixTokenCount(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.startIndex
+        var insideToken = false
+        while index < text.endIndex {
+            let scalar = text[index].unicodeScalars.first
+            let isToken = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isToken {
+                insideToken = true
+            } else if insideToken {
+                remaining -= 1
+                insideToken = false
+                if remaining == 0 {
+                    return trimmingLeadingBoundary(from: String(text[index...]))
+                }
+            }
+            index = text.index(after: index)
+        }
+        if remaining <= 1, insideToken {
+            return ""
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func trimmingLeadingBoundary(from text: String) -> String {
+        let boundary = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:!?"))
+        var start = text.startIndex
+        while start < text.endIndex {
+            let scalar = text[start].unicodeScalars.first
+            guard scalar.map({ boundary.contains($0) }) == true else { break }
+            start = text.index(after: start)
+        }
+        return String(text[start...])
     }
 
     private func hasSentenceEndingPunctuation(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        for marker in [".", "!", "?", "。", "！", "？"] where trimmed.contains(marker) {
-            return true
-        }
-        return false
+        guard let last = trimmed.last else { return false }
+        return [".", "!", "?", "。", "！", "？"].contains(String(last))
     }
 
     private struct OpenChunk: Equatable {
