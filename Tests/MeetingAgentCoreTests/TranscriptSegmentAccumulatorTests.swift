@@ -184,6 +184,43 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         """.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    func testUpsertTrimsInterimSuffixCoveredByFollowingFinalSegment() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-40.0",
+            start: 40,
+            end: 41,
+            text: "introductory context",
+            isFinal: true
+        )))
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-42.0",
+            start: 42,
+            end: 48,
+            text: "please review to be able to take",
+            isFinal: false
+        )))
+        let result = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-47.52",
+            start: 47.52,
+            end: 52.08,
+            text: "to be able to take advantage of these public preview features.",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.id), [
+            "deepgram-transcribe-stream-40.0",
+            "deepgram-transcribe-stream-42.0",
+            "deepgram-transcribe-stream-47.52"
+        ])
+        XCTAssertEqual(result.document.segments.map(\.text), [
+            "introductory context",
+            "please review",
+            "to be able to take advantage of these public preview features."
+        ])
+    }
+
     func testIssue135MeetingShapeDoesNotRepeatAbleToTake() {
         var accumulator = TranscriptSegmentAccumulator()
 
