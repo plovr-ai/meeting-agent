@@ -77,7 +77,7 @@ final class LiveCaptionChunkerTests: XCTestCase {
 
         let updates = chunker.append(segment(
             id: "s1",
-            text: "This caption is already long enough to become difficult to scan"
+            text: "This caption is already long enough to become difficult to scan."
         ))
 
         XCTAssertEqual(updates.last?.turn.displayState, .sealed)

@@ -1969,7 +1969,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
                 startTimeSeconds: 0,
                 endTimeSeconds: 9.49,
-                text: "My name is Sherwin Chaffee, and I work at Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents",
+                text: "My name is Sherwin Chaffee, and I work at Microsoft as a copilot principal technical specialist. Now on this channel, we often build our own autonomous agents.",
                 language: "en-US",
                 sourceProvider: "deepgram-transcribe",
                 isFinal: true,

@@ -203,6 +203,7 @@ public struct LiveCaptionChunker: Equatable {
             return .punctuation
         }
         if chunk.turn.originalText.count >= policy.readableCharacterLimit,
+           hasSentenceEndingPunctuation(chunk.turn.originalText),
            !shouldKeepMergingShortFragment(chunk, latestSegment: latestSegment) {
             return .maxLength
         }
