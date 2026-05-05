@@ -1332,6 +1332,78 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
     }
 
+    func testDelayedCaptionTranslationDoesNotOverwriteNewerRealtimeCaptionText() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
+            draftCaptionInputThrottleNanoseconds: 0,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "first draft text",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "first draft text with newer words",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.originalText == "first draft text with newer words"
+        }
+
+        provider.completeRequest(at: 0, targetText: "旧翻译")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first draft text with newer words")
+        XCTAssertNotEqual(viewModel.liveCaptionTurns.first?.translatedText, "旧翻译")
+    }
+
+    func testDelayedCaptionTranslationDoesNotPublishAfterRecordingStops() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "caption before stop",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+        provider.completeRequest(at: 0, targetText: "停止后的翻译")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertNotEqual(viewModel.liveCaptionTurns.first?.translatedText, "停止后的翻译")
+    }
+
     func testReopenedMeetingHydratesPersistedCaptionTranslationWithoutProviderRequest() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
