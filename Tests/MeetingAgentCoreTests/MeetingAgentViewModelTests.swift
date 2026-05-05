@@ -403,6 +403,94 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertTrue(replayEvents.isEmpty)
     }
 
+    func testSelectingActiveRecordingMeetingKeepsRealtimeCaptionsAndDoesNotReplayTranscriptFile() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "live-1",
+            text: "Realtime caption should stay visible",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.map(\.sourceSegmentID) == ["live-1"]
+        }
+
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(
+                id: "file-1",
+                text: "File replay should not replace active captions.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        viewModel.selectMeeting(record.id)
+        await viewModel.waitForLiveCaptionReplayForTesting()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["live-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Realtime caption should stay visible")
+        let replayEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" && $0.metadata["path"] == "replay" }
+        XCTAssertTrue(replayEvents.isEmpty)
+    }
+
+    func testSelectingCompletedMeetingDuringActiveRecordingKeepsActiveRealtimeCaptions() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let completed = try fixture.store.createMeeting(name: "Completed Meeting", startedAt: Date(timeIntervalSince1970: 0)).record
+        let completedWriter = try TranscriptFileWriter(url: XCTUnwrap(completed.transcriptURL))
+        try completedWriter.replace(with: [
+            TranscriptSegment(
+                id: "completed-1",
+                text: "Completed meeting replay should stay inactive.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try viewModel.loadMeetings()
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "live-1",
+            text: "Active recording remains the visible source",
+            language: "en-US",
+            isFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.map(\.sourceSegmentID) == ["live-1"]
+        }
+        let activeRecord = try XCTUnwrap(viewModel.meetings.first)
+
+        viewModel.selectMeeting(completed.id)
+        await viewModel.waitForLiveCaptionReplayForTesting()
+
+        XCTAssertEqual(viewModel.selectedMeetingID, activeRecord.id)
+        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["live-1"])
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Active recording remains the visible source")
+        let completedReplayEvents = try readPerformanceEvents(from: XCTUnwrap(completed.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" && $0.metadata["path"] == "replay" }
+        XCTAssertTrue(completedReplayEvents.isEmpty)
+    }
+
     func testDrainRecordingFramesUsesRecorderTranscriptUpdatesForLiveCaptions() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
