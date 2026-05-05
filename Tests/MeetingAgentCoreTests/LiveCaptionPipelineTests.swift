@@ -132,6 +132,34 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertFalse(visible.metadata.values.contains("Sensitive customer launch detail"))
     }
 
+    func testReplayLogsCaptionTurnVisibleWithReplayPath() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "Replay this saved caption.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+
+        _ = pipeline.replayCaptionsOnly(document)
+
+        let events = try readPipelineEvents(from: eventsURL)
+        let visible = try XCTUnwrap(events.first { $0.event == "caption_turn_visible" })
+        XCTAssertEqual(visible.metadata["path"], "replay")
+    }
+
     func testApplyLogsCarriedForwardTranslationWhenDraftTextChanges() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

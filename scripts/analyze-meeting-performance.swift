@@ -112,13 +112,22 @@ private func decodeISO8601Date(from decoder: Decoder) throws -> Date {
 }
 
 struct MeetingPerformanceAnalyzer {
-    let events: [PerformanceEvent]
+    let allEvents: [PerformanceEvent]
+
+    init(events: [PerformanceEvent]) {
+        self.allEvents = events
+    }
+
+    private var events: [PerformanceEvent] {
+        realtimeEvents
+    }
 
     func report(inputPath: String) -> String {
         var lines: [String] = []
         lines.append("Meeting Performance Report")
         lines.append("Input: \(inputPath)")
-        lines.append("Events: \(events.count)")
+        lines.append("Events: \(allEvents.count)")
+        lines.append("Realtime Events: \(events.count)")
         lines.append("")
         lines.append("Experience KPIs")
         lines.append("Time to First Live Caption: \(format(duration: timeToFirstLiveCaption()))")
@@ -155,6 +164,12 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Translation path p50: \(translationPathText())")
         lines.append("Translation outcomes: scheduled \(translationEvents("caption_translation_scheduled").count), attached \(translationEvents("caption_translation_attached").count), persisted \(translationEvents("caption_translation_persisted").count), rebound \(translationEvents("caption_translation_rebound").count), stale \(translationEvents("caption_translation_stale").count), cancelled \(translationEvents("caption_translation_cancelled").count), provider_error \(translationEvents("caption_translation_provider_error").count)")
         lines.append("Batch/Flush Caption Events: \(batchOrFlushCaptionEvents.count) excluded from primary caption lag")
+        let replayOverhead = replayOverheadLines()
+        if !replayOverhead.isEmpty {
+            lines.append("")
+            lines.append("Replay / Idle Overhead")
+            lines.append(contentsOf: replayOverhead)
+        }
         let diagnostics = diagnosticLines()
         if !diagnostics.isEmpty {
             lines.append("")
@@ -162,6 +177,47 @@ struct MeetingPerformanceAnalyzer {
             lines.append(contentsOf: diagnostics)
         }
         return lines.joined(separator: "\n")
+    }
+
+    private var recordingStartedAt: Date? {
+        allEvents.first { $0.event == "recording_started" }?.wallTime
+    }
+
+    private var recordingStoppedAt: Date? {
+        allEvents.first { $0.event == "recording_stopped" }?.wallTime
+    }
+
+    private var realtimeEvents: [PerformanceEvent] {
+        allEvents.filter { event in
+            guard event.metadata["path"] != "replay" else {
+                return false
+            }
+            if let recordingStartedAt, event.wallTime < recordingStartedAt {
+                return false
+            }
+            if let recordingStoppedAt, event.wallTime > recordingStoppedAt {
+                return false
+            }
+            return true
+        }
+    }
+
+    private func replayOverheadLines() -> [String] {
+        let replayCaptionVisible = allEvents.filter {
+            $0.event == "caption_turn_visible" && $0.metadata["path"] == "replay"
+        }.count
+        let postStopTranslation = allEvents.filter { event in
+            guard let recordingStoppedAt else { return false }
+            return event.wallTime > recordingStoppedAt
+                && event.event.hasPrefix("caption_translation_")
+        }.count
+        guard replayCaptionVisible > 0 || postStopTranslation > 0 else {
+            return []
+        }
+        return [
+            "Replay Caption Visible Events: \(replayCaptionVisible)",
+            "Post-Stop Translation Events: \(postStopTranslation)"
+        ]
     }
 
     private var firstAudioSent: PerformanceEvent? {

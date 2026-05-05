@@ -30,6 +30,11 @@ public final class LiveCaptionPipeline {
     private var ingestedSegmentSignaturesByID: [String: String] = [:]
     private var storeGeneration = 0
 
+    private enum CaptionVisibilityPath: String {
+        case realtime
+        case replay
+    }
+
     public init(
         sourceLocale: String,
         targetLocale: String,
@@ -71,7 +76,12 @@ public final class LiveCaptionPipeline {
         for segment in result.document.segments where changedSegmentIDs.contains(segment.id) {
             let receivedAt = Date()
             logSegmentIngestedIfNeeded(segment, path: segment.isFinal ? "final" : "interim")
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment, segmentReceivedAt: receivedAt)
+            applyEvents(
+                turnAssembler.apply(segment),
+                sourceSegment: segment,
+                segmentReceivedAt: receivedAt,
+                visibilityPath: .realtime
+            )
         }
         await scheduleLiveTranslations()
 
@@ -153,7 +163,8 @@ public final class LiveCaptionPipeline {
         _ events: [CaptionTurnEvent],
         sourceSegment: TranscriptSegment? = nil,
         segmentReceivedAt: Date? = nil,
-        currentSegments: [TranscriptSegment] = []
+        currentSegments: [TranscriptSegment] = [],
+        visibilityPath: CaptionVisibilityPath = .realtime
     ) {
         for event in events {
             switch event {
@@ -166,14 +177,14 @@ public final class LiveCaptionPipeline {
                         applying: turn
                     )
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
-                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     interimSegmentsByID[sourceSegment.id] = sourceSegment
                     continue
                 }
                 let updated = store.upsert(turn)
                 if let sourceSegment {
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
-                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                 }
             case .sealed(let turn):
                 if let sourceSegment,
@@ -184,7 +195,7 @@ public final class LiveCaptionPipeline {
                         applying: turn
                     )
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
-                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
                     }
@@ -193,7 +204,7 @@ public final class LiveCaptionPipeline {
                 let updated = store.upsert(turn)
                 if let sourceSegment {
                     hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
-                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt)
+                    logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
                     }
@@ -201,7 +212,7 @@ public final class LiveCaptionPipeline {
             case .interimUpdated(let segment):
                 let turn = store.append(segment)
                 hydrateCachedTranslation(from: segment, toTurnID: turn.id)
-                logCaptionTurnVisible(turn, sourceSegment: segment, receivedAt: segmentReceivedAt)
+                logCaptionTurnVisible(turn, sourceSegment: segment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                 interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
                 let updatedTurn = store.removeSourceSegment(turnID, remainingSegments: currentSegments)
@@ -219,9 +230,11 @@ public final class LiveCaptionPipeline {
     private func logCaptionTurnVisible(
         _ turn: LiveCaptionTurn,
         sourceSegment: TranscriptSegment,
-        receivedAt: Date?
+        receivedAt: Date?,
+        visibilityPath: CaptionVisibilityPath
     ) {
         var metadata = captionMetadata(for: turn, sourceSegment: sourceSegment)
+        metadata["path"] = visibilityPath.rawValue
         if let receivedAt {
             metadata.merge(PerformanceEventLogger.durationMetadata(from: receivedAt)) { _, new in new }
         }
@@ -299,11 +312,11 @@ public final class LiveCaptionPipeline {
         resetCaptionProjection(sourceLocale: sourceLocale, targetLocale: targetLocale)
         for segment in document.segments where segment.isFinal {
             logSegmentIngestedIfNeeded(segment, path: "final")
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment, visibilityPath: .replay)
         }
         for segment in document.segments where !segment.isFinal {
             logSegmentIngestedIfNeeded(segment, path: "interim")
-            applyEvents(turnAssembler.apply(segment), sourceSegment: segment)
+            applyEvents(turnAssembler.apply(segment), sourceSegment: segment, visibilityPath: .replay)
         }
         for previous in previousTranslatedTurns {
             guard let translatedText = previous.translatedText else { continue }

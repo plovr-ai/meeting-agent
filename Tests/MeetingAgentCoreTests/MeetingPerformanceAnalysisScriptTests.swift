@@ -128,6 +128,57 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Caption lag KPI protected: batch/flush visible events excluded"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptSeparatesReplayAndPostStopEvents() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-replay-analysis-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-01T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-01T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:01Z", audio: 1, segmentID: "draft-1", isFinal: false, textLength: 5, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:02Z", audio: 2, segmentID: "final-1", isFinal: true, textLength: 12, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:02.100Z", segmentID: "turn-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationRequestID": "translation-1"
+            ]),
+            event("caption_translation_attached", wallTime: "2026-05-01T00:00:03Z", segmentID: "turn-1", isFinal: true, textLength: 4, metadata: [
+                "translationKind": "final",
+                "translationRequestID": "translation-1",
+                "sourceSegmentID": "final-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-01T00:00:04Z"),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:05Z", audio: 2, segmentID: "final-1", isFinal: true, textLength: 12, metadata: [
+                "path": "replay",
+                "turnID": "turn-1"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-01T00:00:06Z", audio: 6, segmentID: "replay-draft", isFinal: false, textLength: 20, metadata: [
+                "path": "replay",
+                "turnID": "turn-replay"
+            ]),
+            event("caption_translation_scheduled", wallTime: "2026-05-01T00:00:07Z", segmentID: "turn-replay", isFinal: false, textLength: 20, metadata: [
+                "translationKind": "draft",
+                "translationRequestID": "translation-replay"
+            ])
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Caption Stability: 1.00 updates/final caption"))
+        XCTAssertTrue(result.stdout.contains("Translation Success Rate: 100.0%"))
+        XCTAssertTrue(result.stdout.contains("Replay / Idle Overhead"))
+        XCTAssertTrue(result.stdout.contains("Replay Caption Visible Events: 2"))
+        XCTAssertTrue(result.stdout.contains("Post-Stop Translation Events: 1"))
+    }
+
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

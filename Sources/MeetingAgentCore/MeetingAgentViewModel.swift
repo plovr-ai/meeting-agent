@@ -44,6 +44,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var liveCaptionReplaySequence = 0
     private var activeCaptionDocumentSignature: String?
+    private var selectedMeetingReplaySignature: SelectedMeetingReplaySignature?
+    private var selectedMeetingReplayFileSignature: SelectedMeetingTranscriptFileSignature?
+    private var nextSelectedMeetingPendingTranslationRetryAt: Date?
     private let liveCaptionSnapshotDebounceNanoseconds: UInt64
     private let draftCaptionInputThrottleNanoseconds: UInt64
     private var pendingDraftCaptionInput: PendingDraftCaptionInput?
@@ -53,6 +56,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var pendingLiveCaptionSnapshot: LiveCaptionPipelineSnapshot?
     private var pendingLiveCaptionSnapshotTask: Task<Void, Never>?
     private var pendingLiveCaptionSnapshotGeneration = 0
+    private static let selectedMeetingPendingTranslationRetryInterval: TimeInterval = 1.5
     @Published public private(set) var meetingGoal: MeetingGoal?
     public var recommendedQuestions: [FollowUpQuestionSuggestion] {
         Array((meetingProgressState?.suggestedQuestions ?? []).prefix(2))
@@ -75,6 +79,21 @@ public final class MeetingAgentViewModel: ObservableObject {
         var context: ActiveCaptionApplyContext
         var latestChangedSegmentID: String?
         var changedSegmentCount: Int
+    }
+
+    private struct SelectedMeetingReplaySignature: Equatable {
+        var meetingID: UUID
+        var captionDocumentSignature: String
+        var sourceLocaleIdentifier: String
+        var targetLocaleIdentifier: String
+        var hasTranslationProvider: Bool
+    }
+
+    private struct SelectedMeetingTranscriptFileSignature: Equatable {
+        var meetingID: UUID
+        var path: String
+        var modificationTime: TimeInterval?
+        var fileSize: UInt64?
     }
 
     public init(
@@ -938,6 +957,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask = nil
         liveCaptionReplaySequence += 1
         activeCaptionDocumentSignature = nil
+        selectedMeetingReplaySignature = nil
+        selectedMeetingReplayFileSignature = nil
+        nextSelectedMeetingPendingTranslationRetryAt = nil
         resetDraftCaptionInputThrottleState(reason: "pipeline_reset")
         clearLiveCaptionTurns()
         liveCaptionPipeline = makeLiveCaptionPipeline()
@@ -1004,26 +1026,66 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func refreshLiveCaptionTurnsFromSelectedMeetingSynchronously() {
+        guard let selectedMeetingID,
+              let transcriptJSONURL = selectedMeeting?.transcriptJSONURL else {
+            liveCaptionReplayTask = nil
+            activeCaptionDocumentSignature = nil
+            selectedMeetingReplaySignature = nil
+            selectedMeetingReplayFileSignature = nil
+            nextSelectedMeetingPendingTranslationRetryAt = nil
+            clearLiveCaptionTurns()
+            meetingProgressHealth.caption = .idle
+            return
+        }
+        let fileSignature = Self.selectedMeetingTranscriptFileSignature(
+            meetingID: selectedMeetingID,
+            transcriptJSONURL: transcriptJSONURL
+        )
+        if selectedMeetingReplayFileSignature == fileSignature,
+           let selectedMeetingReplaySignature,
+           selectedMeetingReplaySignature.hasTranslationProvider,
+           selectedMeetingReplaySignature.hasTranslationProvider == liveCaptionPipelineHasTranslationProvider {
+            schedulePendingLiveTranslationsForUnchangedReplayIfNeeded()
+            return
+        }
         guard let document = selectedTranscriptDocument() else {
             liveCaptionReplayTask = nil
             activeCaptionDocumentSignature = nil
+            selectedMeetingReplaySignature = nil
+            selectedMeetingReplayFileSignature = nil
+            nextSelectedMeetingPendingTranslationRetryAt = nil
             clearLiveCaptionTurns()
             meetingProgressHealth.caption = .idle
+            return
+        }
+        let translationProvider = liveCaptionPipelineHasTranslationProvider
+            ? nil
+            : captionTranslationProviderForCurrentConfiguration(document: document)
+        let replaySignature = SelectedMeetingReplaySignature(
+            meetingID: selectedMeetingID,
+            captionDocumentSignature: Self.captionDocumentSignature(document),
+            sourceLocaleIdentifier: speechConfiguration.localeIdentifier,
+            targetLocaleIdentifier: speechConfiguration.targetLocaleIdentifier,
+            hasTranslationProvider: liveCaptionPipelineHasTranslationProvider || translationProvider != nil
+        )
+        guard selectedMeetingReplaySignature != replaySignature else {
+            selectedMeetingReplayFileSignature = fileSignature
+            schedulePendingLiveTranslationsForUnchangedReplayIfNeeded()
             return
         }
         liveCaptionReplayTask?.cancel()
         liveCaptionReplaySequence += 1
         let sequence = liveCaptionReplaySequence
-        let translationProvider = liveCaptionPipelineHasTranslationProvider
-            ? nil
-            : captionTranslationProviderForCurrentConfiguration(document: document)
         if !liveCaptionPipelineUsesCaptionTranslationProvider
             || (translationProvider != nil && !liveCaptionPipelineHasTranslationProvider) {
             liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
             liveCaptionPipelineUsesCaptionTranslationProvider = true
             liveCaptionPipelineHasTranslationProvider = translationProvider != nil
         }
-        activeCaptionDocumentSignature = Self.transcriptDocumentSignature(document)
+        activeCaptionDocumentSignature = replaySignature.captionDocumentSignature
+        selectedMeetingReplaySignature = replaySignature
+        selectedMeetingReplayFileSignature = fileSignature
+        nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate()
         publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
@@ -1034,11 +1096,33 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    private func schedulePendingLiveTranslationsForUnchangedReplayIfNeeded() {
+        guard liveCaptionTurns.contains(where: { $0.translationHealth == .pending }) else {
+            nextSelectedMeetingPendingTranslationRetryAt = nil
+            return
+        }
+        let now = Date()
+        if let nextSelectedMeetingPendingTranslationRetryAt,
+           now < nextSelectedMeetingPendingTranslationRetryAt {
+            return
+        }
+        nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate(from: now)
+        liveCaptionReplayTask = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
+            publishLiveCaptionPipelineSnapshot(snapshot)
+        }
+    }
+
+    private static func nextSelectedMeetingPendingTranslationRetryDate(from date: Date = Date()) -> Date {
+        date.addingTimeInterval(selectedMeetingPendingTranslationRetryInterval)
+    }
+
     private func refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe() {
         guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
             return
         }
-        let documentSignature = Self.transcriptDocumentSignature(document)
+        let documentSignature = Self.captionDocumentSignature(document)
         guard activeCaptionDocumentSignature != documentSignature else {
             return
         }
@@ -1088,7 +1172,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
         liveCaptionPipelineUsesCaptionTranslationProvider = true
         liveCaptionPipelineHasTranslationProvider = translationProvider != nil
-        activeCaptionDocumentSignature = Self.transcriptDocumentSignature(document)
+        activeCaptionDocumentSignature = Self.captionDocumentSignature(document)
         let snapshot = await liveCaptionPipeline.replay(document)
         if let sequence {
             guard liveCaptionReplaySequence == sequence else { return }
@@ -1107,7 +1191,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         return try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
     }
 
-    private static func transcriptDocumentSignature(_ document: TranscriptDocument) -> String {
+    private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {
         var parts = [String(document.version)]
         parts.reserveCapacity(document.segments.count + 1)
         for segment in document.segments {
@@ -1119,13 +1203,23 @@ public final class MeetingAgentViewModel: ObservableObject {
                 segment.language ?? "",
                 segment.sourceProvider,
                 segment.isFinal ? "final" : "draft",
-                segment.speechFinal ? "speechFinal" : "open",
-                segment.translatedText ?? "",
-                segment.translationTargetLocale ?? "",
-                segment.translationIsFinal.map { String($0) } ?? ""
+                segment.speechFinal ? "speechFinal" : "open"
             ].joined(separator: "\u{1F}"))
         }
         return parts.joined(separator: "\u{1E}")
+    }
+
+    private static func selectedMeetingTranscriptFileSignature(
+        meetingID: UUID,
+        transcriptJSONURL: URL
+    ) -> SelectedMeetingTranscriptFileSignature {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: transcriptJSONURL.path)
+        return SelectedMeetingTranscriptFileSignature(
+            meetingID: meetingID,
+            path: transcriptJSONURL.path,
+            modificationTime: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970,
+            fileSize: (attributes?[.size] as? NSNumber)?.uint64Value
+        )
     }
 
     func applyTranscriptAccumulationResultsForTesting(
@@ -1158,7 +1252,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             liveCaptionPipelineUsesCaptionTranslationProvider = true
             liveCaptionPipelineHasTranslationProvider = translationProvider != nil
         }
-        activeCaptionDocumentSignature = Self.transcriptDocumentSignature(latest.document)
+        activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
         let snapshot = await liveCaptionPipeline.apply(latest)
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishLiveCaptionPipelineSnapshot(snapshot)

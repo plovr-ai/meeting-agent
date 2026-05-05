@@ -1320,6 +1320,76 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationState, .final)
     }
 
+    func testIdleDrainDoesNotReplayUnchangedSelectedTranscriptRepeatedly() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "The selected meeting has already stopped.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let viewModel = MeetingAgentViewModel(store: store, captionTranslationProviderFactory: { _ in nil })
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+
+        viewModel.drainRecordingFrames()
+        let firstVisibleEventCount = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" }
+            .count
+        viewModel.drainRecordingFrames()
+
+        let visibleEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" }
+        XCTAssertGreaterThan(firstVisibleEventCount, 0)
+        XCTAssertEqual(visibleEvents.count, firstVisibleEventCount)
+    }
+
+    func testIdleDrainDoesNotRetryPendingSelectedMeetingTranslationsEveryTick() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "The selected meeting has a pending final translation.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let provider = DelayedViewModelFakeTextTranslationProvider()
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(record.id)
+        try await waitFor { provider.pendingRequestCount == 1 }
+
+        let firstTranslationEventCount = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event.hasPrefix("caption_translation_") }
+            .count
+        viewModel.drainRecordingFrames()
+        viewModel.drainRecordingFrames()
+
+        let translationEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event.hasPrefix("caption_translation_") }
+        XCTAssertGreaterThan(firstTranslationEventCount, 0)
+        XCTAssertEqual(translationEvents.count, firstTranslationEventCount)
+    }
+
     func testCaptionTranslationPerformanceEventsShareRequestID() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
