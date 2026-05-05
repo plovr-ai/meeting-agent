@@ -113,13 +113,28 @@ private func decodeISO8601Date(from decoder: Decoder) throws -> Date {
 
 struct MeetingPerformanceAnalyzer {
     let allEvents: [PerformanceEvent]
+    private let events: [PerformanceEvent]
+    private let recordingStartedAt: Date?
+    private let recordingStoppedAt: Date?
 
-    init(events: [PerformanceEvent]) {
-        self.allEvents = events
-    }
-
-    private var events: [PerformanceEvent] {
-        realtimeEvents
+    init(events allEvents: [PerformanceEvent]) {
+        self.allEvents = allEvents
+        let recordingStartedAt = allEvents.first { $0.event == "recording_started" }?.wallTime
+        let recordingStoppedAt = allEvents.first { $0.event == "recording_stopped" }?.wallTime
+        self.recordingStartedAt = recordingStartedAt
+        self.recordingStoppedAt = recordingStoppedAt
+        self.events = allEvents.filter { event in
+            guard event.metadata["path"] != "replay" else {
+                return false
+            }
+            if let recordingStartedAt, event.wallTime < recordingStartedAt {
+                return false
+            }
+            if let recordingStoppedAt, event.wallTime > recordingStoppedAt {
+                return false
+            }
+            return true
+        }
     }
 
     func report(inputPath: String) -> String {
@@ -177,29 +192,6 @@ struct MeetingPerformanceAnalyzer {
             lines.append(contentsOf: diagnostics)
         }
         return lines.joined(separator: "\n")
-    }
-
-    private var recordingStartedAt: Date? {
-        allEvents.first { $0.event == "recording_started" }?.wallTime
-    }
-
-    private var recordingStoppedAt: Date? {
-        allEvents.first { $0.event == "recording_stopped" }?.wallTime
-    }
-
-    private var realtimeEvents: [PerformanceEvent] {
-        allEvents.filter { event in
-            guard event.metadata["path"] != "replay" else {
-                return false
-            }
-            if let recordingStartedAt, event.wallTime < recordingStartedAt {
-                return false
-            }
-            if let recordingStoppedAt, event.wallTime > recordingStoppedAt {
-                return false
-            }
-            return true
-        }
     }
 
     private func replayOverheadLines() -> [String] {
