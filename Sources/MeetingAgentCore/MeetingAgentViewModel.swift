@@ -36,6 +36,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
+    private var realtimeCaptionSession: RealtimeCaptionSession
+    private var realtimeCaptionSessionUsesCaptionTranslationProvider = false
     private var liveCaptionPipeline: LiveCaptionPipeline
     private var liveCaptionPipelineUsesCaptionTranslationProvider = false
     private var liveCaptionPipelineHasTranslationProvider = false
@@ -135,9 +137,16 @@ public final class MeetingAgentViewModel: ObservableObject {
             resolvedSpeechConfiguration = (try? speechConfigurationStore.load()) ?? .default
         }
         self.speechConfiguration = resolvedSpeechConfiguration
-        liveCaptionPipeline = Self.makeLiveCaptionPipeline(
+        let initialLiveCaptionPipeline = Self.makeLiveCaptionPipeline(
             configuration: resolvedSpeechConfiguration,
             translationProvider: nil
+        )
+        liveCaptionPipeline = initialLiveCaptionPipeline
+        realtimeCaptionSession = RealtimeCaptionSession(
+            pipeline: Self.makeLiveCaptionPipeline(
+                configuration: resolvedSpeechConfiguration,
+                translationProvider: nil
+            )
         )
         refreshPrimaryChainPreflightResult()
     }
@@ -381,9 +390,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
         if transcriptResults.isEmpty {
-            if isRecording || activeMeetingID != nil {
-                refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe()
-            } else {
+            if !isRecording && activeMeetingID == nil {
                 refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
             }
             if meetingProgressCoordinator != nil {
@@ -965,6 +972,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionPipeline = makeLiveCaptionPipeline()
         liveCaptionPipelineUsesCaptionTranslationProvider = false
         liveCaptionPipelineHasTranslationProvider = false
+        realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline())
+        realtimeCaptionSessionUsesCaptionTranslationProvider = false
         invalidateActiveCaptionApplyTasks()
     }
 
@@ -1118,37 +1127,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         date.addingTimeInterval(selectedMeetingPendingTranslationRetryInterval)
     }
 
-    private func refreshActiveLiveCaptionTurnsFromSelectedMeetingIfSafe() {
-        guard let document = selectedTranscriptDocument(), !document.segments.isEmpty else {
-            return
-        }
-        let documentSignature = Self.captionDocumentSignature(document)
-        guard activeCaptionDocumentSignature != documentSignature else {
-            return
-        }
-        liveCaptionReplayTask?.cancel()
-        liveCaptionReplaySequence += 1
-        let sequence = liveCaptionReplaySequence
-        let translationProvider = liveCaptionPipelineHasTranslationProvider
-            ? nil
-            : captionTranslationProviderForCurrentConfiguration(document: document)
-        if !liveCaptionPipelineUsesCaptionTranslationProvider
-            || (translationProvider != nil && !liveCaptionPipelineHasTranslationProvider) {
-            liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
-            liveCaptionPipelineUsesCaptionTranslationProvider = true
-            liveCaptionPipelineHasTranslationProvider = translationProvider != nil
-        }
-        activeCaptionDocumentSignature = documentSignature
-        publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
-        liveCaptionReplayTask = Task { [weak self] in
-            guard let self else { return }
-            guard liveCaptionReplaySequence == sequence else { return }
-            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
-            guard liveCaptionReplaySequence == sequence else { return }
-            publishLiveCaptionPipelineSnapshot(snapshot)
-        }
-    }
-
     func waitForLiveCaptionReplayForTesting() async {
         await liveCaptionReplayTask?.value
     }
@@ -1246,14 +1224,13 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) async {
         guard let latest = results.last else { return }
         guard isCurrentActiveCaptionApply(context) else { return }
-        if !liveCaptionPipelineUsesCaptionTranslationProvider {
+        if !realtimeCaptionSessionUsesCaptionTranslationProvider {
             let translationProvider = captionTranslationProviderForCurrentConfiguration(document: latest.document)
-            liveCaptionPipeline = makeLiveCaptionPipeline(translationProvider: translationProvider)
-            liveCaptionPipelineUsesCaptionTranslationProvider = true
-            liveCaptionPipelineHasTranslationProvider = translationProvider != nil
+            realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline(translationProvider: translationProvider))
+            realtimeCaptionSessionUsesCaptionTranslationProvider = true
         }
         activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
-        let snapshot = await liveCaptionPipeline.apply(latest)
+        let snapshot = await realtimeCaptionSession.apply(latest)
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishLiveCaptionPipelineSnapshot(snapshot)
     }
@@ -1515,10 +1492,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         cancelPendingDraftCaptionInput(reason: "flush")
         let context = beginActiveCaptionApply()
         activeCaptionApplyTask?.cancel()
-        publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.flushCaptionsOnly(reason: reason))
+        publishLiveCaptionPipelineSnapshot(realtimeCaptionSession.flushCaptionsOnly(reason: reason))
         activeCaptionApplyTask = Task { [weak self] in
             guard let self else { return }
-            let snapshot = await liveCaptionPipeline.schedulePendingTranslations()
+            let snapshot = await realtimeCaptionSession.schedulePendingTranslations()
             guard !Task.isCancelled, isCurrentCaptionFlush(context) else { return }
             publishLiveCaptionPipelineSnapshot(snapshot)
         }

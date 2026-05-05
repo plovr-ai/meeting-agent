@@ -84,14 +84,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
 
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.selectedMeeting)
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
-        try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "unfinished thought", language: "en-US")
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            text: "unfinished thought",
+            language: "en-US"
+        )))
 
         viewModel.drainRecordingFrames()
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .draft)
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.chunkState == .draft
+        }
 
         viewModel.stopRecording()
 
@@ -368,10 +371,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
     }
 
-    func testDrainRecordingFramesRefreshesLiveCaptionTurnsFromStructuredTranscript() async throws {
+    func testActiveRecordingEmptyDrainDoesNotReplaySelectedTranscriptFile() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
-        var translationFactoryCallCount = 0
         let viewModel = MeetingAgentViewModel(
             store: fixture.store,
             recorder: fixture.recorder,
@@ -382,10 +384,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
-            captionTranslationProviderFactory: { _ in
-                translationFactoryCallCount += 1
-                return nil
-            },
+            captionTranslationProviderFactory: { _ in nil },
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -398,13 +397,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         viewModel.drainRecordingFrames()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.map(\.sourceSegmentID), ["segment-1", "partial"])
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Confirm launch owner.")
-        XCTAssertEqual(viewModel.liveCaptionTurns.last?.originalText, "partial")
-        XCTAssertEqual(viewModel.liveCaptionTurns.last?.isFinal, false)
-        XCTAssertEqual(viewModel.liveCaptionTurns.last?.translationHealth, .pending)
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.targetLocale, "zh-CN")
-        XCTAssertEqual(translationFactoryCallCount, 1)
+        XCTAssertTrue(viewModel.liveCaptionTurns.isEmpty)
+        let replayEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" && $0.metadata["path"] == "replay" }
+        XCTAssertTrue(replayEvents.isEmpty)
     }
 
     func testDrainRecordingFramesUsesRecorderTranscriptUpdatesForLiveCaptions() async throws {
@@ -1106,18 +1102,14 @@ final class MeetingAgentViewModelTests: XCTestCase {
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(
-                id: "segment-1",
-                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
-                text: "Alex is the launch owner.",
-                language: "en-US",
-                isFinal: true,
-                speechFinal: true
-            )
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -1575,11 +1567,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -1619,11 +1612,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "開始しましょう。", language: "ja", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "開始しましょう。",
+            language: "ja",
+            isFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -1668,17 +1662,13 @@ final class MeetingAgentViewModelTests: XCTestCase {
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(
-                id: "segment-1",
-                speaker: speaker,
-                text: "first",
-                language: "en-US",
-                isFinal: true
-            )
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            speaker: speaker,
+            text: "first",
+            language: "en-US",
+            isFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
         try await waitFor {
@@ -1689,29 +1679,20 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
 
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(
-                id: "segment-1",
-                speaker: speaker,
-                text: "first",
-                language: "en-US",
-                isFinal: true
-            ),
-            TranscriptSegment(
-                id: "segment-2",
-                speaker: speaker,
-                text: "second",
-                language: "en-US",
-                isFinal: true,
-                speechFinal: true
-            )
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-2",
+            speaker: speaker,
+            text: "second",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first second")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .pending)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
 
         try await waitFor {
             viewModel.liveCaptionTurns.first?.translatedText == "第一句 第二句"
@@ -2267,11 +2248,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
-        let record = try XCTUnwrap(viewModel.meetings.first)
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
-        try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "open caption", language: "en-US", isFinal: false)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "open caption",
+            language: "en-US",
+            isFinal: false
+        )))
         viewModel.drainRecordingFrames()
         try await waitFor { provider.pendingRequestCount == 1 }
         provider.completeRequest(at: 0, targetText: "停止前草稿")
@@ -2339,11 +2321,16 @@ final class MeetingAgentViewModelTests: XCTestCase {
             expectedDecisions: [],
             keyTerms: []
         ))
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true
+        )))
         viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "segment-1"
+        }
 
         await viewModel.refreshMeetingProgress()
 
@@ -2391,11 +2378,16 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 )
             )
         )
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "We discussed hiring.", language: "en-US", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "We discussed hiring.",
+            language: "en-US",
+            isFinal: true
+        )))
         viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "segment-1"
+        }
 
         await viewModel.refreshMeetingProgress()
 
@@ -2429,12 +2421,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         ))
         try await viewModel.startRecording(for: target)
         let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true
+        )))
 
         viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "segment-1"
+        }
         await viewModel.refreshMeetingProgress()
 
         XCTAssertEqual(viewModel.meetingProgressState?.status, .onTrack)
@@ -2467,11 +2464,16 @@ final class MeetingAgentViewModelTests: XCTestCase {
             expectedDecisions: [],
             keyTerms: []
         ))
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US", isFinal: true)
-        ])
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "Alex is the launch owner.",
+            language: "en-US",
+            isFinal: true
+        )))
         viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "segment-1"
+        }
         await viewModel.refreshMeetingProgress()
         XCTAssertNotNil(viewModel.meetingProgressState)
 
