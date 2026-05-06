@@ -466,6 +466,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private var receiveTask: Task<Void, Never>?
     private var sendFailure: String?
     private var fallbackSegmentIndex = 0
+    private var reconciler = DeepgramTranscriptReconciler()
 
     var failureReason: String? {
         failureLock.lock()
@@ -516,16 +517,26 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
-        guard segment.isFinal else {
-            let writtenSegment = try writer.upsert(segment)
-            transcriptUpdateSink?.receive(.upsert(writtenSegment))
-            performanceEventLogger?.logSegment("transcript_segment_written", segment: writtenSegment)
-            return
+        let output = reconciler.apply(segment)
+
+        for result in output.realtimeUpdates {
+            let realtimeSegments = TranscriptFileWriter.assignSpeakerLabels(to: result.document.segments)
+            for realtimeSegment in realtimeSegments where result.changedSegmentIDs.contains(realtimeSegment.id) {
+                transcriptUpdateSink?.receiveRealtime(.upsert(realtimeSegment))
+                performanceEventLogger?.logSegment("transcript_segment_written", segment: realtimeSegment)
+            }
         }
-        let writtenSegment = try writer.upsert(segment)
-        transcriptUpdateSink?.receive(.upsert(writtenSegment))
-        performanceEventLogger?.logSegment("transcript_segment_written", segment: writtenSegment)
-        advanceFallbackSegmentIndexIfNeeded(for: writtenSegment)
+
+        guard !output.finalUpdates.isEmpty else { return }
+        let finalSegments = TranscriptFileWriter.assignSpeakerLabels(to: output.finalDocument.segments)
+        try writer.replace(with: finalSegments)
+        for result in output.finalUpdates {
+            for finalSegment in finalSegments where result.changedSegmentIDs.contains(finalSegment.id) {
+                transcriptUpdateSink?.receiveFinal(.upsert(finalSegment))
+                performanceEventLogger?.logSegment("transcript_segment_written", segment: finalSegment)
+                advanceFallbackSegmentIndexIfNeeded(for: finalSegment)
+            }
+        }
     }
 
     private func stableFallbackSegment(_ segment: TranscriptSegment) -> TranscriptSegment {

@@ -241,8 +241,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(client.requests.first?.sampleRate, 48_000)
         XCTAssertEqual(client.requests.first?.channelCount, 1)
         XCTAssertEqual(session.sentFrames, [frame])
-        XCTAssertEqual(updateSink.updates.count, 1)
-        guard case .upsert(let updatedSegment) = updateSink.updates.first else {
+        XCTAssertEqual(updateSink.finalUpdates.count, 1)
+        guard case .upsert(let updatedSegment) = updateSink.finalUpdates.first else {
             return XCTFail("Expected upsert update")
         }
         XCTAssertEqual(updatedSegment.id, "dg-1")
@@ -305,10 +305,10 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
           }
         }
         """)
-        try await waitFor { updateSink.updates.count == 1 }
+        try await waitFor { updateSink.realtimeUpdates.count == 1 }
         transcriber.finish()
 
-        guard case .upsert(let updatedSegment) = updateSink.updates.first else {
+        guard case .upsert(let updatedSegment) = updateSink.realtimeUpdates.first else {
             return XCTFail("Expected upsert update")
         }
         XCTAssertEqual(updatedSegment.speakerID, "deepgram-speaker-0")
@@ -338,7 +338,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(segments.first?.isFinal, false)
     }
 
-    func testStreamingProviderPublishesInterimSegmentThenReplacesItWithFinal() async throws {
+    func testStreamingProviderPublishesInterimRealtimeButPersistsOnlyFinal() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-interim-\(UUID().uuidString)")
             .appendingPathExtension("txt")
@@ -348,6 +348,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         }
         let session = FakeDeepgramStreamingSession()
         let client = FakeDeepgramStreamingClient(session: session)
+        let updateSink = RecordingTranscriptUpdateSinkForTests()
         let provider = DeepgramStreamingSpeechTranscriptionProvider(
             configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
             client: client
@@ -356,7 +357,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             transcriptURL: transcriptURL,
             localeIdentifier: "en-US",
             sampleRate: 48_000,
-            channelCount: 1
+            channelCount: 1,
+            transcriptUpdateSink: updateSink
         ))
 
         session.yieldJSON("""
@@ -374,9 +376,9 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         var document = try TranscriptFileWriter.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
-        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
-        XCTAssertEqual(document.segments.map(\.text), ["hello"])
-        XCTAssertEqual(document.segments.map(\.isFinal), [false])
+        XCTAssertEqual(document.segments, [])
+        XCTAssertEqual(updateSink.realtimeTexts, ["hello"])
+        XCTAssertEqual(updateSink.finalTexts, [])
 
         session.yieldJSON("""
         {
@@ -398,6 +400,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
         XCTAssertEqual(document.segments.map(\.text), ["hello world"])
         XCTAssertEqual(document.segments.map(\.isFinal), [true])
+        XCTAssertEqual(updateSink.realtimeTexts, ["hello", "hello world"])
+        XCTAssertEqual(updateSink.finalTexts, ["hello world"])
     }
 
     func testStreamingProviderPreservesFinalSegmentsBeforeSpeechFinal() async throws {
@@ -871,9 +875,36 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
 
 private final class RecordingTranscriptUpdateSinkForTests: TranscriptUpdateSink {
     private(set) var updates: [TranscriptSegmentUpdate] = []
+    private(set) var realtimeUpdates: [TranscriptSegmentUpdate] = []
+    private(set) var finalUpdates: [TranscriptSegmentUpdate] = []
+
+    var realtimeTexts: [String] {
+        realtimeUpdates.compactMap(Self.text)
+    }
+
+    var finalTexts: [String] {
+        finalUpdates.compactMap(Self.text)
+    }
 
     func receive(_ update: TranscriptSegmentUpdate) {
         updates.append(update)
+    }
+
+    func receiveRealtime(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
+        realtimeUpdates.append(update)
+    }
+
+    func receiveFinal(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
+        finalUpdates.append(update)
+    }
+
+    private static func text(from update: TranscriptSegmentUpdate) -> String? {
+        if case .upsert(let segment) = update {
+            return segment.text
+        }
+        return nil
     }
 }
 

@@ -234,7 +234,7 @@ public final class TranscriptFileWriter {
         return labeledSegments
     }
 
-    private static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {
+    static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {
         var mapper = SpeakerLabelMapper(speakers: segments.map(\.speaker))
         var generatedIDsBySpeaker: [TranscriptSpeaker: String] = [:]
         var nextSpeakerIndex = 1
