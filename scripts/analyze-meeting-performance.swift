@@ -181,6 +181,7 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Unit Translation Pipeline")
         lines.append("Live Unit Scheduled Count: \(unitEvents("translation_unit_live_scheduled").count)")
         lines.append("Live Unit Stale Count: \(unitEvents("translation_unit_live_stale").count)")
+        lines.append("Live Unit Dropped After Stop Count: \(allUnitEvents("translation_unit_live_dropped_after_stop").count)")
         lines.append("Stable Unit Persisted Count: \(allUnitEvents("translation_unit_final_persisted").count)")
         lines.append("Preview Dropped After Stop Count: \(allUnitEvents("translation_preview_dropped_after_stop").count)")
         lines.append("Preview Published After Stop Count: \(allUnitEvents("translation_preview_published_after_stop").count)")

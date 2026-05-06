@@ -81,6 +81,82 @@ final class TranslationRuntimeTests: XCTestCase {
         XCTAssertEqual(snapshot.visibleResults.first?.translatedText, "我们确认负责人")
         XCTAssertTrue(persisted.isEmpty)
     }
+
+    func testStopAndFinalizePublishesOnlyStableFinalAndPersistsIt() async {
+        let provider = RuntimeTranslationProvider(translations: ["stable-expected": "我们会复查上线状态。"])
+        var persisted: [TranslationResultPersistenceRecord] = []
+        var runtime = TranslationRuntime()
+        runtime.start(
+            context: TranslationRuntimeContext(
+                meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000333")!,
+                sourceLocale: "en-US",
+                targetLocale: "zh-CN",
+                generation: 7
+            ),
+            liveProvider: provider,
+            accurateProvider: provider,
+            performanceEventLogger: nil,
+            persistFinalResult: { persisted.append($0) }
+        )
+        _ = await runtime.apply(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We should review the rollout status",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: false,
+                    createdAt: Date(timeIntervalSince1970: 1)
+                )
+            ]),
+            generation: 7,
+            now: Date(timeIntervalSince1970: 2)
+        )
+
+        let snapshot = await runtime.stopAndFinalize(generation: 7, now: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(snapshot.state, .stopped)
+        XCTAssertTrue(snapshot.liveResults.isEmpty)
+        XCTAssertEqual(snapshot.stableResults.count, 1)
+        XCTAssertEqual(snapshot.visibleResults.first?.displayState, .stableFinal)
+        XCTAssertEqual(persisted.count, 1)
+        XCTAssertEqual(persisted.first?.sourceSegmentIDs, ["segment-1"])
+    }
+
+    func testLatePreviewAfterStopIsDroppedAndLogged() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("translation-runtime-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let logger = PerformanceEventLogger(url: root.appendingPathComponent("performance-events.jsonl"))
+        let provider = RuntimeTranslationProvider(translations: ["segment-1-live-1": "我们确认负责人"])
+        var runtime = TranslationRuntime()
+        runtime.start(
+            context: TranslationRuntimeContext(
+                meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000444")!,
+                sourceLocale: "en-US",
+                targetLocale: "zh-CN",
+                generation: 3
+            ),
+            liveProvider: provider,
+            accurateProvider: provider,
+            performanceEventLogger: logger
+        )
+
+        _ = await runtime.stopAndFinalize(generation: 3, now: Date(timeIntervalSince1970: 4))
+        let snapshot = await runtime.apply(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(id: "segment-1", text: "We should confirm the launch owner today", language: "en-US", isFinal: false)
+            ]),
+            generation: 3,
+            now: Date(timeIntervalSince1970: 5)
+        )
+
+        let events = try String(contentsOf: root.appendingPathComponent("performance-events.jsonl"), encoding: .utf8)
+            .split(separator: "\n")
+            .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
+        XCTAssertTrue(snapshot.visibleResults.isEmpty)
+        XCTAssertTrue(events.contains { $0.event == "translation_unit_live_dropped_after_stop" })
+    }
 }
 
 private final class RuntimeTranslationProvider: TextTranslationProvider {

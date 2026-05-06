@@ -234,7 +234,10 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
                 "translationState": "stableFinal",
                 "sourceSegmentIDs": "segment-1"
             ]),
-            event("translation_preview_dropped_after_stop", wallTime: "2026-05-06T00:00:05Z", segmentID: "unit-3", isFinal: false, textLength: 0)
+            event("translation_preview_dropped_after_stop", wallTime: "2026-05-06T00:00:05Z", segmentID: "unit-3", isFinal: false, textLength: 0),
+            event("translation_unit_live_dropped_after_stop", wallTime: "2026-05-06T00:00:06Z", segmentID: "unit-4", isFinal: false, textLength: 18, metadata: [
+                "translationKind": "live"
+            ])
         ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
 
         let result = try runScript(arguments: [eventsURL.path])
@@ -243,10 +246,11 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Unit Translation Pipeline"))
         XCTAssertTrue(result.stdout.contains("Live Unit Scheduled Count: 1"))
         XCTAssertTrue(result.stdout.contains("Live Unit Stale Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Live Unit Dropped After Stop Count: 1"))
         XCTAssertTrue(result.stdout.contains("Stable Unit Persisted Count: 1"))
         XCTAssertTrue(result.stdout.contains("Preview Dropped After Stop Count: 1"))
         XCTAssertTrue(result.stdout.contains("Preview Published After Stop Count: 0"))
-        XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 1"))
+        XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 2"))
     }
 
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {

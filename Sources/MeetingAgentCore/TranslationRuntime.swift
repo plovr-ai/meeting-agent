@@ -92,7 +92,15 @@ public struct TranslationRuntime {
             return TranslationRuntimeSnapshot(state: state)
         }
         guard state == .active else {
-            return TranslationRuntimeSnapshot(state: state)
+            let dropped = syntheticDroppedPreviewResults(from: document, now: now)
+            for result in dropped {
+                logDroppedAfterStop(result)
+            }
+            return TranslationRuntimeSnapshot(
+                state: state,
+                visibleResults: [],
+                droppedResults: dropped
+            )
         }
         guard context.generation == generation else {
             logSnapshot(path: "stale_generation", liveCount: 0, stableCount: 0, visibleCount: 0, droppedCount: 0)
@@ -120,9 +128,83 @@ public struct TranslationRuntime {
         return snapshot
     }
 
+    public mutating func stopAndFinalize(
+        generation: Int,
+        now: Date = Date()
+    ) async -> TranslationRuntimeSnapshot {
+        guard let context, context.generation == generation else {
+            return TranslationRuntimeSnapshot(state: state)
+        }
+        state = .stopping
+        guard var pipeline else {
+            state = .stopped
+            return TranslationRuntimeSnapshot(state: state)
+        }
+
+        let pipelineSnapshot = await pipeline.flushAndFinalize(now: now)
+        self.pipeline = pipeline
+        state = .stopped
+        let visibleFinals = pipelineSnapshot.visibleResults.filter { $0.displayState == .stableFinal }
+        let snapshot = TranslationRuntimeSnapshot(
+            state: state,
+            liveResults: [],
+            stableResults: pipelineSnapshot.stableResults,
+            visibleResults: visibleFinals
+        )
+        logSnapshot(
+            path: "stop",
+            liveCount: 0,
+            stableCount: snapshot.stableResults.count,
+            visibleCount: snapshot.visibleResults.count,
+            droppedCount: 0
+        )
+        return snapshot
+    }
+
     public mutating func hydrate(records: [TranslationResultPersistenceRecord]) -> [TranslationResult] {
         hydratedStore.hydrate(from: records)
         return hydratedStore.stableResults()
+    }
+
+    private func syntheticDroppedPreviewResults(
+        from document: TranscriptDocument,
+        now: Date
+    ) -> [TranslationResult] {
+        document.segments
+            .filter { !$0.isFinal }
+            .map { segment in
+                let lane = TranslationLaneID(
+                    speaker: segment.speaker,
+                    sourceLocale: segment.language ?? context?.sourceLocale ?? "",
+                    targetLocale: context?.targetLocale ?? ""
+                )
+                return TranslationResult(
+                    id: "\(segment.id)-dropped-after-stop",
+                    sourceID: segment.id,
+                    laneID: lane,
+                    sourceText: segment.text,
+                    translatedText: "",
+                    displayState: .failedRecoverable,
+                    createdAt: now,
+                    sourceCreatedAt: segment.createdAt,
+                    sourceSegmentIDs: [segment.id]
+                )
+            }
+    }
+
+    private func logDroppedAfterStop(_ result: TranslationResult) {
+        performanceEventLogger?.log(
+            "translation_unit_live_dropped_after_stop",
+            segmentID: result.sourceID,
+            isFinal: false,
+            textLength: result.sourceText.count,
+            metadata: [
+                "translationKind": "live",
+                "translationState": result.displayState.rawValue,
+                "resultID": result.id,
+                "sourceSegmentIDs": result.sourceSegmentIDs.joined(separator: ",")
+            ]
+        )
     }
 
     private func logSnapshot(
