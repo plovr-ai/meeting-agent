@@ -12,9 +12,14 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
     public var minimumApproximateDraftWords: Int
     public var maximumApproximateDraftAgeNanoseconds: UInt64
     public var approximateDraftSimilarityThreshold: Double
+    public var minimumInitialDraftWordCount: Int
+    public var minimumInitialDraftCharacterCount: Int
+    public var minimumInitialDraftCJKCharacterCount: Int
+    public var minimumBoundaryDraftCharacterCount: Int
+    public var fillerDraftPhrases: Set<String>
 
     public init(
-        draftDebounceNanoseconds: UInt64 = 200_000_000,
+        draftDebounceNanoseconds: UInt64 = 750_000_000,
         maxConcurrentTranslationRequests: Int = 2,
         followUpDraftMinimumIntervalNanoseconds: UInt64 = 1_500_000_000,
         followUpDraftMaximumWaitNanoseconds: UInt64 = 3_000_000_000,
@@ -24,7 +29,16 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
         minimumApproximateDraftCharacters: Int = 24,
         minimumApproximateDraftWords: Int = 5,
         maximumApproximateDraftAgeNanoseconds: UInt64 = 6_000_000_000,
-        approximateDraftSimilarityThreshold: Double = 0.75
+        approximateDraftSimilarityThreshold: Double = 0.75,
+        minimumInitialDraftWordCount: Int = 7,
+        minimumInitialDraftCharacterCount: Int = 45,
+        minimumInitialDraftCJKCharacterCount: Int = 14,
+        minimumBoundaryDraftCharacterCount: Int = 8,
+        fillerDraftPhrases: Set<String> = [
+            "um", "uh", "er", "ah", "hmm",
+            "yeah", "yep", "yes", "ok", "okay",
+            "right", "sure", "so", "and", "but"
+        ]
     ) {
         self.draftDebounceNanoseconds = draftDebounceNanoseconds
         self.maxConcurrentTranslationRequests = max(1, maxConcurrentTranslationRequests)
@@ -37,6 +51,11 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
         self.minimumApproximateDraftWords = max(1, minimumApproximateDraftWords)
         self.maximumApproximateDraftAgeNanoseconds = maximumApproximateDraftAgeNanoseconds
         self.approximateDraftSimilarityThreshold = approximateDraftSimilarityThreshold
+        self.minimumInitialDraftWordCount = max(1, minimumInitialDraftWordCount)
+        self.minimumInitialDraftCharacterCount = max(1, minimumInitialDraftCharacterCount)
+        self.minimumInitialDraftCJKCharacterCount = max(1, minimumInitialDraftCJKCharacterCount)
+        self.minimumBoundaryDraftCharacterCount = max(1, minimumBoundaryDraftCharacterCount)
+        self.fillerDraftPhrases = fillerDraftPhrases
     }
 }
 
@@ -51,7 +70,7 @@ public final class CaptionTranslationScheduler {
     private var activeRequestsByKey: [String: ActiveCaptionTranslationRequest] = [:]
     private var pendingDraftTokensByTurnID: [String: UUID] = [:]
     private var requestOrdinalsByTurnID: [String: Int] = [:]
-    private var draftTriggerStatesByTurnID: [String: DraftTranslationTriggerState] = [:]
+    private var planner: CaptionTranslationPlanner
 
     public init(
         provider: TextTranslationProvider?,
@@ -65,6 +84,7 @@ public final class CaptionTranslationScheduler {
         self.persistTranslation = persistTranslation
         self.configuration = configuration
         self.now = now
+        planner = CaptionTranslationPlanner(configuration: configuration, now: now)
     }
 
     public func scheduleTranslations(in store: inout LiveCaptionStore) async {
@@ -910,97 +930,19 @@ public final class CaptionTranslationScheduler {
     }
 
     private func markDraftRequestStarted(forTurnID turnID: String) {
-        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
-        state.isInFlight = true
-        draftTriggerStatesByTurnID[turnID] = state
+        planner.markRequestStarted(forTurnID: turnID)
     }
 
     private func markDraftRequestFinished(forTurnID turnID: String) {
-        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
-        state.isInFlight = false
-        draftTriggerStatesByTurnID[turnID] = state
+        planner.markRequestFinished(forTurnID: turnID)
     }
 
     private func markDraftTranslationVisible(forTurnID turnID: String) {
-        guard var state = draftTriggerStatesByTurnID[turnID] else { return }
-        state.lastVisibleTranslationAt = now()
-        draftTriggerStatesByTurnID[turnID] = state
+        planner.markTranslationVisible(forTurnID: turnID)
     }
 
-    private func draftTriggerDecision(for turn: LiveCaptionTurn, sourceText: String) -> DraftTranslationTriggerDecision {
-        var state = draftTriggerStatesByTurnID[turn.id, default: DraftTranslationTriggerState()]
-        let currentWordCount = wordCount(in: sourceText)
-        let currentCharacterCount = sourceText.count
-        let wordDelta = max(0, currentWordCount - state.lastRequestedWordCount)
-        let characterDelta = max(0, currentCharacterCount - state.lastRequestedCharacterCount)
-        let hasBoundary = hasSemanticBoundary(sourceText)
-        let currentTime = now()
-        var metadata: [String: String] = [
-            "wordDelta": String(wordDelta),
-            "characterDelta": String(characterDelta),
-            "hasSemanticBoundary": String(hasBoundary)
-        ]
-
-        if let lastRequestAt = state.lastRequestAt {
-            metadata["millisecondsSinceLastDraftRequest"] = String(milliseconds(from: lastRequestAt, to: currentTime))
-        }
-        if let lastVisibleTranslationAt = state.lastVisibleTranslationAt {
-            metadata["millisecondsSinceLastVisibleDraftTranslation"] = String(milliseconds(from: lastVisibleTranslationAt, to: currentTime))
-        }
-
-        guard !state.isInFlight else {
-            return .skip(reason: "in_flight", metadata: metadata)
-        }
-
-        guard state.hasSentInitialRequest else {
-            state.hasSentInitialRequest = true
-            state.lastRequestedSourceText = sourceText
-            state.lastRequestedWordCount = currentWordCount
-            state.lastRequestedCharacterCount = currentCharacterCount
-            state.lastRequestAt = currentTime
-            draftTriggerStatesByTurnID[turn.id] = state
-            return .trigger(reason: "initial", metadata: metadata)
-        }
-
-        if let lastRequestAt = state.lastRequestAt,
-           nanoseconds(from: lastRequestAt, to: currentTime) < configuration.followUpDraftMinimumIntervalNanoseconds {
-            return .skip(reason: "min_interval", metadata: metadata)
-        }
-
-        let exceededMaximumWait: Bool = {
-            guard let lastVisibleTranslationAt = state.lastVisibleTranslationAt ?? state.lastRequestAt else {
-                return false
-            }
-            return nanoseconds(from: lastVisibleTranslationAt, to: currentTime) >= configuration.followUpDraftMaximumWaitNanoseconds
-        }()
-        let reachedContentDelta = wordDelta >= configuration.minimumDraftWordDelta
-            || characterDelta >= configuration.minimumDraftCharacterDelta
-
-        guard hasBoundary || reachedContentDelta || exceededMaximumWait else {
-            return .skip(reason: "not_stable_enough", metadata: metadata)
-        }
-
-        let reason: String
-        if hasBoundary {
-            reason = "semantic_boundary"
-        } else if reachedContentDelta {
-            reason = "content_delta"
-        } else {
-            reason = "max_wait"
-        }
-        state.lastRequestedSourceText = sourceText
-        state.lastRequestedWordCount = currentWordCount
-        state.lastRequestedCharacterCount = currentCharacterCount
-        state.lastRequestAt = currentTime
-        draftTriggerStatesByTurnID[turn.id] = state
-        return .trigger(reason: reason, metadata: metadata)
-    }
-
-    private func hasSemanticBoundary(_ text: String) -> Bool {
-        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else {
-            return false
-        }
-        return configuration.semanticBoundaryCharacters.contains(last)
+    private func draftTriggerDecision(for turn: LiveCaptionTurn, sourceText: String) -> CaptionTranslationPlanningDecision {
+        planner.decision(for: turn, sourceText: sourceText)
     }
 
     private func wordCount(in text: String) -> Int {
@@ -1135,21 +1077,6 @@ struct ActiveCaptionTranslationRequest: Equatable {
 
 private struct ApproximateDraftAttachDecision: Equatable {
     var similarity: Double
-}
-
-private struct DraftTranslationTriggerState: Equatable {
-    var hasSentInitialRequest = false
-    var lastRequestedSourceText = ""
-    var lastRequestedWordCount = 0
-    var lastRequestedCharacterCount = 0
-    var lastRequestAt: Date?
-    var lastVisibleTranslationAt: Date?
-    var isInFlight = false
-}
-
-private enum DraftTranslationTriggerDecision: Equatable {
-    case trigger(reason: String, metadata: [String: String])
-    case skip(reason: String, metadata: [String: String])
 }
 
 private struct CaptionTranslationExecution {

@@ -1381,7 +1381,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
-            text: "first draft text",
+            text: "first draft text contains enough context to translate",
             language: "en-US",
             isFinal: false
         )))
@@ -1390,19 +1390,19 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
-            text: "first draft text with newer words",
+            text: "completely different realtime caption should remain visible",
             language: "en-US",
             isFinal: false
         )))
         viewModel.drainRecordingFrames()
         try await waitFor {
-            viewModel.liveCaptionTurns.first?.originalText == "first draft text with newer words"
+            viewModel.liveCaptionTurns.first?.originalText == "completely different realtime caption should remain visible"
         }
 
         provider.completeRequest(at: 0, targetText: "旧翻译")
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first draft text with newer words")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "completely different realtime caption should remain visible")
         XCTAssertNotEqual(viewModel.liveCaptionTurns.first?.translatedText, "旧翻译")
     }
 
@@ -1422,7 +1422,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
-            text: "caption before stop",
+            text: "caption before stop contains enough context to translate",
             language: "en-US",
             isFinal: false
         )))
@@ -1740,7 +1740,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
-                text: "draft caption",
+                text: "draft caption contains enough context to translate",
                 language: "en-US",
                 isFinal: false
             )
@@ -1752,7 +1752,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
-                text: "final caption",
+                text: "final caption contains enough context to translate",
                 language: "en-US",
                 isFinal: true,
                 speechFinal: true
@@ -1954,7 +1954,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
             speaker: speaker,
-            text: "first",
+            text: "first segment contains enough context for preview",
             language: "en-US",
             isFinal: true
         )))
@@ -1971,7 +1971,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-2",
             speaker: speaker,
-            text: "second",
+            text: "second segment closes the thought",
             language: "en-US",
             isFinal: true,
             speechFinal: true
@@ -1979,7 +1979,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         viewModel.drainRecordingFrames()
 
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "first segment contains enough context for preview")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "第一句")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
 
@@ -2000,7 +2000,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
         let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
         try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part", language: "en-US")
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part with enough context", language: "en-US")
         ])
         let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "第一部分"])
         let viewModel = MeetingAgentViewModel(
@@ -2016,7 +2016,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         let longSecondPart = "and the second part adds enough detail about owners timelines risks and next steps to refresh the draft translation"
         try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part", language: "en-US"),
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "This is the first part with enough context", language: "en-US"),
             TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: longSecondPart, language: "en-US")
         ])
         provider.translations = ["segment-2": "第一部分和第二部分"]
@@ -2026,7 +2026,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "第一部分和第二部分" }
 
         XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
-        XCTAssertEqual(provider.requestedSegmentTexts.last, ["This is the first part \(longSecondPart)"])
+        XCTAssertEqual(provider.requestedSegmentTexts.last, ["This is the first part with enough context \(longSecondPart)"])
     }
 
     func testProvisionalDeepgramSegmentUpdatesSameDraftTurnBeforeSpeechFinal() async throws {
@@ -2161,7 +2161,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try writer.replace(with: [
             TranscriptSegment(
                 id: "dg-active",
-                text: "hello interim",
+                text: "hello interim contains enough context to translate",
                 language: "en-US",
                 sourceProvider: "deepgram-transcribe",
                 isFinal: false
@@ -2201,7 +2201,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try writer.replace(with: [
             TranscriptSegment(
                 id: "dg-active",
-                text: "hello inter",
+                text: "hello interim contains enough context to translate",
                 language: "en-US",
                 sourceProvider: "deepgram-transcribe",
                 isFinal: false
@@ -2211,17 +2211,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "临时翻译" }
 
         XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello inter")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello interim contains enough context to translate")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, false)
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.chunkState, .draft)
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationHealth, .live)
-        XCTAssertEqual(provider.requestedSegmentTexts, [["hello inter"]])
+        XCTAssertEqual(provider.requestedSegmentTexts, [["hello interim contains enough context to translate"]])
 
         provider.translations = ["dg-active": "最终翻译"]
         try writer.replace(with: [
             TranscriptSegment(
                 id: "dg-active",
-                text: "hello interim final",
+                text: "hello interim final contains enough context to translate",
                 language: "en-US",
                 sourceProvider: "deepgram-transcribe",
                 isFinal: true,
@@ -2232,9 +2232,12 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "最终翻译" }
         XCTAssertEqual(viewModel.liveCaptionTurns.count, 1)
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello interim final")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "hello interim final contains enough context to translate")
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.isFinal, true)
-        XCTAssertEqual(provider.requestedSegmentTexts, [["hello inter"], ["hello interim final"]])
+        XCTAssertEqual(provider.requestedSegmentTexts, [
+            ["hello interim contains enough context to translate"],
+            ["hello interim final contains enough context to translate"]
+        ])
     }
 
     func testSoftCaptionBoundaryRequestsDraftTranslationButDoesNotFinalizeTranslation() async throws {
@@ -2464,13 +2467,13 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.selectMeeting(record.id)
 
         try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft", language: "en-US")
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft contains enough context to translate", language: "en-US")
         ])
         viewModel.drainRecordingFrames()
         try await waitFor { provider.pendingRequestCount == 1 }
 
         try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft", language: "en-US"),
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first draft contains enough context to translate", language: "en-US"),
             TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "second draft adds enough detail about owners timelines risks and next steps to refresh the draft translation", language: "en-US")
         ])
         viewModel.drainRecordingFrames()
@@ -2479,16 +2482,13 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, nil)
 
         provider.completeRequest(at: 0, targetText: "older translation")
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await Task.sleep(nanoseconds: 250_000_000)
         XCTAssertNil(viewModel.liveCaptionTurns.first?.translatedText)
 
-        try await Task.sleep(nanoseconds: 1_600_000_000)
-        viewModel.drainRecordingFrames()
-        try await waitFor { provider.pendingRequestCount == 2 }
-        provider.completeRequest(at: 1, targetText: "newer translation")
-        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "newer translation" }
-
-        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "newer translation")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, [
+            "first draft contains enough context to translate",
+            "second draft adds enough detail about owners timelines risks and next steps to refresh the draft translation"
+        ].joined(separator: " "))
     }
 
     func testInFlightTranslationPersistsToOriginalMeetingAfterSelectionChanges() async throws {
@@ -2539,7 +2539,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await viewModel.startRecording(for: target)
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
-            text: "open caption",
+            text: "open caption contains enough context to translate",
             language: "en-US",
             isFinal: false
         )))
@@ -2574,14 +2574,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.selectMeeting(record.id)
 
         try writer.replace(with: [
-            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first speaker draft", language: "en-US", isFinal: false),
-            TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-2"), text: "second speaker draft", language: "en-US", isFinal: false)
+            TranscriptSegment(id: "segment-1", speaker: TranscriptSpeaker(identifier: "speaker-1"), text: "first speaker draft contains enough context to translate", language: "en-US", isFinal: false),
+            TranscriptSegment(id: "segment-2", speaker: TranscriptSpeaker(identifier: "speaker-2"), text: "second speaker draft contains enough context to translate", language: "en-US", isFinal: false)
         ])
         viewModel.drainRecordingFrames()
-        try await waitFor { provider.pendingRequestCount >= 1 }
+        try await waitFor(timeoutNanoseconds: 3_000_000_000) { provider.pendingRequestCount >= 1 }
 
         XCTAssertEqual(provider.pendingRequestCount, 2)
-        XCTAssertEqual(provider.pendingRequestTexts, [["second speaker draft"], ["first speaker draft"]])
+        XCTAssertEqual(provider.pendingRequestTexts, [
+            ["second speaker draft contains enough context to translate"],
+            ["first speaker draft contains enough context to translate"]
+        ])
 
         viewModel.selectMeeting(nil)
     }

@@ -476,7 +476,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         XCTAssertTrue(updates.isEmpty)
     }
 
-    func testInitialDraftTranslationTriggersQuickly() async {
+    func testShortInitialDraftTranslationWaitsForMoreStableText() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "hello team", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "大家好"])
@@ -491,8 +491,73 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
 
         let updates = await scheduler.liveTranslationUpdates(for: store)
 
+        XCTAssertTrue(updates.isEmpty)
+        XCTAssertTrue(provider.requests.isEmpty)
+    }
+
+    func testInitialDraftTranslationTriggersAfterMinimumInformationThreshold() async {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(draftTurn(text: "we should review the launch owner and timeline", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1
+            )
+        )
+
+        let updates = await scheduler.liveTranslationUpdates(for: store)
+
         XCTAssertEqual(updates.count, 1)
-        XCTAssertEqual(provider.requests.map(\.sourceText), ["hello team"])
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["we should review the launch owner and timeline"])
+    }
+
+    func testInitialDraftTranslationTriggersForSentenceBoundaryAboveShortThreshold() async {
+        var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        store.upsert(draftTurn(text: "We agree.", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "我们同意"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1
+            )
+        )
+
+        let updates = await scheduler.liveTranslationUpdates(for: store)
+
+        XCTAssertEqual(updates.count, 1)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["We agree."])
+    }
+
+    func testFillerDraftTranslationIsSkippedUntilFinal() async {
+        var draftStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        draftStore.upsert(draftTurn(text: "yeah", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        let provider = RecordingTextTranslationProvider(translations: ["segment-1": "是的"])
+        let scheduler = CaptionTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: nil,
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1
+            )
+        )
+
+        let draftUpdates = await scheduler.liveTranslationUpdates(for: draftStore)
+
+        XCTAssertTrue(draftUpdates.isEmpty)
+        XCTAssertTrue(provider.requests.isEmpty)
+
+        var finalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
+        finalStore.upsert(hardSealedTurn(text: "yeah", sourceLocale: "en-US", targetLocale: "zh-CN"))
+
+        let finalUpdates = await scheduler.finalTranslationUpdates(for: finalStore)
+
+        XCTAssertEqual(finalUpdates.count, 1)
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["yeah"])
     }
 
     func testFollowUpDraftSmallChangeWithinMinimumIntervalIsSkipped() async {
@@ -507,7 +572,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
                 followUpDraftMaximumWaitNanoseconds: 3_000_000_000,
                 minimumDraftWordDelta: 8,
-                minimumDraftCharacterDelta: 48
+                minimumDraftCharacterDelta: 48,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -534,7 +601,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
             configuration: CaptionTranslationSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
-                followUpDraftMinimumIntervalNanoseconds: 1_500_000_000
+                followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -563,7 +632,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
                 minimumDraftWordDelta: 3,
-                minimumDraftCharacterDelta: 100
+                minimumDraftCharacterDelta: 100,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -596,7 +667,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
                 followUpDraftMaximumWaitNanoseconds: 3_000_000_000,
                 minimumDraftWordDelta: 20,
-                minimumDraftCharacterDelta: 200
+                minimumDraftCharacterDelta: 200,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -616,7 +689,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
 
     func testDraftInFlightSuppressesRedundantRequestForSameTurn() async throws {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
-        store.upsert(draftTurn(text: "first draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        store.upsert(draftTurn(text: "first draft includes enough context to translate", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = CancellationRecordingTextTranslationProvider()
         let scheduler = CaptionTranslationScheduler(
             provider: provider,
@@ -656,7 +729,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
                 followUpDraftMaximumWaitNanoseconds: 3_000_000_000,
                 minimumDraftWordDelta: 8,
-                minimumDraftCharacterDelta: 48
+                minimumDraftCharacterDelta: 48,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -698,7 +773,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
             configuration: CaptionTranslationSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
-                followUpDraftMinimumIntervalNanoseconds: 10_000_000_000
+                followUpDraftMinimumIntervalNanoseconds: 10_000_000_000,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
             ),
             now: { now }
         )
@@ -736,7 +813,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let scheduler = CaptionTranslationScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 2,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
+            )
         )
 
         for update in await scheduler.liveTranslationUpdates(for: store) {
@@ -766,9 +848,9 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
 
     func testDraftTranslationDebounceKeepsLatestPendingDraftForTurn() async {
         var firstStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
-        firstStore.upsert(draftTurn(text: "old draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        firstStore.upsert(draftTurn(text: "old draft contains enough context to translate", sourceLocale: "en-US", targetLocale: "zh-CN"))
         var secondStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
-        secondStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
+        secondStore.upsert(draftTurn(text: "new draft contains enough context to translate", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let firstStoreSnapshot = firstStore
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "新草稿"])
         let scheduler = CaptionTranslationScheduler(
@@ -784,7 +866,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
 
         XCTAssertTrue(resolvedFirstUpdates.isEmpty)
         XCTAssertEqual(secondUpdates.count, 1)
-        XCTAssertEqual(provider.requests.map(\.sourceText), ["new draft"])
+        XCTAssertEqual(provider.requests.map(\.sourceText), ["new draft contains enough context to translate"])
     }
 
     func testFinalTranslationBypassesDraftDebounceAndRunsWhenDraftTextMatches() async throws {
@@ -832,7 +914,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let scheduler = CaptionTranslationScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 2,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
+            )
         )
 
         let updates = await scheduler.liveTranslationUpdates(for: originalStore)
@@ -864,7 +951,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let scheduler = CaptionTranslationScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 2,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
+            )
         )
 
         let updates = await scheduler.liveTranslationUpdates(for: originalStore)
@@ -957,7 +1049,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let scheduler = CaptionTranslationScheduler(
             provider: RecordingTextTranslationProvider(translations: ["segment-1": "我们应该审查发布计划"]),
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1),
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
+            ),
             now: { Date(timeIntervalSince1970: 12) }
         )
         var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
@@ -985,7 +1082,12 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let scheduler = CaptionTranslationScheduler(
             provider: RecordingTextTranslationProvider(translations: ["segment-1": "旧翻译"]),
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: CaptionTranslationSchedulerConfiguration(
+                draftDebounceNanoseconds: 0,
+                maxConcurrentTranslationRequests: 1,
+                minimumInitialDraftWordCount: 1,
+                minimumInitialDraftCharacterCount: 1
+            )
         )
         var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         originalStore.upsert(draftTurn(text: "We should review the rollout plan", sourceLocale: "en-US", targetLocale: "zh-CN"))

@@ -225,7 +225,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         )
         _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
             document: TranscriptDocument(segments: [
-                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan", language: "en-US", isFinal: false)
+                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan with owners", language: "en-US", isFinal: false)
             ]),
             changedSegmentIDs: ["segment-1"],
             plainTextReplacement: nil
@@ -234,7 +234,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
             document: TranscriptDocument(segments: [
-                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan today", language: "en-US", isFinal: false)
+                TranscriptSegment(id: "segment-1", text: "We should review the rollout plan with owners today", language: "en-US", isFinal: false)
             ]),
             changedSegmentIDs: ["segment-1"],
             plainTextReplacement: nil
@@ -679,7 +679,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let document = TranscriptDocument(segments: [
             TranscriptSegment(
                 id: "segment-1",
-                text: "draft text",
+                text: "draft text contains enough context to translate",
                 language: "en-US",
                 isFinal: false,
                 speechFinal: false
@@ -692,7 +692,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         let translatedSnapshot = await pipeline.scheduleLivePendingTranslations()
 
-        XCTAssertEqual(provider.requests, ["draft text"])
+        XCTAssertEqual(provider.requests, ["draft text contains enough context to translate"])
         XCTAssertEqual(translatedSnapshot.turns.first?.translatedText, "草稿")
         XCTAssertEqual(translatedSnapshot.turns.first?.translationState, .draft)
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
@@ -904,7 +904,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let document = TranscriptDocument(segments: [
             TranscriptSegment(
                 id: "segment-1",
-                text: "draft text",
+                text: "draft text contains enough context to translate",
                 language: "en-US",
                 isFinal: false,
                 speechFinal: false
@@ -992,7 +992,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let draftSegment = TranscriptSegment(
             id: "segment-1",
             speaker: speaker,
-            text: "same text",
+            text: "same text contains enough context to translate",
             language: "en-US",
             isFinal: false,
             speechFinal: false
@@ -1000,7 +1000,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let finalSegment = TranscriptSegment(
             id: "segment-1",
             speaker: speaker,
-            text: "same text",
+            text: "same text contains enough context to translate",
             language: "en-US",
             isFinal: true,
             speechFinal: true
