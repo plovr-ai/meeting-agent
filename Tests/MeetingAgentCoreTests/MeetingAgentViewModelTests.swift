@@ -808,6 +808,39 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertNotEqual(viewModel.liveCaptionTurns.first?.originalText, "pending draft should not publish after stop")
     }
 
+    func testEmptyDrainAfterStopDoesNotReplaySelectedMeetingTranscript() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "stop-replay",
+            text: "Visible caption should remain after stop.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "stop-replay"
+        }
+
+        let record = try XCTUnwrap(viewModel.meetings.first)
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+        viewModel.drainRecordingFrames()
+
+        let replayEvents = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "caption_turn_visible" && $0.metadata["path"] == "replay" }
+        XCTAssertTrue(replayEvents.isEmpty)
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.sourceSegmentID, "stop-replay")
+    }
+
     func testDraftCaptionInputThrottleLogsCoalescingTelemetry() async throws {
         let fixture = try ViewModelRecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

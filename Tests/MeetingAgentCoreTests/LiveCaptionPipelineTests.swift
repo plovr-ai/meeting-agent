@@ -698,6 +698,49 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(translatedSnapshot.translationHealth, .live)
     }
 
+    func testLiveDraftTranslationForMergedTurnIsNotPersistedToSingleSourceSegment() async {
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "segment-1": "组合翻译",
+            "segment-2": "组合翻译"
+        ])
+        var persistedTargets: [CaptionTranslationAttachmentTarget] = []
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil,
+            persistTranslation: { target, _, _ in
+                persistedTargets.append(target)
+                return true
+            }
+        )
+        let document = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "Public preview for Microsoft Teams provides early access",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: false
+            ),
+            TranscriptSegment(
+                id: "segment-2",
+                speaker: TranscriptSpeaker(identifier: "speaker-1"),
+                text: "to unreleased features in Teams",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: false
+            )
+        ])
+
+        _ = pipeline.replayCaptionsOnly(document)
+        let snapshot = await pipeline.scheduleLivePendingTranslations()
+
+        XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["segment-1", "segment-2"])
+        XCTAssertEqual(provider.requests, ["Public preview for Microsoft Teams provides early access to unreleased features in Teams"])
+        XCTAssertTrue(persistedTargets.isEmpty)
+    }
+
     func testReplayDoesNotScheduleDraftTranslations() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -53,6 +53,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var selectedMeetingReplaySignature: SelectedMeetingReplaySignature?
     private var selectedMeetingReplayFileSignature: SelectedMeetingTranscriptFileSignature?
     private var nextSelectedMeetingPendingTranslationRetryAt: Date?
+    private var recentlyStoppedLiveMeetingID: UUID?
     private let liveCaptionSnapshotDebounceNanoseconds: UInt64
     private let draftCaptionInputThrottleNanoseconds: UInt64
     private var pendingDraftCaptionInput: PendingDraftCaptionInput?
@@ -405,7 +406,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
         if transcriptResults.isEmpty {
-            if !isRecording && activeMeetingID == nil {
+            if !isRecording && activeMeetingID == nil && !shouldKeepRecentlyStoppedLiveCaptions() {
                 refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
             }
             if meetingProgressCoordinator != nil {
@@ -432,10 +433,21 @@ public final class MeetingAgentViewModel: ObservableObject {
         objectWillChange.send()
     }
 
+    private func shouldKeepRecentlyStoppedLiveCaptions() -> Bool {
+        guard let recentlyStoppedLiveMeetingID,
+              selectedMeetingID == recentlyStoppedLiveMeetingID,
+              !liveCaptionTurns.isEmpty
+        else {
+            return false
+        }
+        return true
+    }
+
     public func stopRecording(at endedAt: Date = Date()) {
         if let stopped = try? recorder.stopRecording(at: endedAt),
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
+            recentlyStoppedLiveMeetingID = stopped.id
         }
         invalidateActiveCaptionApplyTasks()
         flushLiveCaptionPipeline(reason: .manualStop)
@@ -454,6 +466,7 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
             stoppedID = stopped.id
+            recentlyStoppedLiveMeetingID = stopped.id
         } else {
             stoppedID = nil
         }
@@ -545,6 +558,9 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func selectMeeting(_ id: UUID?) {
         let effectiveMeetingID = activeMeetingID ?? id
+        if effectiveMeetingID != recentlyStoppedLiveMeetingID {
+            recentlyStoppedLiveMeetingID = nil
+        }
         selectedMeetingID = effectiveMeetingID
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
@@ -774,6 +790,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         if let stopped = try? recorder.stopRecording(at: endedAt, endedReason: .targetProcessEnded),
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
+            recentlyStoppedLiveMeetingID = stopped.id
         }
         flushLiveCaptionPipeline(reason: .manualStop)
         statusText = "Target process ended: \(activeTarget.displayName)"

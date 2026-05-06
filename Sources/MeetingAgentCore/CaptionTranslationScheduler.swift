@@ -149,7 +149,9 @@ public final class CaptionTranslationScheduler {
                     logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
                 }
                 let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: current.originalText)
-                _ = persistTranslation?(target, text, false)
+                if target.sourceSegmentIDs.count == 1 {
+                    _ = persistTranslation?(target, text, false)
+                }
                 return .attached(turnID: current.id)
             }
             guard let request = update.request else {
@@ -168,7 +170,9 @@ public final class CaptionTranslationScheduler {
                 logApproximateAttached(request: request, current: current, textLength: text.count, decision: decision)
                 logAttached(request: request, attachedTurnID: current.id, textLength: text.count)
                 let target = CaptionTranslationAttachmentTarget(turn: current, sourceText: request.sourceText)
-                _ = persistTranslation?(target, text, false)
+                if target.sourceSegmentIDs.count == 1 {
+                    _ = persistTranslation?(target, text, false)
+                }
                 return .attached(turnID: current.id)
             } else {
                 logHiddenStale(update: update, request: request, current: current)
