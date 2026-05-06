@@ -126,7 +126,7 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         XCTAssertEqual(result.document.segments.first?.translationTargetLocale, "zh-CN")
     }
 
-    func testUpsertDeduplicatesAdjacentFinalSegmentOverlap() {
+    func testUpsertPreservesAdjacentDeepgramFinalTextWhenTimingDoesNotOverlap() {
         var accumulator = TranscriptSegmentAccumulator()
 
         _ = accumulator.apply(.upsert(deepgramSegment(
@@ -146,8 +146,29 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
 
         XCTAssertEqual(result.document.segments.map(\.text), [
             "inside Microsoft Teams, which are outlined here, to be able to take",
-            "advantage of these public preview features."
+            "to be able to take advantage of these public preview features."
         ])
+    }
+
+    func testDeepgramFinalReplacementUsesTimingNotTextSimilarity() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-10.0",
+            start: 10.0,
+            end: 11.0,
+            text: "old phrase",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(deepgramSegment(
+            id: "deepgram-transcribe-stream-10.02",
+            start: 10.02,
+            end: 11.02,
+            text: "corrected phrase",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.text), ["corrected phrase"])
     }
 
     func testUpsertTrimsInterimCoveredBySurroundingFinalSegments() {

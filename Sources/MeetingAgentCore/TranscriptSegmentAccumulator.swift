@@ -132,7 +132,10 @@ public struct TranscriptSegmentAccumulator {
         }
         document.segments = Self.trimmedCoveredInterimPrefixes(document.segments)
         document.segments = Self.prunedCoveredInterimSegments(document.segments)
-        document.segments = Self.deduplicatedAdjacentOverlaps(document.segments)
+        document.segments = Self.deduplicatedAdjacentOverlaps(
+            document.segments,
+            trimFinalPrefixes: !Self.isDeepgramFinalProtocolSegment(segment)
+        )
         let newIDs = Set(document.segments.map(\.id))
         let changed = Array(previousIDs.symmetricDifference(newIDs).union([segment.id])).sorted()
         return TranscriptSegmentAccumulationResult(
@@ -159,6 +162,14 @@ public struct TranscriptSegmentAccumulator {
            finalSegmentCoversInterim(incoming, existing) {
             return true
         }
+        if incoming.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+           existing.sourceProvider == incoming.sourceProvider,
+           incoming.isFinal,
+           existing.isFinal,
+           speakersAreCompatible(existing.speaker, incoming.speaker),
+           segmentsOverlap(existing, incoming) {
+            return true
+        }
         guard describesSameStreamingUtterance(existing, incoming) else { return false }
         if incoming.isFinal && !existing.isFinal {
             return true
@@ -172,12 +183,19 @@ public struct TranscriptSegmentAccumulator {
     private static func describesSameStreamingUtterance(_ first: TranscriptSegment, _ second: TranscriptSegment) -> Bool {
         guard first.sourceProvider == second.sourceProvider,
               speakersAreCompatible(first.speaker, second.speaker),
-              segmentsOverlap(first, second),
-              normalizedTextsOverlap(first.text, second.text)
+              segmentsOverlap(first, second)
         else {
             return false
         }
-        return true
+        if first.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID {
+            return true
+        }
+        return normalizedTextsOverlap(first.text, second.text)
+    }
+
+    private static func isDeepgramFinalProtocolSegment(_ segment: TranscriptSegment) -> Bool {
+        segment.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID
+            && segment.isFinal
     }
 
     private static func finalSegmentCoversInterim(_ final: TranscriptSegment, _ interim: TranscriptSegment) -> Bool {
@@ -350,12 +368,16 @@ public struct TranscriptSegmentAccumulator {
         return normalizedTextsOverlap(combinedFinalText, interim.text)
     }
 
-    private static func deduplicatedAdjacentOverlaps(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+    private static func deduplicatedAdjacentOverlaps(
+        _ segments: [TranscriptSegment],
+        trimFinalPrefixes: Bool = true
+    ) -> [TranscriptSegment] {
         guard segments.count > 1 else { return segments }
         var segments = segments
         segments = trimmedInterimPrefixesCoveredByPreviousFinals(segments)
         segments = trimmedInterimSuffixesCoveredByFollowingFinals(segments)
         segments.removeAll { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard trimFinalPrefixes else { return segments }
         return trimmedFinalPrefixesCoveredByPreviousSegments(segments)
     }
 
