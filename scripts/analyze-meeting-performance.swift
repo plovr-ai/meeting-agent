@@ -21,6 +21,25 @@ struct PerformanceEvent: Decodable {
     }
 }
 
+struct TranslationResultRecord: Decodable {
+    let resultID: String?
+    let sourceSegmentIDs: [String]
+    let translatedText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case resultID
+        case sourceSegmentIDs
+        case translatedText
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        resultID = try container.decodeIfPresent(String.self, forKey: .resultID)
+        sourceSegmentIDs = try container.decodeIfPresent([String].self, forKey: .sourceSegmentIDs) ?? []
+        translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
+    }
+}
+
 struct Stats {
     let values: [Double]
 
@@ -52,16 +71,20 @@ private let fractionalSecondsDateFormatter: ISO8601DateFormatter = {
 private let wholeSecondsDateFormatter = ISO8601DateFormatter()
 
 private func usage() -> Never {
-    fputs("Usage: swift scripts/analyze-meeting-performance.swift <meeting-directory|performance-events.jsonl>\n", stderr)
+    fputs("Usage: swift scripts/analyze-meeting-performance.swift [--assert-translation-e2e] <meeting-directory|performance-events.jsonl>\n", stderr)
     exit(2)
 }
 
-guard CommandLine.arguments.count == 2 else {
+let rawArguments = Array(CommandLine.arguments.dropFirst())
+let assertTranslationE2E = rawArguments.contains("--assert-translation-e2e")
+let pathArguments = rawArguments.filter { $0 != "--assert-translation-e2e" }
+guard pathArguments.count == 1 else {
     usage()
 }
 
-let inputURL = URL(fileURLWithPath: CommandLine.arguments[1])
+let inputURL = URL(fileURLWithPath: pathArguments[0])
 let eventsURL: URL
+let translationResultsURL: URL?
 var isDirectory: ObjCBool = false
 guard FileManager.default.fileExists(atPath: inputURL.path, isDirectory: &isDirectory) else {
     fputs("Input does not exist: \(inputURL.path)\n", stderr)
@@ -69,8 +92,10 @@ guard FileManager.default.fileExists(atPath: inputURL.path, isDirectory: &isDire
 }
 if isDirectory.boolValue {
     eventsURL = inputURL.appendingPathComponent("performance-events.jsonl")
+    translationResultsURL = inputURL.appendingPathComponent("translation-results.jsonl")
 } else {
     eventsURL = inputURL
+    translationResultsURL = nil
 }
 
 let events: [PerformanceEvent]
@@ -86,8 +111,17 @@ guard !events.isEmpty else {
     exit(1)
 }
 
-let analyzer = MeetingPerformanceAnalyzer(events: events)
+let translationResultRecordCount = translationResultsURL.map(countNonEmptyLines) ?? 0
+let translationResultRecords = translationResultsURL.map(readTranslationResultRecords) ?? []
+let analyzer = MeetingPerformanceAnalyzer(
+    events: events,
+    translationResultRecordCount: translationResultRecordCount,
+    translationResultRecords: translationResultRecords
+)
 print(analyzer.report(inputPath: eventsURL.path))
+if assertTranslationE2E && !analyzer.e2eTranslationPassed() {
+    exit(1)
+}
 
 private func readEvents(from url: URL) throws -> [PerformanceEvent] {
     let decoder = JSONDecoder()
@@ -111,14 +145,44 @@ private func decodeISO8601Date(from decoder: Decoder) throws -> Date {
     )
 }
 
+private func countNonEmptyLines(at url: URL) -> Int {
+    guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+        return 0
+    }
+    return content
+        .split(whereSeparator: \.isNewline)
+        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        .count
+}
+
+private func readTranslationResultRecords(from url: URL) -> [TranslationResultRecord] {
+    guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+        return []
+    }
+    return content
+        .split(whereSeparator: \.isNewline)
+        .compactMap { try? JSONDecoder().decode(TranslationResultRecord.self, from: Data($0.utf8)) }
+}
+
 struct MeetingPerformanceAnalyzer {
+    private static let firstLiveTranslationLatencyBudgetSeconds = 4.0
+    private static let minimumStableTranslationCoveragePercent = 80.0
+
     let allEvents: [PerformanceEvent]
+    let translationResultRecordCount: Int
+    let translationResultRecords: [TranslationResultRecord]
     private let events: [PerformanceEvent]
     private let recordingStartedAt: Date?
     private let recordingStoppedAt: Date?
 
-    init(events allEvents: [PerformanceEvent]) {
+    init(
+        events allEvents: [PerformanceEvent],
+        translationResultRecordCount: Int = 0,
+        translationResultRecords: [TranslationResultRecord] = []
+    ) {
         self.allEvents = allEvents
+        self.translationResultRecordCount = translationResultRecordCount
+        self.translationResultRecords = translationResultRecords
         let recordingStartedAt = allEvents.first { $0.event == "recording_started" }?.wallTime
         let recordingStoppedAt = allEvents.first { $0.event == "recording_stopped" }?.wallTime
         self.recordingStartedAt = recordingStartedAt
@@ -187,8 +251,14 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Preview Published After Stop Count: \(allUnitEvents("translation_preview_published_after_stop").count)")
         lines.append("Translation Runtime Snapshot Count: \(translationRuntimeSnapshots().count)")
         lines.append("Translation Runtime Stop Snapshot Count: \(translationRuntimeSnapshots(path: "stop").count)")
+        lines.append("Post-Stop Runtime Realtime Snapshot Count: \(postStopRuntimeRealtimeSnapshots().count)")
         lines.append("Translation Runtime Dropped Result Count: \(translationRuntimeDroppedResultCount())")
+        lines.append("Stable Unit Unique Result Count: \(uniqueStableUnitPersistedResultIDs().count)")
+        lines.append("Stable Unit Duplicate Persist Count: \(stableUnitDuplicatePersistCount())")
         lines.append("Post-Stop Unit Translation Events: \(postStopUnitTranslationEvents().count)")
+        lines.append("")
+        lines.append("End-to-End Translation Validation")
+        lines.append(contentsOf: e2eTranslationValidationLines())
         lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
@@ -209,6 +279,10 @@ struct MeetingPerformanceAnalyzer {
             lines.append(contentsOf: diagnostics)
         }
         return lines.joined(separator: "\n")
+    }
+
+    func e2eTranslationPassed() -> Bool {
+        e2eTranslationValidation().passed
     }
 
     private func replayOverheadLines() -> [String] {
@@ -595,6 +669,15 @@ struct MeetingPerformanceAnalyzer {
         }
     }
 
+    private func postStopRuntimeRealtimeSnapshots() -> [PerformanceEvent] {
+        guard let recordingStoppedAt else { return [] }
+        return allEvents.filter {
+            $0.wallTime > recordingStoppedAt
+                && $0.event == "translation_runtime_snapshot"
+                && $0.metadata["path"] == "realtime"
+        }
+    }
+
     private func translationRuntimeSnapshots(path: String? = nil) -> [PerformanceEvent] {
         allEvents.filter {
             $0.event == "translation_runtime_snapshot"
@@ -606,6 +689,185 @@ struct MeetingPerformanceAnalyzer {
         translationRuntimeSnapshots().reduce(0) { total, event in
             total + (Int(event.metadata["droppedResultCount"] ?? "") ?? 0)
         }
+    }
+
+    private func e2eTranslationValidationLines() -> [String] {
+        e2eTranslationValidation().lines
+    }
+
+    private func e2eTranslationValidation() -> (passed: Bool, lines: [String]) {
+        let providerStarted = allEvents.filter { $0.event == "translation_provider_call_started" }
+        let providerFinished = allEvents.filter { $0.event == "translation_provider_call_finished" }
+        let providerFailed = allEvents.filter { $0.event == "translation_provider_call_failed" }
+        let noProvider = allEvents.filter { $0.event == "translation_provider_unavailable" }
+        let sameLanguageSkipped = allEvents.filter { $0.event == "translation_provider_skipped_same_language" }
+        let overlayPublished = allEvents.filter { $0.event == "caption_translation_overlay_published" }
+        let projectionMismatches = allEvents.filter { $0.event == "translation_unit_projection_mismatch" }
+        let persistedProjectionMismatchCount = persistedTranslationProjectionMismatchCount()
+        let firstLiveTranslationLatency = firstLiveTranslationLatencyForE2E()
+        let stableCoverage = stableTranslationCoverageForE2E()
+        let visibleUnitResults = allEvents.filter {
+            $0.event == "translation_live_result_visible" || $0.event == "translation_stable_result_visible"
+        }
+        let captionVisible = allEvents.contains { $0.event == "caption_turn_visible" && $0.metadata["path"] != "replay" }
+        let unitScheduled = allUnitEvents("translation_unit_live_scheduled").count
+            + allUnitEvents("translation_unit_final_persisted").count
+        let stablePersisted = allUnitEvents("translation_unit_final_persisted").count
+        let hasVisibleTranslation = !overlayPublished.isEmpty || !visibleUnitResults.isEmpty
+        let hasPersistedTranslation = stablePersisted > 0 || translationResultRecordCount > 0
+        var failures: [String] = []
+
+        if !captionVisible {
+            failures.append("Failure: no realtime captions were visible")
+        }
+        if unitScheduled > 0 && providerStarted.isEmpty {
+            failures.append("Failure: unit translations were scheduled but no provider call was observed")
+        }
+        if !providerStarted.isEmpty && providerFinished.isEmpty && providerFailed.isEmpty {
+            failures.append("Failure: provider calls started but never finished or failed")
+        }
+        if providerFailed.count > 0 {
+            failures.append("Failure: provider calls failed")
+        }
+        if noProvider.count > 0 {
+            failures.append("Failure: translation provider was unavailable")
+        }
+        if sameLanguageSkipped.count > 0 {
+            failures.append("Failure: translation skipped as same-language")
+        }
+        if captionVisible && !hasVisibleTranslation && !hasPersistedTranslation {
+            failures.append("Failure: captions were visible but no translation became visible or persisted")
+        }
+        if let firstLiveTranslationLatency,
+           firstLiveTranslationLatency > Self.firstLiveTranslationLatencyBudgetSeconds {
+            failures.append("Failure: first live translation exceeded latency budget")
+        }
+        if let stableCoverage,
+           stableCoverage < Self.minimumStableTranslationCoveragePercent {
+            failures.append("Failure: stable translations did not cover realtime final caption turns")
+        }
+        if stableUnitDuplicatePersistCount() > 0 {
+            failures.append("Failure: duplicate stable translation persistence detected")
+        }
+        if projectionMismatches.count > 0 {
+            failures.append("Failure: stable translation projection mismatched visible caption turns")
+        }
+        if persistedProjectionMismatchCount > 0 {
+            failures.append("Failure: persisted translations do not match visible caption turn boundaries")
+        }
+        if postStopRuntimeRealtimeSnapshots().count > 0 {
+            failures.append("Failure: realtime translation snapshots were published after stop")
+        }
+
+        let passed = failures.isEmpty && captionVisible && (hasVisibleTranslation || hasPersistedTranslation)
+        let status = passed ? "PASS" : "FAIL"
+        let lines = [
+            "E2E Translation Status: \(status)",
+            "Realtime Captions Visible: \(captionVisible ? "yes" : "no")",
+            "Provider Calls Started: \(providerStarted.count)",
+            "Provider Calls Finished: \(providerFinished.count)",
+            "Provider Calls Failed: \(providerFailed.count)",
+            "Provider Unavailable Events: \(noProvider.count)",
+            "Same-Language Skip Events: \(sameLanguageSkipped.count)",
+            "Translation Overlay Published Events: \(overlayPublished.count)",
+            "Visible Unit Result Events: \(visibleUnitResults.count)",
+            "First Live Translation Latency: \(format(duration: firstLiveTranslationLatency))",
+            "Stable Translation Coverage: \(format(percent: stableCoverage))",
+            "Translation Projection Mismatch Events: \(projectionMismatches.count)",
+            "Persisted Translation Projection Mismatches: \(persistedProjectionMismatchCount)",
+            "Translation Result Store Records: \(translationResultRecordCount)"
+        ] + failures
+        return (passed, lines)
+    }
+
+    private func firstLiveTranslationLatencyForE2E() -> Double? {
+        guard let firstAudioSent = firstAudioSent?.wallTime,
+              let firstLive = allEvents.first(where: { $0.event == "translation_live_result_visible" })?.wallTime
+        else {
+            return nil
+        }
+        return max(0, firstLive.timeIntervalSince(firstAudioSent))
+    }
+
+    private func stableTranslationCoverageForE2E() -> Double? {
+        let finalCaptionSourceIDSets = Set(primaryFinalCaptionVisibleEvents.compactMap { event -> String? in
+            guard let value = event.metadata["sourceSegmentIDs"] ?? event.segmentID,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return nil
+            }
+            return canonicalSourceSegmentIDSet(value.split(separator: ",").map(String.init))
+        })
+        guard !finalCaptionSourceIDSets.isEmpty else {
+            return nil
+        }
+        let translatedSourceIDSets = stableTranslationSourceIDSetsForE2E()
+        let covered = finalCaptionSourceIDSets.filter(translatedSourceIDSets.contains).count
+        return Double(covered) / Double(finalCaptionSourceIDSets.count) * 100
+    }
+
+    private func stableTranslationSourceIDSetsForE2E() -> Set<String> {
+        var translated = Set<String>()
+        for event in allEvents where event.event == "translation_unit_final_persisted" || event.event == "translation_stable_result_visible" {
+            guard let value = event.metadata["sourceSegmentIDs"],
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                continue
+            }
+            translated.insert(canonicalSourceSegmentIDSet(value.split(separator: ",").map(String.init)))
+        }
+        for record in translationResultRecords {
+            guard !record.sourceSegmentIDs.isEmpty,
+                  record.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                continue
+            }
+            translated.insert(canonicalSourceSegmentIDSet(record.sourceSegmentIDs))
+        }
+        return translated
+    }
+
+    private func persistedTranslationProjectionMismatchCount() -> Int {
+        let visibleTurnSourceIDSets = Set(allEvents.compactMap { event -> String? in
+            guard event.event == "caption_turn_visible",
+                  event.metadata["path"] != "replay",
+                  let value = event.metadata["sourceSegmentIDs"] ?? event.segmentID,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return nil
+            }
+            return canonicalSourceSegmentIDSet(value.split(separator: ",").map(String.init))
+        })
+        guard !visibleTurnSourceIDSets.isEmpty else {
+            return 0
+        }
+        return translationResultRecords.filter { record in
+            guard !record.sourceSegmentIDs.isEmpty,
+                  record.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                return false
+            }
+            return !visibleTurnSourceIDSets.contains(canonicalSourceSegmentIDSet(record.sourceSegmentIDs))
+        }.count
+    }
+
+    private func canonicalSourceSegmentIDSet(_ ids: [String]) -> String {
+        ids
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+            .joined(separator: ",")
+    }
+
+    private func uniqueStableUnitPersistedResultIDs() -> Set<String> {
+        Set(allUnitEvents("translation_unit_final_persisted").compactMap { event in
+            event.metadata["resultID"] ?? event.segmentID
+        })
+    }
+
+    private func stableUnitDuplicatePersistCount() -> Int {
+        let persisted = allUnitEvents("translation_unit_final_persisted")
+        return max(0, persisted.count - uniqueStableUnitPersistedResultIDs().count)
     }
 
     private var draftTriggerEvents: [PerformanceEvent] {
