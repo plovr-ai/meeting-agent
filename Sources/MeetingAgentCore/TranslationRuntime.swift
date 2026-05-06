@@ -125,6 +125,7 @@ public struct TranslationRuntime {
             visibleCount: snapshot.visibleResults.count,
             droppedCount: snapshot.droppedResults.count
         )
+        logVisibleResults(snapshot.visibleResults, path: "realtime")
         return snapshot
     }
 
@@ -158,6 +159,7 @@ public struct TranslationRuntime {
             visibleCount: snapshot.visibleResults.count,
             droppedCount: 0
         )
+        logVisibleResults(snapshot.visibleResults, path: "stop")
         return snapshot
     }
 
@@ -225,5 +227,42 @@ public struct TranslationRuntime {
                 "droppedResultCount": String(droppedCount)
             ]
         )
+    }
+
+    private func logVisibleResults(
+        _ results: [TranslationResult],
+        path: String
+    ) {
+        for result in results where result.displayState == .liveFresh {
+            performanceEventLogger?.log(
+                "translation_live_result_visible",
+                segmentID: result.sourceID,
+                isFinal: false,
+                textLength: result.translatedText.count,
+                metadata: resultMetadata(result, path: path)
+            )
+        }
+        for result in results where result.displayState == .stableFinal {
+            performanceEventLogger?.log(
+                "translation_stable_result_visible",
+                segmentID: result.sourceID,
+                isFinal: true,
+                textLength: result.translatedText.count,
+                metadata: resultMetadata(result, path: path)
+            )
+        }
+    }
+
+    private func resultMetadata(
+        _ result: TranslationResult,
+        path: String
+    ) -> [String: String] {
+        [
+            "path": path,
+            "translationState": result.displayState.rawValue,
+            "translationRequestID": result.id,
+            "sourceSegmentIDs": result.sourceSegmentIDs.joined(separator: ","),
+            "sourceCreatedAt": ISO8601DateFormatter().string(from: result.sourceCreatedAt)
+        ]
     }
 }

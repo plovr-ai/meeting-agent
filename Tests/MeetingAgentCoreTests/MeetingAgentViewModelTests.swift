@@ -1773,6 +1773,42 @@ final class MeetingAgentViewModelTests: XCTestCase {
         })
     }
 
+    func testActiveRecordingUnitTranslationUsesRuntimeAndPublishesOverlay() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let provider = ViewModelFakeTextTranslationProvider(translations: [
+            "segment-1-live-1": "我们确认负责人"
+        ])
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionSnapshotDebounceNanoseconds: 0,
+            liveCaptionPipelineUsesUnitTranslation: true,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+        let record = try XCTUnwrap(viewModel.selectedMeeting)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "We should confirm the launch owner today",
+            language: "en-US",
+            isFinal: false,
+            speechFinal: false
+        )))
+        viewModel.drainRecordingFrames()
+
+        try await waitFor { viewModel.liveCaptionTurns.first?.translatedText == "我们确认负责人" }
+        let events = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_runtime_snapshot"
+                && $0.metadata["path"] == "realtime"
+        })
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "我们确认负责人")
+    }
+
     func testSupersededDraftTranslationLogsCancellation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
