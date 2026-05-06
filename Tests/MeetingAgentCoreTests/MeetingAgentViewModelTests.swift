@@ -621,6 +621,54 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertTrue(provider.requests.isEmpty)
     }
 
+    func testReplayHydratesUnitStableResultBeforeLegacyBackfill() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("unit-hydrate-priority-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Hydrate Priority", startedAt: Date(timeIntervalSince1970: 0))
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL), structuredURL: XCTUnwrap(stored.record.transcriptJSONURL))
+        try writer.replace(with: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "We approve the launch.",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: true
+            )
+        ])
+        let translationStore = TranslationResultPersistenceStore(directoryURL: try XCTUnwrap(stored.record.transcriptJSONURL).deletingLastPathComponent())
+        try translationStore.append(TranslationResultPersistenceRecord(
+            meetingID: stored.record.id,
+            resultID: "stable-1",
+            sourceID: "block-1",
+            laneID: TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN"),
+            sourceSegmentIDs: ["segment-1"],
+            sourceTextHash: "hash",
+            sourceText: "We approve the launch.",
+            translatedText: "我们批准上线。",
+            displayState: .stableFinal,
+            boundaryReason: .providerHardBoundary,
+            providerID: "test",
+            createdAt: Date(timeIntervalSince1970: 1),
+            finalizedAt: Date(timeIntervalSince1970: 2)
+        ))
+        let provider = ViewModelFakeTextTranslationProvider(translations: ["segment-1": "旧链路翻译"])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            captionTranslationProviderFactory: { _ in provider },
+            liveCaptionPipelineUsesUnitTranslation: true,
+            processTargetsProvider: { [] }
+        )
+
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(stored.record.id)
+        await viewModel.waitForLiveCaptionReplayForTesting()
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translatedText, "我们批准上线。")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.translationState, .final)
+        XCTAssertTrue(provider.requests.isEmpty)
+    }
+
     func testActiveRecordingCaptionDoesNotRequireTranscriptFileReload() async throws {
         let fixture = try ViewModelRecorderFixture()
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")

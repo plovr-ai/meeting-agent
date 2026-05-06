@@ -1155,10 +1155,17 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingReplayFileSignature = fileSignature
         nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate()
         publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
+        let stableUnitResults = selectedMeeting.map { stableUnitTranslationResults(meeting: $0) } ?? []
+        if !stableUnitResults.isEmpty {
+            publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.attachTranslationResults(stableUnitResults))
+            nextSelectedMeetingPendingTranslationRetryAt = nil
+            liveCaptionReplayTask = nil
+            return
+        }
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
             guard liveCaptionReplaySequence == sequence else { return }
-            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
+            let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
             guard liveCaptionReplaySequence == sequence else { return }
             publishLiveCaptionPipelineSnapshot(snapshot)
         }
@@ -1177,7 +1184,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate(from: now)
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
-            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
+            let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
             publishLiveCaptionPipelineSnapshot(snapshot)
         }
     }
@@ -1210,7 +1217,25 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionPipelineUsesCaptionTranslationProvider = true
         liveCaptionPipelineHasTranslationProvider = translationProvider != nil
         activeCaptionDocumentSignature = Self.captionDocumentSignature(document)
-        let snapshot = await liveCaptionPipeline.replay(document)
+        let captionSnapshot = liveCaptionPipeline.replayCaptionsOnly(document)
+        if let sequence {
+            guard liveCaptionReplaySequence == sequence else { return }
+        } else {
+            guard !Task.isCancelled else { return }
+        }
+        publishLiveCaptionPipelineSnapshot(captionSnapshot)
+        let stableUnitResults = selectedMeeting.map { stableUnitTranslationResults(meeting: $0) } ?? []
+        if !stableUnitResults.isEmpty {
+            let overlaySnapshot = liveCaptionPipeline.attachTranslationResults(stableUnitResults)
+            if let sequence {
+                guard liveCaptionReplaySequence == sequence else { return }
+            } else {
+                guard !Task.isCancelled else { return }
+            }
+            publishLiveCaptionPipelineSnapshot(overlaySnapshot)
+            return
+        }
+        let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
         if let sequence {
             guard liveCaptionReplaySequence == sequence else { return }
         } else {
@@ -1245,48 +1270,21 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL) else {
             return nil
         }
-        return documentHydratedWithStableTranslationResults(document, meeting: meeting)
+        return document
     }
 
-    private func documentHydratedWithStableTranslationResults(
-        _ document: TranscriptDocument,
+    private func stableUnitTranslationResults(
         meeting: MeetingRecord
-    ) -> TranscriptDocument {
-        guard let directoryURL = meeting.transcriptJSONURL?.deletingLastPathComponent(),
+    ) -> [TranslationResult] {
+        guard let directoryURL = meeting.transcriptJSONURL?.deletingLastPathComponent()
+            ?? meeting.transcriptURL?.deletingLastPathComponent(),
               let records = try? TranslationResultPersistenceStore(directoryURL: directoryURL).load(),
               !records.isEmpty
         else {
-            return document
+            return []
         }
-        var finalResultBySegmentID: [String: TranslationResultPersistenceRecord] = [:]
-        for record in records where record.displayState == .stableFinal && record.sourceSegmentIDs.count == 1 {
-            guard let sourceSegmentID = record.sourceSegmentIDs.first else { continue }
-            finalResultBySegmentID[sourceSegmentID] = record
-        }
-        guard !finalResultBySegmentID.isEmpty else { return document }
-        return TranscriptDocument(
-            version: document.version,
-            segments: document.segments.map { segment in
-                guard let record = finalResultBySegmentID[segment.id] else { return segment }
-                return TranscriptSegment(
-                    id: segment.id,
-                    speaker: segment.speaker,
-                    startTimeSeconds: segment.startTimeSeconds,
-                    endTimeSeconds: segment.endTimeSeconds,
-                    text: segment.text,
-                    language: segment.language,
-                    sourceProvider: segment.sourceProvider,
-                    isFinal: segment.isFinal,
-                    speechFinal: segment.speechFinal,
-                    confidence: segment.confidence,
-                    createdAt: segment.createdAt,
-                    timingSource: segment.timingSource,
-                    translatedText: record.translatedText,
-                    translationTargetLocale: record.laneID.targetLocale,
-                    translationIsFinal: true
-                )
-            }
-        )
+        var runtime = TranslationRuntime()
+        return runtime.hydrate(records: records)
     }
 
     private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {
