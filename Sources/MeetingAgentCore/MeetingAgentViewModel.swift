@@ -494,7 +494,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 language: speechLocaleIdentifier,
                 targetLanguage: speechConfiguration.targetLocaleIdentifier,
                 meetingGoal: summaryGoalContext(for: progress),
-                segments: transcript.segments,
+                segments: transcript.segments.filter(\.isFinal),
                 generatedAt: generatedAt
             )
         )

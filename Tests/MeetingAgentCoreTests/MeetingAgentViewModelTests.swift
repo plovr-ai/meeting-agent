@@ -3339,6 +3339,32 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(saved.name, "Quarterly Launch Review")
     }
 
+    func testGenerateSummaryFiltersInterimSegmentsFromStructuredTranscript() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let provider = CapturingSummaryProvider(providerName: "test-summary")
+        let stored = try store.createMeeting(
+            name: "Summary interim filtering",
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
+        try writer.replace(with: [
+            TranscriptSegment(id: "draft", text: "draft should not summarize", isFinal: false),
+            TranscriptSegment(id: "final", text: "final should summarize", isFinal: true, speechFinal: true)
+        ])
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            speechLocaleIdentifier: "en-US",
+            summaryProviderFactory: { _ in provider }
+        )
+        try viewModel.loadMeetings()
+
+        try await viewModel.generateSummary(for: stored.record.id)
+
+        XCTAssertEqual(provider.receivedInputs.last?.segments.map(\.id), ["final"])
+    }
+
     func testGenerateSummaryUsesConfiguredSummaryModelIndependentlyFromTranslationModel() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
