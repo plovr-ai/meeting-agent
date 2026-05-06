@@ -289,6 +289,28 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(updates.flatMap { $0.document.segments.map(\.text) }, ["hello live"])
     }
 
+    func testRecorderDrainsRealtimeTranscriptUpdatesWithoutPersistingTranscript() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        fixture.transcriber.emitRealtime(.upsert(TranscriptSegment(
+            id: "deepgram-transcribe-stream-0.0",
+            text: "live draft",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: false
+        )))
+
+        let updates = fixture.recorder.drainTranscriptUpdates()
+        let persisted = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+
+        XCTAssertEqual(updates.last?.source, .realtime)
+        XCTAssertEqual(updates.last?.document.segments.map(\.text), ["live draft"])
+        XCTAssertEqual(persisted.segments, [])
+    }
+
     func testRecorderBuffersTranscriptArtifactsUntilStop() async throws {
         let fixture = try RecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
@@ -491,6 +513,10 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
 
     func emit(_ update: TranscriptSegmentUpdate) {
         transcriptUpdateSink?.receive(update)
+    }
+
+    func emitRealtime(_ update: TranscriptSegmentUpdate) {
+        transcriptUpdateSink?.receiveRealtime(update)
     }
 }
 

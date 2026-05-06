@@ -381,6 +381,7 @@ public final class MeetingRecorder {
 private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
     private let store: RecordingTranscriptPersistenceStore
     private let performanceEventLogger: PerformanceEventLogger?
+    private var realtimeAccumulator = TranscriptSegmentAccumulator()
     private var pendingResults: [TranscriptSegmentAccumulationResult] = []
     private let lock = NSLock()
 
@@ -394,6 +395,23 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
         defer { lock.unlock() }
         logEmitted(update)
         persist(update)
+    }
+
+    func receiveRealtime(_ update: TranscriptSegmentUpdate) {
+        lock.lock()
+        defer { lock.unlock() }
+        logEmitted(update)
+        let result = realtimeAccumulator.apply(update)
+        pendingResults.append(TranscriptSegmentAccumulationResult(
+            document: result.document,
+            changedSegmentIDs: result.changedSegmentIDs,
+            plainTextReplacement: result.plainTextReplacement,
+            source: .realtime
+        ))
+    }
+
+    func receiveFinal(_ update: TranscriptSegmentUpdate) {
+        receive(update)
     }
 
     func drainResults() -> [TranscriptSegmentAccumulationResult] {
