@@ -1240,7 +1240,51 @@ public final class MeetingAgentViewModel: ObservableObject {
         else {
             return nil
         }
-        return try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        guard let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL) else {
+            return nil
+        }
+        return documentHydratedWithStableTranslationResults(document, meeting: meeting)
+    }
+
+    private func documentHydratedWithStableTranslationResults(
+        _ document: TranscriptDocument,
+        meeting: MeetingRecord
+    ) -> TranscriptDocument {
+        guard let directoryURL = meeting.transcriptJSONURL?.deletingLastPathComponent(),
+              let records = try? TranslationResultPersistenceStore(directoryURL: directoryURL).load(),
+              !records.isEmpty
+        else {
+            return document
+        }
+        var finalResultBySegmentID: [String: TranslationResultPersistenceRecord] = [:]
+        for record in records where record.displayState == .stableFinal && record.sourceSegmentIDs.count == 1 {
+            guard let sourceSegmentID = record.sourceSegmentIDs.first else { continue }
+            finalResultBySegmentID[sourceSegmentID] = record
+        }
+        guard !finalResultBySegmentID.isEmpty else { return document }
+        return TranscriptDocument(
+            version: document.version,
+            segments: document.segments.map { segment in
+                guard let record = finalResultBySegmentID[segment.id] else { return segment }
+                return TranscriptSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    startTimeSeconds: segment.startTimeSeconds,
+                    endTimeSeconds: segment.endTimeSeconds,
+                    text: segment.text,
+                    language: segment.language,
+                    sourceProvider: segment.sourceProvider,
+                    isFinal: segment.isFinal,
+                    speechFinal: segment.speechFinal,
+                    confidence: segment.confidence,
+                    createdAt: segment.createdAt,
+                    timingSource: segment.timingSource,
+                    translatedText: record.translatedText,
+                    translationTargetLocale: record.laneID.targetLocale,
+                    translationIsFinal: true
+                )
+            }
+        )
     }
 
     private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {
