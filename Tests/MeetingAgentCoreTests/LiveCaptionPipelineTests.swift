@@ -312,6 +312,36 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .pending)
     }
 
+    func testLegacySchedulePendingTranslationsWrapperForwardsToReplayBackfill() async {
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "segment-1": "最终翻译"
+        ])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil
+        )
+
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We approve the launch.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let snapshot = await pipeline.schedulePendingTranslations()
+
+        XCTAssertEqual(provider.requests, ["We approve the launch."])
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "最终翻译")
+    }
+
     func testApplyLogsCaptionTurnVisibleWithoutRawText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

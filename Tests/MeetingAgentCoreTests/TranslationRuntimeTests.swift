@@ -171,6 +171,36 @@ final class TranslationRuntimeTests: XCTestCase {
         })
     }
 
+    func testStopWithMismatchedGenerationDoesNotStopActiveRuntime() async {
+        var runtime = TranslationRuntime()
+        runtime.start(context: TranslationRuntimeContext(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000226")!,
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            generation: 2
+        ))
+
+        let snapshot = await runtime.stopAndFinalize(generation: 1, now: Date(timeIntervalSince1970: 1))
+
+        XCTAssertEqual(snapshot.state, .active)
+        XCTAssertTrue(snapshot.visibleResults.isEmpty)
+    }
+
+    func testStopAfterProviderlessStartReturnsStoppedSnapshot() async {
+        var runtime = TranslationRuntime()
+        runtime.start(context: TranslationRuntimeContext(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000227")!,
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            generation: 1
+        ))
+
+        let snapshot = await runtime.stopAndFinalize(generation: 1, now: Date(timeIntervalSince1970: 1))
+
+        XCTAssertEqual(snapshot.state, .stopped)
+        XCTAssertTrue(snapshot.visibleResults.isEmpty)
+    }
+
     func testStopAndFinalizePublishesOnlyStableFinalAndPersistsIt() async {
         let provider = RuntimeTranslationProvider(translations: ["stable-expected": "我们会复查上线状态。"])
         var persisted: [TranslationResultPersistenceRecord] = []
