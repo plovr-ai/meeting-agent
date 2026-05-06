@@ -179,6 +179,37 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Post-Stop Translation Events: 1"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptReportsTranslationExperienceV2Metrics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-translation-v2-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try [
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0.1),
+            event("translation_live_result_visible", wallTime: "2026-05-06T00:00:02Z", segmentID: "unit-1", isFinal: false, textLength: 8, metadata: [
+                "translationState": "liveFresh",
+                "translationRequestID": "live-1",
+                "sourceCreatedAt": "2026-05-06T00:00:01Z"
+            ]),
+            event("translation_live_request_started", wallTime: "2026-05-06T00:00:01Z", segmentID: "unit-1", isFinal: false, textLength: 20, metadata: [
+                "translationRequestID": "live-1"
+            ]),
+            event("translation_stable_result_visible", wallTime: "2026-05-06T00:00:05Z", segmentID: "block-1", isFinal: true, textLength: 12, metadata: [
+                "translationState": "stableFinal",
+                "translationRequestID": "stable-1"
+            ])
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Translation Experience V2"))
+        XCTAssertTrue(result.stdout.contains("Time to First Live Translation: 2.00s"))
+        XCTAssertTrue(result.stdout.contains("Live Translation Calls: 1"))
+        XCTAssertTrue(result.stdout.contains("Stable Translation Success Count: 1"))
+    }
+
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

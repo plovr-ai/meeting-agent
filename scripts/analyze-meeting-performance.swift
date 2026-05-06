@@ -173,6 +173,11 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Hidden Draft Stale Rate: \(format(percent: hiddenDraftStaleRate()))")
         lines.append("Draft Translation Carry Forward Count: \(translationEvents("caption_translation_carried_forward").count)")
         lines.append("")
+        lines.append("Translation Experience V2")
+        lines.append("Time to First Live Translation: \(format(duration: timeToFirstLiveTranslationV2()))")
+        lines.append("Live Translation Calls: \(events.filter { $0.event == "translation_live_request_started" }.count)")
+        lines.append("Stable Translation Success Count: \(events.filter { $0.event == "translation_stable_result_visible" }.count)")
+        lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
         lines.append("Caption visible lag p50/p95/max: \(format(stats: captionVisiblePipelineStats()))")
@@ -430,6 +435,14 @@ struct MeetingPerformanceAnalyzer {
             return nil
         }
         return max(0, firstVisible.timeIntervalSince(firstCaption))
+    }
+
+    private func timeToFirstLiveTranslationV2() -> Double? {
+        guard let firstAudioSent = firstAudioSent?.wallTime,
+              let firstLive = events.first(where: { $0.event == "translation_live_result_visible" })?.wallTime else {
+            return nil
+        }
+        return max(0, firstLive.timeIntervalSince(firstAudioSent))
     }
 
     private func visibleTranslationCoverage() -> Double? {
