@@ -1,0 +1,20 @@
+{
+  "expectedAnalyzerStatus" : "fail",
+  "expectedFailures" : [
+    "first live translation exceeded latency budget",
+    "stable translations did not cover realtime final caption turns",
+    "stable translation projection mismatched visible caption turns",
+    "persisted translations do not match visible caption turn boundaries"
+  ],
+  "id" : "microsoft-teams-public-preview-en-zh",
+  "notes" : [
+    "Single speaker.",
+    "Long content.",
+    "Final transcript segments have speechFinal=false."
+  ],
+  "purpose" : "knownFailure",
+  "scenario" : "single-speaker-long-no-speech-final",
+  "sourceLocale" : "en-US",
+  "sourceMeetingID" : "D5C47AEC-4E86-4C66-9B61-FEE3D151006C",
+  "targetLocale" : "zh-CN"
+}

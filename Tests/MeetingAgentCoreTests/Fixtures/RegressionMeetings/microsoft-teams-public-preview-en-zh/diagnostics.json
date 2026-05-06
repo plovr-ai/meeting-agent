@@ -1,0 +1,19 @@
+{
+  "averageLevel" : 0.06759353299983077,
+  "bufferBacklog" : 46,
+  "channelCount" : 1,
+  "droppedFrameCount" : 0,
+  "durationSeconds" : 44.69333333333054,
+  "endedReason" : "saved",
+  "framesCaptured" : 2145280,
+  "lastFrameAt" : "1970-01-28T19:48:13Z",
+  "peakLevel" : 0.848846435546875,
+  "sampleRate" : 48000,
+  "silentDurationSeconds" : 1.1840000000000008,
+  "startupReplayDroppedFrameCount" : 0,
+  "startupReplayDurationSeconds" : 0,
+  "startupReplayFrameCount" : 0,
+  "status" : "recordingSaved",
+  "targetDisplayName" : "Google Chrome",
+  "targetProcessID" : 8661
+}
