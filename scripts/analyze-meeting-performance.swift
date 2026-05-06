@@ -178,6 +178,14 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Live Translation Calls: \(events.filter { $0.event == "translation_live_request_started" }.count)")
         lines.append("Stable Translation Success Count: \(events.filter { $0.event == "translation_stable_result_visible" }.count)")
         lines.append("")
+        lines.append("Unit Translation Pipeline")
+        lines.append("Live Unit Scheduled Count: \(unitEvents("translation_unit_live_scheduled").count)")
+        lines.append("Live Unit Stale Count: \(unitEvents("translation_unit_live_stale").count)")
+        lines.append("Stable Unit Persisted Count: \(allUnitEvents("translation_unit_final_persisted").count)")
+        lines.append("Preview Dropped After Stop Count: \(allUnitEvents("translation_preview_dropped_after_stop").count)")
+        lines.append("Preview Published After Stop Count: \(allUnitEvents("translation_preview_published_after_stop").count)")
+        lines.append("Post-Stop Unit Translation Events: \(postStopUnitTranslationEvents().count)")
+        lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
         lines.append("Caption visible lag p50/p95/max: \(format(stats: captionVisiblePipelineStats()))")
@@ -208,12 +216,14 @@ struct MeetingPerformanceAnalyzer {
             return event.wallTime > recordingStoppedAt
                 && event.event.hasPrefix("caption_translation_")
         }.count
-        guard replayCaptionVisible > 0 || postStopTranslation > 0 else {
+        let postStopUnitTranslation = postStopUnitTranslationEvents().count
+        guard replayCaptionVisible > 0 || postStopTranslation > 0 || postStopUnitTranslation > 0 else {
             return []
         }
         return [
             "Replay Caption Visible Events: \(replayCaptionVisible)",
-            "Post-Stop Translation Events: \(postStopTranslation)"
+            "Post-Stop Translation Events: \(postStopTranslation)",
+            "Post-Stop Unit Translation Events: \(postStopUnitTranslation)"
         ]
     }
 
@@ -564,6 +574,21 @@ struct MeetingPerformanceAnalyzer {
 
     private func translationEvents(_ name: String) -> [PerformanceEvent] {
         events.filter { $0.event == name }
+    }
+
+    private func unitEvents(_ name: String) -> [PerformanceEvent] {
+        events.filter { $0.event == name }
+    }
+
+    private func allUnitEvents(_ name: String) -> [PerformanceEvent] {
+        allEvents.filter { $0.event == name }
+    }
+
+    private func postStopUnitTranslationEvents() -> [PerformanceEvent] {
+        guard let recordingStoppedAt else { return [] }
+        return allEvents.filter {
+            $0.wallTime > recordingStoppedAt && $0.event.hasPrefix("translation_unit_")
+        }
     }
 
     private var draftTriggerEvents: [PerformanceEvent] {

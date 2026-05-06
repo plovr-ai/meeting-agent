@@ -1716,6 +1716,14 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard isCurrentActiveCaptionApply(context) else { return }
         translationExperiencePipeline = pipeline
         logTranslationExperienceSnapshot(snapshot, path: "realtime")
+        let visibleResults = snapshot.visibleResults.filter {
+            $0.displayState == .liveFresh || $0.displayState == .stableFinal
+        }
+        if !visibleResults.isEmpty {
+            let overlaySnapshot = realtimeCaptionSession.attachTranslationResults(visibleResults)
+            publishRealtimeCaptionPipelineSnapshot(overlaySnapshot)
+            logCaptionSnapshotPublication(.translationOverlay, snapshot: overlaySnapshot, path: "realtime")
+        }
     }
 
     private func makeOrReuseTranslationExperiencePipeline(
@@ -1742,6 +1750,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             targetLocale: speechConfiguration.targetLocaleIdentifier,
             liveProvider: provider,
             accurateProvider: provider,
+            performanceEventLogger: currentPerformanceEventLogger(),
             persistFinalResult: { [weak self] record in
                 try? self?.translationResultPersistenceStore?.append(record)
             }
@@ -1752,7 +1761,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         _ snapshot: TranslationExperiencePipelineSnapshot,
         path: String
     ) {
-        currentPerformanceEventLogger()?.log(
+        let logger = currentPerformanceEventLogger()
+        logger?.log(
             "translation_experience_snapshot",
             metadata: [
                 "path": path,
@@ -1761,6 +1771,37 @@ public final class MeetingAgentViewModel: ObservableObject {
                 "visibleResultCount": String(snapshot.visibleResults.count)
             ]
         )
+        for result in snapshot.liveResults where result.displayState == .liveFresh {
+            logger?.log(
+                "translation_live_result_visible",
+                segmentID: result.sourceID,
+                isFinal: false,
+                textLength: result.translatedText.count,
+                metadata: translationExperienceResultMetadata(result, path: path)
+            )
+        }
+        for result in snapshot.stableResults where result.displayState == .stableFinal {
+            logger?.log(
+                "translation_stable_result_visible",
+                segmentID: result.sourceID,
+                isFinal: true,
+                textLength: result.translatedText.count,
+                metadata: translationExperienceResultMetadata(result, path: path)
+            )
+        }
+    }
+
+    private func translationExperienceResultMetadata(
+        _ result: TranslationResult,
+        path: String
+    ) -> [String: String] {
+        [
+            "path": path,
+            "translationState": result.displayState.rawValue,
+            "translationRequestID": result.id,
+            "sourceSegmentIDs": result.sourceSegmentIDs.joined(separator: ","),
+            "sourceCreatedAt": ISO8601DateFormatter().string(from: result.sourceCreatedAt)
+        ]
     }
 
     private func runRealtimeCaptionTranslationPump(
@@ -1817,6 +1858,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         let snapshot = await pipeline.flushAndFinalize()
         translationExperiencePipeline = pipeline
         logTranslationExperienceSnapshot(snapshot, path: "stop")
+        let visibleResults = snapshot.visibleResults.filter { $0.displayState == .stableFinal }
+        if !visibleResults.isEmpty {
+            let overlaySnapshot = realtimeCaptionSession.attachTranslationResults(visibleResults)
+            publishRealtimeCaptionPipelineSnapshot(overlaySnapshot)
+            logCaptionSnapshotPublication(.translationOverlay, snapshot: overlaySnapshot, path: "stop")
+        }
     }
 
     private func hasSameLanguagePendingTranslation(in snapshot: LiveCaptionPipelineSnapshot) -> Bool {

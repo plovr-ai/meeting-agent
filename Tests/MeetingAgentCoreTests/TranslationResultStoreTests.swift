@@ -2,6 +2,55 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranslationResultStoreTests: XCTestCase {
+    func testReplacingResultRemovesOldSourceSegmentIndex() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        var store = TranslationResultStore()
+        store.attach(TranslationResult(
+            id: "result-1",
+            sourceID: "unit-1",
+            laneID: lane,
+            sourceText: "We confirm",
+            translatedText: "旧翻译",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 1),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1),
+            sourceSegmentIDs: ["segment-old"]
+        ))
+        store.attach(TranslationResult(
+            id: "result-1",
+            sourceID: "unit-2",
+            laneID: lane,
+            sourceText: "We confirm again",
+            translatedText: "新翻译",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 2),
+            sourceCreatedAt: Date(timeIntervalSince1970: 2),
+            sourceSegmentIDs: ["segment-new"]
+        ))
+
+        XCTAssertTrue(store.resultsForSourceSegmentIDs(["segment-old"]).isEmpty)
+        XCTAssertEqual(store.resultsForSourceSegmentIDs(["segment-new"]).map(\.translatedText), ["新翻译"])
+    }
+
+    func testVisibleAndCarriedForwardReturnNilForUnknownLane() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let otherLane = TranslationLaneID(speaker: TranscriptSpeaker(identifier: "speaker-2"), sourceLocale: "en-US", targetLocale: "zh-CN")
+        var store = TranslationResultStore()
+        store.attach(TranslationResult(
+            id: "live",
+            sourceID: "unit-1",
+            laneID: lane,
+            sourceText: "We confirm",
+            translatedText: "我们确认",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 1),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1)
+        ))
+
+        XCTAssertNil(store.visibleResult(for: otherLane))
+        XCTAssertNil(store.carriedForwardResult(for: otherLane, currentRiskFlags: []))
+    }
+
     func testStableFinalOutranksLiveResultAndIndexesSourceSegments() {
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
         var store = TranslationResultStore()
@@ -57,6 +106,86 @@ final class TranslationResultStoreTests: XCTestCase {
         XCTAssertEqual(store.visibleResult(for: lane)?.translatedText, "选择设置和关于，然后选择公共预览。")
         XCTAssertEqual(store.resultsForSourceSegmentIDs(["segment-2"]).first?.displayState, .stableFinal)
         XCTAssertEqual(store.stableResults().map(\.id), ["final"])
+    }
+
+    func testHydrateUsesCreatedAtWhenFinalizedAtIsMissingAndSortsStableResults() {
+        let meetingID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let newer = TranslationResultPersistenceRecord(
+            meetingID: meetingID,
+            resultID: "final-new",
+            sourceID: "block-new",
+            laneID: lane,
+            sourceSegmentIDs: ["segment-new"],
+            sourceTextHash: "hash-new",
+            sourceText: "New text.",
+            translatedText: "新文本。",
+            displayState: .stableFinal,
+            boundaryReason: .manualStop,
+            providerID: "test",
+            createdAt: Date(timeIntervalSince1970: 2),
+            finalizedAt: nil
+        )
+        let older = TranslationResultPersistenceRecord(
+            meetingID: meetingID,
+            resultID: "final-old",
+            sourceID: "block-old",
+            laneID: lane,
+            sourceSegmentIDs: ["segment-old"],
+            sourceTextHash: "hash-old",
+            sourceText: "Old text.",
+            translatedText: "旧文本。",
+            displayState: .stableFinal,
+            boundaryReason: .manualStop,
+            providerID: "test",
+            createdAt: Date(timeIntervalSince1970: 1),
+            finalizedAt: nil
+        )
+
+        var store = TranslationResultStore()
+        store.hydrate(from: [newer, older])
+
+        XCTAssertEqual(store.stableResults().map(\.id), ["final-old", "final-new"])
+    }
+
+    func testSourceSegmentLookupSortsByPriorityThenCreatedAt() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        var store = TranslationResultStore()
+        store.attach(TranslationResult(
+            id: "stable",
+            sourceID: "block-1",
+            laneID: lane,
+            sourceText: "We approve.",
+            translatedText: "我们批准。",
+            displayState: .stableFinal,
+            createdAt: Date(timeIntervalSince1970: 3),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1),
+            sourceSegmentIDs: ["segment-1"]
+        ))
+        store.attach(TranslationResult(
+            id: "live-old",
+            sourceID: "unit-1",
+            laneID: lane,
+            sourceText: "We approve",
+            translatedText: "旧直播",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 1),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1),
+            sourceSegmentIDs: ["segment-1"]
+        ))
+        store.attach(TranslationResult(
+            id: "live-new",
+            sourceID: "unit-2",
+            laneID: lane,
+            sourceText: "We approve",
+            translatedText: "新直播",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 2),
+            sourceCreatedAt: Date(timeIntervalSince1970: 2),
+            sourceSegmentIDs: ["segment-1"]
+        ))
+
+        XCTAssertEqual(store.resultsForSourceSegmentIDs(["segment-1"]).map(\.id), ["live-old", "live-new", "stable"])
     }
 
     func testStableFinalOverridesLiveResult() {

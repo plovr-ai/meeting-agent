@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class TranslationExperiencePipelineTests: XCTestCase {
+    func testFlushAndFinalizeLogsStableFinalPersistenceEvent() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("translation-experience-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let provider = PipelineTranslationProvider(translations: [
+            "stable-expected": "我们会复查上线状态。"
+        ])
+        var pipeline = TranslationExperiencePipeline(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            liveProvider: provider,
+            accurateProvider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            persistFinalResult: { _ in }
+        )
+
+        _ = await pipeline.apply(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                text: "We should review the rollout status",
+                language: "en-US",
+                isFinal: true,
+                speechFinal: false,
+                createdAt: Date(timeIntervalSince1970: 1)
+            )
+        ], now: Date(timeIntervalSince1970: 2))
+        _ = await pipeline.flushAndFinalize(now: Date(timeIntervalSince1970: 3))
+
+        let events = try String(contentsOf: eventsURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
+        let persisted = try XCTUnwrap(events.first { $0.event == "translation_unit_final_persisted" })
+        XCTAssertEqual(persisted.metadata["translationState"], "stableFinal")
+        XCTAssertEqual(persisted.metadata["sourceSegmentIDs"], "segment-1")
+        XCTAssertEqual(persisted.metadata["boundaryReason"], "manualStop")
+    }
+
     func testFlushAndFinalizePersistsStableFinalOnly() async {
         let provider = PipelineTranslationProvider(translations: [
             "stable-expected": "我们会复查上线状态。"

@@ -91,6 +91,7 @@ public final class LiveCaptionPipeline {
                 visibilityPath: .realtime
             )
         }
+        completeTranslationsWithoutProviderIfNeeded()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -141,6 +142,19 @@ public final class LiveCaptionPipeline {
 
     public func scheduleLivePendingTranslations() async -> LiveCaptionPipelineSnapshot {
         await scheduleLiveTranslations()
+        return snapshot(
+            captionHealth: store.turns.isEmpty ? .idle : .live,
+            translationHealth: currentTranslationHealth()
+        )
+    }
+
+    public func attachTranslationResults(
+        _ results: [TranslationResult],
+        visibleUpdatedAt: Date = Date()
+    ) -> LiveCaptionPipelineSnapshot {
+        for result in results {
+            attachTranslationResult(result, visibleUpdatedAt: visibleUpdatedAt)
+        }
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
             translationHealth: currentTranslationHealth()
@@ -384,6 +398,54 @@ public final class LiveCaptionPipeline {
         }
     }
 
+    private func completeTranslationsWithoutProviderIfNeeded() {
+        guard translationProvider == nil else { return }
+        guard store.turns.allSatisfy({
+            TranslationOptions(sourceLocale: $0.sourceLocale, targetLocale: $0.targetLocale).isSameLanguage
+        }) else {
+            return
+        }
+        for turn in store.turns where turn.translationHealth == .pending {
+            store.markTranslationCompleteWithoutText(forTurnID: turn.id)
+        }
+    }
+
+    private func attachTranslationResult(
+        _ result: TranslationResult,
+        visibleUpdatedAt: Date
+    ) {
+        let translatedText = result.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !translatedText.isEmpty,
+              result.displayState == .liveFresh || result.displayState == .stableFinal,
+              let turnID = turnID(for: result)
+        else {
+            return
+        }
+        store.attachTranslation(
+            translatedText,
+            toTurnID: turnID,
+            freshness: result.displayState == .stableFinal ? .final : .fresh,
+            sourceText: result.sourceText,
+            sourceCreatedAt: result.sourceCreatedAt,
+            visibleUpdatedAt: visibleUpdatedAt
+        )
+        if result.displayState == .stableFinal {
+            store.markTranslationFinal(forTurnID: turnID)
+        }
+    }
+
+    private func turnID(for result: TranslationResult) -> String? {
+        let sourceSegmentIDs = Set(result.sourceSegmentIDs)
+        if !sourceSegmentIDs.isEmpty,
+           let turn = store.turns.last(where: { !$0.sourceSegmentIDs.filter(sourceSegmentIDs.contains).isEmpty }) {
+            return turn.id
+        }
+        if let turn = store.turns.last(where: { $0.sourceSegmentID == result.sourceID || $0.id == result.sourceID }) {
+            return turn.id
+        }
+        return nil
+    }
+
     private func snapshot(
         captionHealth: LivePipelineHealth,
         translationHealth: LivePipelineHealth
@@ -414,6 +476,7 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleFinalTranslationsOnly() async {
+        guard translationMode == .legacyCaptionScheduler else { return }
         let generation = storeGeneration
         let updates = await translationScheduler.finalTranslationUpdates(for: store)
         guard generation == storeGeneration else {

@@ -4,6 +4,53 @@ import XCTest
 
 @MainActor
 final class LiveTranslationSchedulerTests: XCTestCase {
+    func testLogsScheduledAndStaleUnitEvents() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-translation-scheduler-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let logger = PerformanceEventLogger(url: eventsURL)
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = LiveRecordingTranslationProvider(translations: [
+            "unit-1": "第一版",
+            "unit-3": "第三版"
+        ])
+        var scheduler = LiveTranslationScheduler(provider: provider, performanceEventLogger: logger)
+        let first = LiveTranslationUnit(id: "unit-1", laneID: lane, stablePrefixText: "We confirm the initial owner", sourceSegmentIDs: ["segment-1"], revision: 1, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let second = LiveTranslationUnit(id: "unit-2", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout", sourceSegmentIDs: ["segment-1"], revision: 2, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let third = LiveTranslationUnit(id: "unit-3", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout date", sourceSegmentIDs: ["segment-1"], revision: 3, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+
+        _ = await scheduler.schedule([first, second, third])
+        _ = await scheduler.drainPending()
+
+        let events = try readLoggedEvents(from: eventsURL)
+        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_scheduled" }.map(\.segmentID), ["unit-1", "unit-3"])
+        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_stale" }.first?.segmentID, "unit-2")
+        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_stale" }.first?.metadata["reason"], "pending_replaced")
+    }
+
+    func testDuplicatePrefixIsLoggedAsStaleWithoutProviderCall() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-translation-duplicate-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = FailingLiveTranslationProvider()
+        var scheduler = LiveTranslationScheduler(provider: provider, performanceEventLogger: PerformanceEventLogger(url: eventsURL))
+        let first = LiveTranslationUnit(id: "unit-1", laneID: lane, stablePrefixText: "We confirm the owner", sourceSegmentIDs: ["segment-1"], revision: 1, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let duplicate = LiveTranslationUnit(id: "unit-2", laneID: lane, stablePrefixText: "We confirm the owner", sourceSegmentIDs: ["segment-2"], revision: 2, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+
+        _ = await scheduler.schedule([first])
+        _ = await scheduler.schedule([duplicate])
+
+        let events = try readLoggedEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_unit_live_stale"
+                && $0.segmentID == "unit-2"
+                && $0.metadata["reason"] == "duplicate_prefix"
+        })
+    }
+
     func testInFlightLaneKeepsOnlyLatestPendingUnit() async {
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
         let provider = LiveRecordingTranslationProvider(translations: [
@@ -153,6 +200,26 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(updates.first?.displayState, .failedRecoverable)
     }
 
+    func testProviderEmptySegmentsReturnsEmptyLiveTranslation() async {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = EmptyLiveTranslationProvider()
+        var scheduler = LiveTranslationScheduler(provider: provider)
+        let unit = LiveTranslationUnit(
+            id: "unit-1",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-1"],
+            revision: 1,
+            createdAt: Date(),
+            deadline: Date().addingTimeInterval(4)
+        )
+
+        let updates = await scheduler.schedule([unit])
+
+        XCTAssertEqual(updates.first?.displayState, .liveFresh)
+        XCTAssertEqual(updates.first?.translatedText, "")
+    }
+
     func testConfigurationNormalizesMinimumsAndSupportsEquality() {
         let configuration = LiveTranslationSchedulerConfiguration(
             maxConcurrentRequests: 0,
@@ -162,6 +229,12 @@ final class LiveTranslationSchedulerTests: XCTestCase {
 
         XCTAssertEqual(configuration, LiveTranslationSchedulerConfiguration(maxConcurrentRequests: 1, maxCallsPerMinute: 1, draftTimeoutNanoseconds: 1))
     }
+}
+
+private func readLoggedEvents(from url: URL) throws -> [PerformanceEvent] {
+    try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n")
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
 private final class LiveRecordingTranslationProvider: TextTranslationProvider {
@@ -224,5 +297,29 @@ private final class FailingLiveTranslationProvider: TextTranslationProvider {
 
     func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
         throw NSError(domain: "translation", code: 1)
+    }
+}
+
+private final class EmptyLiveTranslationProvider: TextTranslationProvider {
+    var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: "test-live-empty",
+            displayName: "Test Live Empty",
+            capability: .textTranslation,
+            executionMode: .hosted,
+            supportedSourceLocales: ["*"],
+            supportedTargetLocales: ["*"],
+            requiresNetwork: false,
+            requiresAPIKey: false
+        )
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        TranslatedTranscript(
+            sourceLocale: options.sourceLocale,
+            targetLocale: options.targetLocale,
+            segments: [],
+            provenance: PipelineProvenance(profileID: "test-live-empty", successfulProviders: ["test-live-empty"])
+        )
     }
 }

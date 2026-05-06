@@ -25,4 +25,8 @@ final class RealtimeCaptionSession {
     func scheduleLivePendingTranslations() async -> LiveCaptionPipelineSnapshot {
         await pipeline.scheduleLivePendingTranslations()
     }
+
+    func attachTranslationResults(_ results: [TranslationResult]) -> LiveCaptionPipelineSnapshot {
+        pipeline.attachTranslationResults(results)
+    }
 }

@@ -54,21 +54,30 @@ public struct TranslationUnitBuilder {
         var stableBlocks: [StableTranslationBlock] = []
 
         for segment in segments.sorted(by: { $0.createdAt < $1.createdAt }) {
+            let segmentSourceLocale: String
+            if let language = segment.language {
+                segmentSourceLocale = language
+            } else {
+                segmentSourceLocale = sourceLocale
+            }
             let laneID = TranslationLaneID(
                 speaker: segment.speaker,
-                sourceLocale: segment.language ?? sourceLocale,
+                sourceLocale: segmentSourceLocale,
                 targetLocale: targetLocale
             )
+            var sealedStableBlock = false
 
             if segment.isFinal {
                 appendFinalSegment(segment, laneID: laneID)
                 if let reason = boundaryReason(for: segment, laneID: laneID, now: now),
                    let block = sealBlock(for: laneID, reason: reason, now: now) {
                     stableBlocks.append(block)
+                    sealedStableBlock = true
                 }
             }
 
-            if let liveUnit = liveUnit(for: segment, laneID: laneID, now: now) {
+            if !sealedStableBlock,
+               let liveUnit = liveUnit(for: segment, laneID: laneID, now: now) {
                 liveUnits.append(liveUnit)
             }
         }
@@ -100,14 +109,15 @@ public struct TranslationUnitBuilder {
         let stableCount = max(1, words.count - configuration.unstableTailWords)
         let stablePrefix = words.prefix(stableCount).joined(separator: " ")
         let unstableTail = words.dropFirst(stableCount).joined(separator: " ")
-        revisionsBySegmentID[segment.id, default: 0] += 1
+        let revision = (revisionsBySegmentID[segment.id] ?? 0) + 1
+        revisionsBySegmentID[segment.id] = revision
         return LiveTranslationUnit(
-            id: "\(segment.id)-live-\(revisionsBySegmentID[segment.id, default: 0])",
+            id: "\(segment.id)-live-\(revision)",
             laneID: laneID,
             stablePrefixText: stablePrefix,
             unstableTailText: unstableTail,
             sourceSegmentIDs: [segment.id],
-            revision: revisionsBySegmentID[segment.id, default: 0],
+            revision: revision,
             createdAt: segment.createdAt,
             deadline: now.addingTimeInterval(4),
             riskFlags: riskFlags(in: segment.text)
@@ -175,13 +185,19 @@ public struct TranslationUnitBuilder {
             return nil
         }
         laneStates[laneID] = TranslationLaneState()
+        let createdAt: Date
+        if let firstCreatedAt = state.firstCreatedAt {
+            createdAt = firstCreatedAt
+        } else {
+            createdAt = now
+        }
         return StableTranslationBlock(
             id: blockID,
             laneID: laneID,
             sourceText: text,
             sourceSegmentIDs: state.segmentIDs,
             boundaryReason: reason,
-            createdAt: state.firstCreatedAt ?? now
+            createdAt: createdAt
         )
     }
 

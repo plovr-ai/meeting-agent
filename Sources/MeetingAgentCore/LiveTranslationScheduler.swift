@@ -19,6 +19,7 @@ public struct LiveTranslationSchedulerConfiguration: Equatable {
 public struct LiveTranslationScheduler {
     private let provider: TextTranslationProvider
     private let configuration: LiveTranslationSchedulerConfiguration
+    private let performanceEventLogger: PerformanceEventLogger?
     private var requestTimes: [Date] = []
     private var laneStates: [TranslationLaneID: LiveTranslationLaneState] = [:]
     private var cachedResultByLaneAndPrefix: [CacheKey: TranslationResult] = [:]
@@ -27,10 +28,12 @@ public struct LiveTranslationScheduler {
     public init(
         provider: TextTranslationProvider,
         configuration: LiveTranslationSchedulerConfiguration = LiveTranslationSchedulerConfiguration(),
+        performanceEventLogger: PerformanceEventLogger? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.provider = provider
         self.configuration = configuration
+        self.performanceEventLogger = performanceEventLogger
         self.now = now
     }
 
@@ -42,6 +45,13 @@ public struct LiveTranslationScheduler {
         for unit in units {
             var state = laneStates[unit.laneID, default: LiveTranslationLaneState()]
             if state.inFlightUnitID != nil || lanesScheduledInThisBatch.contains(unit.laneID) {
+                if let staleUnit = state.pendingLatestUnit {
+                    logUnitEvent(
+                        "translation_unit_live_stale",
+                        unit: staleUnit,
+                        metadata: ["reason": "pending_replaced", "replacementUnitID": unit.id]
+                    )
+                }
                 state.pendingLatestUnit = unit
                 laneStates[unit.laneID] = state
                 continue
@@ -85,11 +95,18 @@ public struct LiveTranslationScheduler {
 
         pruneRequestTimes()
         guard requestTimes.count < configuration.maxCallsPerMinute else {
+            logUnitEvent("translation_unit_live_stale", unit: unit, metadata: ["reason": "budget_disabled"])
             return disabledBudgetResult(for: unit)
         }
 
-        var state = laneStates[unit.laneID, default: LiveTranslationLaneState()]
+        var state: LiveTranslationLaneState
+        if let existingState = laneStates[unit.laneID] {
+            state = existingState
+        } else {
+            state = LiveTranslationLaneState()
+        }
         guard state.lastRequestedSourcePrefix != unit.stablePrefixText else {
+            logUnitEvent("translation_unit_live_stale", unit: unit, metadata: ["reason": "duplicate_prefix"])
             return nil
         }
 
@@ -97,10 +114,16 @@ public struct LiveTranslationScheduler {
         state.lastRequestedSourcePrefix = unit.stablePrefixText
         state.inFlightUnitID = unit.id
         laneStates[unit.laneID] = state
+        logUnitEvent("translation_unit_live_scheduled", unit: unit)
 
         let result = await translate(unit)
 
-        var completionState = laneStates[unit.laneID, default: LiveTranslationLaneState()]
+        var completionState: LiveTranslationLaneState
+        if let existingState = laneStates[unit.laneID] {
+            completionState = existingState
+        } else {
+            completionState = LiveTranslationLaneState()
+        }
         if completionState.inFlightUnitID == unit.id {
             completionState.inFlightUnitID = nil
         }
@@ -129,6 +152,25 @@ public struct LiveTranslationScheduler {
             sourceCreatedAt: unit.createdAt,
             riskFlags: unit.riskFlags,
             sourceSegmentIDs: unit.sourceSegmentIDs
+        )
+    }
+
+    private func logUnitEvent(
+        _ event: String,
+        unit: LiveTranslationUnit,
+        metadata: [String: String] = [:]
+    ) {
+        var eventMetadata = metadata
+        eventMetadata["translationKind"] = "live"
+        eventMetadata["laneID"] = "\(unit.laneID.speakerID)|\(unit.laneID.sourceLocale)|\(unit.laneID.targetLocale)"
+        eventMetadata["revision"] = String(unit.revision)
+        eventMetadata["sourceSegmentIDs"] = unit.sourceSegmentIDs.joined(separator: ",")
+        performanceEventLogger?.log(
+            event,
+            segmentID: unit.id,
+            isFinal: false,
+            textLength: unit.stablePrefixText.count,
+            metadata: eventMetadata
         )
     }
 

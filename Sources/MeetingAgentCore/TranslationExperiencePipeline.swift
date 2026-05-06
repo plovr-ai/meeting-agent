@@ -23,6 +23,7 @@ public struct TranslationExperiencePipeline {
     private var liveScheduler: LiveTranslationScheduler
     private var accurateScheduler: AccurateTranslationScheduler
     private var resultStore = TranslationResultStore()
+    private let performanceEventLogger: PerformanceEventLogger?
     private let persistFinalResult: ((TranslationResultPersistenceRecord) -> Void)?
 
     public init(
@@ -31,13 +32,15 @@ public struct TranslationExperiencePipeline {
         targetLocale: String,
         liveProvider: TextTranslationProvider,
         accurateProvider: TextTranslationProvider,
+        performanceEventLogger: PerformanceEventLogger? = nil,
         persistFinalResult: ((TranslationResultPersistenceRecord) -> Void)? = nil
     ) {
         self.meetingID = meetingID
         self.accurateProviderID = accurateProvider.descriptor.id
         self.unitBuilder = TranslationUnitBuilder(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        self.liveScheduler = LiveTranslationScheduler(provider: liveProvider)
+        self.liveScheduler = LiveTranslationScheduler(provider: liveProvider, performanceEventLogger: performanceEventLogger)
         self.accurateScheduler = AccurateTranslationScheduler(provider: accurateProvider)
+        self.performanceEventLogger = performanceEventLogger
         self.persistFinalResult = persistFinalResult
     }
 
@@ -96,7 +99,29 @@ public struct TranslationExperiencePipeline {
                 continue
             }
             persistFinalResult(record)
+            logFinalPersisted(result: result, record: record)
         }
+    }
+
+    private func logFinalPersisted(
+        result: TranslationResult,
+        record: TranslationResultPersistenceRecord
+    ) {
+        performanceEventLogger?.log(
+            "translation_unit_final_persisted",
+            segmentID: result.sourceID,
+            isFinal: true,
+            textLength: result.translatedText.count,
+            metadata: [
+                "translationKind": "final",
+                "translationState": result.displayState.rawValue,
+                "laneID": "\(result.laneID.speakerID)|\(result.laneID.sourceLocale)|\(result.laneID.targetLocale)",
+                "resultID": result.id,
+                "sourceSegmentIDs": result.sourceSegmentIDs.joined(separator: ","),
+                "boundaryReason": record.boundaryReason?.rawValue ?? "unknown",
+                "providerID": record.providerID
+            ]
+        )
     }
 
     private func persistenceRecord(

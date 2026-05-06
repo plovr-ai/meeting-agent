@@ -1465,6 +1465,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             recorder: fixture.recorder,
             captionTranslationProviderFactory: { _ in provider },
             liveCaptionSnapshotDebounceNanoseconds: 0,
+            liveCaptionPipelineUsesUnitTranslation: true,
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -1735,6 +1736,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             recorder: fixture.recorder,
             captionTranslationProviderFactory: { _ in provider },
             liveCaptionSnapshotDebounceNanoseconds: 0,
+            liveCaptionPipelineUsesUnitTranslation: true,
             processTargetsProvider: { [target] }
         )
         try await viewModel.startRecording(for: target)
@@ -1742,7 +1744,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         fixture.transcriber.emit(.upsert(TranscriptSegment(
             id: "segment-1",
-            text: "Caption first.",
+            text: "Caption first before translation overlay arrives for everyone.",
             language: "en-US",
             isFinal: true,
             speechFinal: true

@@ -2,6 +2,105 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranslationUnitBuilderTests: XCTestCase {
+    func testFlushOpenBlocksSortsMultipleLanesDeterministically() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumStableBlockCharacters: 5)
+        )
+        _ = builder.apply(segments: [
+            TranscriptSegment(id: "segment-b", speaker: TranscriptSpeaker(identifier: "speaker-b"), text: "Second lane text", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "segment-a", speaker: TranscriptSpeaker(identifier: "speaker-a"), text: "First lane text", language: "en-US", isFinal: true)
+        ], now: Date(timeIntervalSince1970: 1))
+
+        let blocks = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertEqual(blocks.map(\.sourceSegmentIDs), [["segment-a"], ["segment-b"]])
+    }
+
+    func testLiveUnitUsesConfiguredSourceLocaleWhenSegmentLanguageIsMissing() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumLiveWords: 2)
+        )
+
+        let output = builder.apply(segments: [
+            TranscriptSegment(id: "segment-1", text: "Confirm owner today", isFinal: false)
+        ], now: Date(timeIntervalSince1970: 1))
+
+        XCTAssertEqual(output.liveUnits.first?.laneID.sourceLocale, "en-US")
+        XCTAssertEqual(output.liveUnits.first?.revision, 1)
+    }
+
+    func testManualStopCanSealShortNonFillerText() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumStableBlockCharacters: 20)
+        )
+        _ = builder.apply(segments: [
+            TranscriptSegment(id: "segment-1", text: "go live", language: "en-US", isFinal: true)
+        ], now: Date(timeIntervalSince1970: 1))
+
+        let blocks = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertEqual(blocks.first?.sourceText, "go live")
+        XCTAssertEqual(blocks.first?.boundaryReason, .manualStop)
+    }
+
+    func testMaxLengthAndMaxDurationSealStableBlocks() {
+        var lengthBuilder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(
+                minimumStableBlockCharacters: 5,
+                maximumStableBlockCharacters: 10,
+                maximumStableBlockDuration: 60
+            )
+        )
+        let lengthOutput = lengthBuilder.apply(segments: [
+            TranscriptSegment(id: "segment-1", text: "This text is long enough", language: "en-US", isFinal: true)
+        ], now: Date(timeIntervalSince1970: 1))
+
+        var durationBuilder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(
+                minimumStableBlockCharacters: 5,
+                maximumStableBlockCharacters: 100,
+                maximumStableBlockDuration: 1
+            )
+        )
+        _ = durationBuilder.apply(segments: [
+            TranscriptSegment(id: "segment-2", text: "Short open text", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 1))
+        ], now: Date(timeIntervalSince1970: 1))
+        let durationOutput = durationBuilder.apply(segments: [
+            TranscriptSegment(id: "segment-3", text: "Short open text continued", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 3))
+        ], now: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(lengthOutput.stableBlocks.first?.boundaryReason, .maxLength)
+        XCTAssertEqual(durationOutput.stableBlocks.first?.boundaryReason, .maxDuration)
+    }
+
+    func testManualStopDoesNotEmitEmptyOrFillerOnlyBlocks() {
+        var emptyBuilder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let emptyBlocks = emptyBuilder.flushOpenBlocks(now: Date(timeIntervalSince1970: 1))
+
+        var fillerBuilder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumStableBlockCharacters: 2)
+        )
+        _ = fillerBuilder.apply(segments: [
+            TranscriptSegment(id: "segment-1", text: "um", language: "en-US", isFinal: true)
+        ], now: Date(timeIntervalSince1970: 1))
+        let fillerBlocks = fillerBuilder.flushOpenBlocks(now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertTrue(emptyBlocks.isEmpty)
+        XCTAssertTrue(fillerBlocks.isEmpty)
+    }
+
     func testIsFinalAdvancesStablePrefixButDoesNotSealBlock() {
         var builder = TranslationUnitBuilder(
             sourceLocale: "en-US",

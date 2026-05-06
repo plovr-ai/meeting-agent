@@ -210,6 +210,45 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Stable Translation Success Count: 1"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptReportsUnitTranslationPipelineMetrics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-unit-translation-\(UUID().uuidString)", isDirectory: true)
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0.1),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:01Z", segmentID: "unit-1", isFinal: false, textLength: 32, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_unit_live_stale", wallTime: "2026-05-06T00:00:02Z", segmentID: "unit-2", isFinal: false, textLength: 36, metadata: [
+                "translationKind": "live",
+                "reason": "pending_replaced",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z"),
+            event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:04Z", segmentID: "block-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationState": "stableFinal",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_preview_dropped_after_stop", wallTime: "2026-05-06T00:00:05Z", segmentID: "unit-3", isFinal: false, textLength: 0)
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [eventsURL.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("Unit Translation Pipeline"))
+        XCTAssertTrue(result.stdout.contains("Live Unit Scheduled Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Live Unit Stale Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Stable Unit Persisted Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Preview Dropped After Stop Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Preview Published After Stop Count: 0"))
+        XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 1"))
+    }
+
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

@@ -3,6 +3,118 @@ import XCTest
 
 @MainActor
 final class LiveCaptionPipelineTests: XCTestCase {
+    func testAttachTranslationResultsPublishesUnitTranslationAndMarksStableFinal() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We should confirm the launch owner today.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let snapshot = pipeline.attachTranslationResults([
+            TranslationResult(
+                id: "stable-1",
+                sourceID: "block-1",
+                laneID: lane,
+                sourceText: "We should confirm the launch owner today.",
+                translatedText: "我们应该确认上线负责人。",
+                displayState: .stableFinal,
+                createdAt: Date(timeIntervalSince1970: 2),
+                sourceCreatedAt: Date(timeIntervalSince1970: 1),
+                sourceSegmentIDs: ["segment-1"]
+            )
+        ], visibleUpdatedAt: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "我们应该确认上线负责人。")
+        XCTAssertEqual(snapshot.turns.first?.translationFreshness, .final)
+        XCTAssertEqual(snapshot.turns.first?.translationState, .final)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertEqual(snapshot.translationHealth, .live)
+    }
+
+    func testAttachTranslationResultCanFallbackToSourceIDWhenSegmentIndexIsMissing() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+        let initial = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We should confirm the launch owner today.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        let snapshot = pipeline.attachTranslationResults([
+            TranslationResult(
+                id: "live-1",
+                sourceID: initial.turns[0].id,
+                laneID: lane,
+                sourceText: "We should confirm the launch owner today.",
+                translatedText: "我们应该确认上线负责人。",
+                displayState: .liveFresh,
+                createdAt: Date(timeIntervalSince1970: 2),
+                sourceCreatedAt: Date(timeIntervalSince1970: 1),
+                sourceSegmentIDs: []
+            )
+        ], visibleUpdatedAt: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "我们应该确认上线负责人。")
+        XCTAssertEqual(snapshot.turns.first?.translationFreshness, .fresh)
+    }
+
+    func testSameLanguageWithoutProviderCompletesTranslationWithoutText() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "en-US",
+            translationProvider: nil,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "No translation is needed.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertEqual(snapshot.translationHealth, .live)
+    }
+
     func testAccumulationResultCarriesRealtimeSourceKind() async {
         let result = TranscriptSegmentAccumulationResult(
             document: TranscriptDocument(segments: [
