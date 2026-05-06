@@ -16,6 +16,11 @@ public struct LiveCaptionPipelineSnapshot: Equatable {
     }
 }
 
+public enum LiveCaptionTranslationMode: Equatable {
+    case legacyCaptionScheduler
+    case unitPipelineActiveRecording
+}
+
 @MainActor
 public final class LiveCaptionPipeline {
     private var sourceLocale: String
@@ -23,6 +28,7 @@ public final class LiveCaptionPipeline {
     private let translationProvider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
     private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
+    private let translationMode: LiveCaptionTranslationMode
     private var translationScheduler: CaptionTranslationScheduler
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
@@ -40,13 +46,15 @@ public final class LiveCaptionPipeline {
         targetLocale: String,
         translationProvider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
-        persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil
+        persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
+        translationMode: LiveCaptionTranslationMode = .legacyCaptionScheduler
     ) {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         self.translationProvider = translationProvider
         self.performanceEventLogger = performanceEventLogger
         self.persistTranslation = persistTranslation
+        self.translationMode = translationMode
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
         translationScheduler = CaptionTranslationScheduler(
@@ -388,6 +396,7 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleLiveTranslations() async {
+        guard translationMode == .legacyCaptionScheduler else { return }
         let generation = storeGeneration
         let updates = await translationScheduler.liveTranslationUpdates(for: store)
         guard generation == storeGeneration else {

@@ -139,6 +139,35 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertTrue(provider.requests.isEmpty)
     }
 
+    func testActiveRecordingUnitTranslationDoesNotUseCaptionDraftScheduler() async {
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "segment-1": "翻译"
+        ])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            text: "Select settings and about the public preview configuration today",
+            language: "en-US",
+            isFinal: false,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [segment]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        _ = await pipeline.scheduleLivePendingTranslations()
+
+        XCTAssertTrue(provider.requests.isEmpty)
+    }
+
     func testApplyLogsCaptionTurnVisibleWithoutRawText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
