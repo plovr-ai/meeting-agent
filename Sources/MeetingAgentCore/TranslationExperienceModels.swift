@@ -165,6 +165,7 @@ public struct TranslationResult: Codable, Equatable, Identifiable {
     public var createdAt: Date
     public var sourceCreatedAt: Date
     public var riskFlags: Set<TranslationRiskFlag>
+    public var sourceSegmentIDs: [String]
 
     public init(
         id: String,
@@ -175,7 +176,8 @@ public struct TranslationResult: Codable, Equatable, Identifiable {
         displayState: TranslationDisplayState,
         createdAt: Date,
         sourceCreatedAt: Date,
-        riskFlags: Set<TranslationRiskFlag> = []
+        riskFlags: Set<TranslationRiskFlag> = [],
+        sourceSegmentIDs: [String] = []
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -186,5 +188,53 @@ public struct TranslationResult: Codable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.sourceCreatedAt = sourceCreatedAt
         self.riskFlags = riskFlags
+        self.sourceSegmentIDs = sourceSegmentIDs
+    }
+}
+
+public struct TranslationResultPersistenceRecord: Codable, Equatable, Identifiable {
+    public var id: String { resultID }
+    public var meetingID: UUID
+    public var resultID: String
+    public var sourceID: String
+    public var laneID: TranslationLaneID
+    public var sourceSegmentIDs: [String]
+    public var sourceTextHash: String
+    public var sourceText: String
+    public var translatedText: String
+    public var displayState: TranslationDisplayState
+    public var boundaryReason: StableTranslationBoundaryReason?
+    public var providerID: String
+    public var createdAt: Date
+    public var finalizedAt: Date?
+
+    public init(
+        meetingID: UUID,
+        resultID: String,
+        sourceID: String,
+        laneID: TranslationLaneID,
+        sourceSegmentIDs: [String],
+        sourceTextHash: String,
+        sourceText: String,
+        translatedText: String,
+        displayState: TranslationDisplayState,
+        boundaryReason: StableTranslationBoundaryReason?,
+        providerID: String,
+        createdAt: Date,
+        finalizedAt: Date?
+    ) {
+        self.meetingID = meetingID
+        self.resultID = resultID
+        self.sourceID = sourceID
+        self.laneID = laneID
+        self.sourceSegmentIDs = sourceSegmentIDs
+        self.sourceTextHash = sourceTextHash
+        self.sourceText = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translatedText = translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.displayState = displayState
+        self.boundaryReason = boundaryReason
+        self.providerID = providerID
+        self.createdAt = createdAt
+        self.finalizedAt = finalizedAt
     }
 }
