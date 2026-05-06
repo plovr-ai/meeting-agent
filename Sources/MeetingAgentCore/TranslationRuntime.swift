@@ -175,10 +175,24 @@ public struct TranslationRuntime {
         document.segments
             .filter { !$0.isFinal }
             .map { segment in
+                let sourceLocale: String
+                if let language = segment.language {
+                    sourceLocale = language
+                } else if let context {
+                    sourceLocale = context.sourceLocale
+                } else {
+                    sourceLocale = ""
+                }
+                let targetLocale: String
+                if let context {
+                    targetLocale = context.targetLocale
+                } else {
+                    targetLocale = ""
+                }
                 let lane = TranslationLaneID(
                     speaker: segment.speaker,
-                    sourceLocale: segment.language ?? context?.sourceLocale ?? "",
-                    targetLocale: context?.targetLocale ?? ""
+                    sourceLocale: sourceLocale,
+                    targetLocale: targetLocale
                 )
                 return TranslationResult(
                     id: "\(segment.id)-dropped-after-stop",
