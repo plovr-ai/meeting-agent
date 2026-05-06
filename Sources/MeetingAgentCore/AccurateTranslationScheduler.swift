@@ -66,7 +66,8 @@ public struct AccurateTranslationScheduler {
                     translatedText: translated.segments.first?.targetText ?? "",
                     displayState: .stableFinal,
                     createdAt: now(),
-                    sourceCreatedAt: block.createdAt
+                    sourceCreatedAt: block.createdAt,
+                    sourceSegmentIDs: block.sourceSegmentIDs
                 )
             } catch where attempts <= configuration.retryCount {
                 continue
@@ -79,7 +80,8 @@ public struct AccurateTranslationScheduler {
                     translatedText: "",
                     displayState: .failedRecoverable,
                     createdAt: now(),
-                    sourceCreatedAt: block.createdAt
+                    sourceCreatedAt: block.createdAt,
+                    sourceSegmentIDs: block.sourceSegmentIDs
                 )
             }
         }
@@ -92,7 +94,8 @@ public struct AccurateTranslationScheduler {
             translatedText: "",
             displayState: .failedRecoverable,
             createdAt: now(),
-            sourceCreatedAt: block.createdAt
+            sourceCreatedAt: block.createdAt,
+            sourceSegmentIDs: block.sourceSegmentIDs
         )
     }
 }

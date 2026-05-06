@@ -25,6 +25,7 @@ final class AccurateTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(provider.requests.first?.sourceText, "We approved the launch date.")
         XCTAssertEqual(results.first?.translatedText, "我们批准上线日期。")
         XCTAssertEqual(results.first?.displayState, .stableFinal)
+        XCTAssertEqual(results.first?.sourceSegmentIDs, ["segment-1"])
     }
 
     func testRetriesRecoverableFailureBeforeStableFinal() async {
@@ -75,6 +76,7 @@ final class AccurateTranslationSchedulerTests: XCTestCase {
 
         XCTAssertEqual(provider.requests.count, 1)
         XCTAssertEqual(results.first?.displayState, .failedRecoverable)
+        XCTAssertEqual(results.first?.sourceSegmentIDs, ["segment-1"])
     }
 
     func testDoesNotTranslateStableBlockTwiceAfterSuccess() async {
