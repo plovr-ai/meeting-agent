@@ -1165,7 +1165,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
             guard liveCaptionReplaySequence == sequence else { return }
-            let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
+            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
             guard liveCaptionReplaySequence == sequence else { return }
             publishLiveCaptionPipelineSnapshot(snapshot)
         }
@@ -1184,7 +1184,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate(from: now)
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
-            let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
+            let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
             publishLiveCaptionPipelineSnapshot(snapshot)
         }
     }
@@ -1235,7 +1235,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             publishLiveCaptionPipelineSnapshot(overlaySnapshot)
             return
         }
-        let snapshot = await liveCaptionPipeline.scheduleLegacyReplayBackfillTranslations()
+        let snapshot = await liveCaptionPipeline.scheduleLivePendingTranslations()
         if let sequence {
             guard liveCaptionReplaySequence == sequence else { return }
         } else {
