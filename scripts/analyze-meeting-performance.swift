@@ -185,6 +185,9 @@ struct MeetingPerformanceAnalyzer {
         lines.append("Stable Unit Persisted Count: \(allUnitEvents("translation_unit_final_persisted").count)")
         lines.append("Preview Dropped After Stop Count: \(allUnitEvents("translation_preview_dropped_after_stop").count)")
         lines.append("Preview Published After Stop Count: \(allUnitEvents("translation_preview_published_after_stop").count)")
+        lines.append("Translation Runtime Snapshot Count: \(translationRuntimeSnapshots().count)")
+        lines.append("Translation Runtime Stop Snapshot Count: \(translationRuntimeSnapshots(path: "stop").count)")
+        lines.append("Translation Runtime Dropped Result Count: \(translationRuntimeDroppedResultCount())")
         lines.append("Post-Stop Unit Translation Events: \(postStopUnitTranslationEvents().count)")
         lines.append("")
         lines.append("Process Metrics")
@@ -589,6 +592,19 @@ struct MeetingPerformanceAnalyzer {
         guard let recordingStoppedAt else { return [] }
         return allEvents.filter {
             $0.wallTime > recordingStoppedAt && $0.event.hasPrefix("translation_unit_")
+        }
+    }
+
+    private func translationRuntimeSnapshots(path: String? = nil) -> [PerformanceEvent] {
+        allEvents.filter {
+            $0.event == "translation_runtime_snapshot"
+                && (path == nil || $0.metadata["path"] == path)
+        }
+    }
+
+    private func translationRuntimeDroppedResultCount() -> Int {
+        translationRuntimeSnapshots().reduce(0) { total, event in
+            total + (Int(event.metadata["droppedResultCount"] ?? "") ?? 0)
         }
     }
 

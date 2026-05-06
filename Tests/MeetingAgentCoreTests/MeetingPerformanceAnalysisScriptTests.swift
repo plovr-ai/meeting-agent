@@ -237,6 +237,14 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
             event("translation_preview_dropped_after_stop", wallTime: "2026-05-06T00:00:05Z", segmentID: "unit-3", isFinal: false, textLength: 0),
             event("translation_unit_live_dropped_after_stop", wallTime: "2026-05-06T00:00:06Z", segmentID: "unit-4", isFinal: false, textLength: 18, metadata: [
                 "translationKind": "live"
+            ]),
+            event("translation_runtime_snapshot", wallTime: "2026-05-06T00:00:07Z", metadata: [
+                "path": "stop",
+                "state": "stopped",
+                "liveResultCount": "0",
+                "stableResultCount": "1",
+                "visibleResultCount": "1",
+                "droppedResultCount": "1"
             ])
         ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
 
@@ -250,6 +258,9 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Stable Unit Persisted Count: 1"))
         XCTAssertTrue(result.stdout.contains("Preview Dropped After Stop Count: 1"))
         XCTAssertTrue(result.stdout.contains("Preview Published After Stop Count: 0"))
+        XCTAssertTrue(result.stdout.contains("Translation Runtime Snapshot Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Translation Runtime Stop Snapshot Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Translation Runtime Dropped Result Count: 1"))
         XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 2"))
     }
 
