@@ -67,6 +67,51 @@ Use the app settings to match the meeting language. The default is `en-US`; Chin
 - `SystemSpeechTranscriber` adapts captured PCM frames into `SFSpeechAudioBufferRecognitionRequest`.
 - If Speech recognition permission or availability fails, WAV recording should continue and the transcript file should contain the failure reason.
 
+## Realtime Caption And Translation Architecture
+
+- Realtime captions are the primary user-facing path. Translation must never block caption ingestion, caption chunking, or caption overlay publication.
+- Active-recording translation uses the unit translation runtime, not the legacy replay backfill path:
+  - `MeetingAgentViewModel` sends live transcript documents to `TranslationRuntimeActor`.
+  - `TranslationRuntimeActor` serializes realtime apply/finalize operations so stop/finalize cannot race with in-flight translation applies.
+  - `TranslationExperiencePipeline` builds live units and stable blocks, schedules live/accurate translation, stores visible results, and persists stable final results.
+  - `TranslationUnitBuilder` must use the same `LiveCaptionChunker` boundary policy as the realtime caption projection. Stable translation block `sourceSegmentIDs` must match visible caption turn `sourceSegmentIDs`.
+  - `LiveCaptionPipeline.attachTranslationResults` may attach a `stableFinal` result only when the result `sourceSegmentIDs` exactly match a visible turn. Partial overlap is a bug and must log `translation_unit_projection_mismatch`.
+  - `liveFresh` results are allowed to attach only as temporary live previews for a single source segment contained in a visible turn.
+- The legacy replay translation classes are now replay/backfill-only. `ReplayTranslationBackfillScheduler` and `ReplayTranslationBackfillPlanner` must not become the active-recording translation path again.
+- Draft caption throttling must not cancel or stale an already pending final caption apply. A final transcript update must be allowed to reach the caption pipeline before later draft throttle updates are coalesced.
+- `LiveTranslationScheduler` should coalesce same-lane live units in a batch to the latest unit. Do not waste provider calls translating an older prefix when a newer prefix for the same lane is already available.
+- Translation persistence is separate from caption persistence. Stable final translation records are stored in `translation-results.jsonl` via `TranslationResultPersistenceStore` and must include `sourceSegmentIDs`.
+
+## Translation E2E Verification Requirements
+
+- Do not claim translation is fixed because provider calls, overlay events, or persisted records exist. The E2E gate must validate that translated data is visible, timely, and projected onto the correct caption turns.
+- Use the analyzer against real meeting directories whenever validating recordings:
+
+```sh
+swift scripts/analyze-meeting-performance.swift --assert-translation-e2e "$HOME/Library/Application Support/MeetingAgent/Meetings/<MEETING_ID>"
+```
+
+- The E2E report must fail on all of these conditions:
+  - realtime captions were visible but no translation became visible or persisted;
+  - unit translations were scheduled but no provider call was observed;
+  - provider calls started but never finished or failed;
+  - provider unavailable, provider failed, or same-language skip events occurred unexpectedly;
+  - first live translation latency exceeds the configured budget, currently 4 seconds from first audio frame to first `translation_live_result_visible`;
+  - stable translation coverage is below the configured floor, currently 80% of realtime final caption turns;
+  - `translation_unit_projection_mismatch` events are present;
+  - persisted `translation-results.jsonl` records do not exactly match any non-replay `caption_turn_visible` `sourceSegmentIDs` set;
+  - duplicate stable result persistence is detected;
+  - realtime translation runtime snapshots are published after stop.
+- Key E2E fields to inspect in reports:
+  - `First Live Translation Latency`
+  - `Stable Translation Coverage`
+  - `Translation Projection Mismatch Events`
+  - `Persisted Translation Projection Mismatches`
+  - `Visible Unit Result Events`
+  - `Translation Result Store Records`
+- When a UI report says translations are missing, delayed, repeated, or jumping, first inspect `performance-events.jsonl`, `transcript-events.jsonl`, `transcript.json`, and `translation-results.jsonl`. Compare visible caption turn `sourceSegmentIDs` with stable translation result `sourceSegmentIDs`; exact set mismatch is the primary projection failure mode.
+- Historical recordings made before a fix may continue to fail new E2E gates. Validate fixes by packaging the app, recording a fresh meeting, and running the analyzer on that new meeting directory.
+
 ## Git Hygiene
 
 - Check `git status --short` before editing and before final handoff.

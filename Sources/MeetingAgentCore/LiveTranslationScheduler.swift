@@ -39,12 +39,12 @@ public struct LiveTranslationScheduler {
 
     public mutating func schedule(_ units: [LiveTranslationUnit]) async -> [TranslationResult] {
         var results: [TranslationResult] = []
-        var immediateUnits: [LiveTranslationUnit] = []
-        var lanesScheduledInThisBatch = Set<TranslationLaneID>()
+        var immediateUnitsByLane: [TranslationLaneID: LiveTranslationUnit] = [:]
+        var immediateLaneOrder: [TranslationLaneID] = []
 
         for unit in units {
             var state = laneStates[unit.laneID, default: LiveTranslationLaneState()]
-            if state.inFlightUnitID != nil || lanesScheduledInThisBatch.contains(unit.laneID) {
+            if state.inFlightUnitID != nil {
                 if let staleUnit = state.pendingLatestUnit {
                     logUnitEvent(
                         "translation_unit_live_stale",
@@ -56,12 +56,21 @@ public struct LiveTranslationScheduler {
                 laneStates[unit.laneID] = state
                 continue
             }
+            if let staleUnit = immediateUnitsByLane[unit.laneID] {
+                logUnitEvent(
+                    "translation_unit_live_stale",
+                    unit: staleUnit,
+                    metadata: ["reason": "pending_replaced", "replacementUnitID": unit.id]
+                )
+            } else {
+                immediateLaneOrder.append(unit.laneID)
+            }
             laneStates[unit.laneID] = state
-            lanesScheduledInThisBatch.insert(unit.laneID)
-            immediateUnits.append(unit)
+            immediateUnitsByLane[unit.laneID] = unit
         }
 
-        for unit in immediateUnits {
+        for lane in immediateLaneOrder {
+            guard let unit = immediateUnitsByLane[lane] else { continue }
             if let result = await scheduleImmediately(unit) {
                 results.append(result)
             }
@@ -174,6 +183,22 @@ public struct LiveTranslationScheduler {
         )
     }
 
+    private func logProviderEvent(_ event: String, unit: LiveTranslationUnit) {
+        performanceEventLogger?.log(
+            event,
+            segmentID: unit.id,
+            isFinal: false,
+            textLength: unit.stablePrefixText.count,
+            metadata: [
+                "translationKind": "live",
+                "providerID": provider.descriptor.id,
+                "laneID": "\(unit.laneID.speakerID)|\(unit.laneID.sourceLocale)|\(unit.laneID.targetLocale)",
+                "revision": String(unit.revision),
+                "sourceSegmentIDs": unit.sourceSegmentIDs.joined(separator: ",")
+            ]
+        )
+    }
+
     private func translate(_ unit: LiveTranslationUnit) async -> TranslationResult {
         do {
             let transcript = TranscriptDocument(segments: [
@@ -185,10 +210,12 @@ public struct LiveTranslationScheduler {
                     createdAt: unit.createdAt
                 )
             ])
+            logProviderEvent("translation_provider_call_started", unit: unit)
             let translated = try await provider.translate(
                 transcript: transcript,
                 options: TranslationOptions(sourceLocale: unit.laneID.sourceLocale, targetLocale: unit.laneID.targetLocale)
             )
+            logProviderEvent("translation_provider_call_finished", unit: unit)
             return TranslationResult(
                 id: "\(unit.id)-live-result",
                 sourceID: unit.id,
@@ -202,6 +229,7 @@ public struct LiveTranslationScheduler {
                 sourceSegmentIDs: unit.sourceSegmentIDs
             )
         } catch {
+            logProviderEvent("translation_provider_call_failed", unit: unit)
             return TranslationResult(
                 id: "\(unit.id)-failed",
                 sourceID: unit.id,

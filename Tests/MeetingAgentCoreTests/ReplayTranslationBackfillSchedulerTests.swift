@@ -2,7 +2,7 @@ import XCTest
 @testable import MeetingAgentCore
 
 @MainActor
-final class CaptionTranslationSchedulerTests: XCTestCase {
+final class ReplayTranslationBackfillSchedulerTests: XCTestCase {
     func testTranslationUpdateEquatableCoversRequestAndResultVariants() {
         let turn = hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN")
         let request = ActiveCaptionTranslationRequest(
@@ -80,7 +80,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     }
 
     func testDraftTranslationSchedulerConfigurationExposesPolicyDefaults() {
-        let configuration = CaptionTranslationSchedulerConfiguration()
+        let configuration = ReplayTranslationBackfillSchedulerConfiguration()
 
         XCTAssertEqual(configuration.followUpDraftMinimumIntervalNanoseconds, 1_500_000_000)
         XCTAssertEqual(configuration.followUpDraftMaximumWaitNanoseconds, 3_000_000_000)
@@ -94,7 +94,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "en-GB")
         store.upsert(hardSealedTurn(sourceLocale: "en-US", targetLocale: "en-GB"))
         let provider = RecordingTextTranslationProvider()
-        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: provider, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
 
@@ -107,7 +107,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "你好"])
-        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: provider, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
 
@@ -124,7 +124,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "你好"])
-        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: provider, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
         await scheduler.scheduleTranslations(in: &store)
@@ -138,10 +138,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         originalStore.upsert(hardSealedTurn(text: "confirm the launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let updates = await scheduler.translationUpdates(for: originalStore)
@@ -168,10 +168,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         originalStore.upsert(hardSealedTurn(id: "segment-1", text: "confirm launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let updates = await scheduler.translationUpdates(for: originalStore)
@@ -202,14 +202,14 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         originalStore.upsert(hardSealedTurn(id: "segment-1", text: "confirm launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
         var persisted: [(segmentID: String, text: String, targetLocale: String, isFinal: Bool)] = []
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
             persistTranslation: { target, text, isFinal in
                 persisted.append((target.primarySourceSegmentID, text, target.targetLocale, isFinal))
                 return true
             },
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let updates = await scheduler.translationUpdates(for: originalStore)
@@ -234,10 +234,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var originalStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         originalStore.upsert(hardSealedTurn(id: "segment-1", text: "confirm launch owner", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "确认上线负责人"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let updates = await scheduler.translationUpdates(for: originalStore)
@@ -271,7 +271,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
             revision: 0,
             sourceText: "legacy final"
         )
-        let scheduler = CaptionTranslationScheduler(provider: nil, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: nil, performanceEventLogger: nil)
 
         let outcome = scheduler.apply(
             CaptionTranslationUpdate(
@@ -303,7 +303,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         )
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(current)
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: nil,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL)
         )
@@ -341,7 +341,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         )
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(current)
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: nil,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL)
         )
@@ -368,10 +368,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(id: "segment-1", text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["other-segment": "不会匹配"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         await scheduler.scheduleTranslations(in: &store)
@@ -389,14 +389,14 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         originalStore.upsert(hardSealedTurn(id: "deepgram-transcribe-stream-26.38", text: longFinalText, sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["deepgram-transcribe-stream-26.38": "完整上下文翻译"])
         var persisted: [(String, String)] = []
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
             persistTranslation: { target, text, _ in
                 persisted.append((target.primarySourceSegmentID, text))
                 return true
             },
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let updates = await scheduler.translationUpdates(for: originalStore)
@@ -421,7 +421,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(error: NSError(domain: "translation", code: 2))
-        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: provider, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
 
@@ -455,7 +455,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
             translationState: .draft
         ))
         let provider = RecordingTextTranslationProvider(translations: ["soft": "软边界", "draft": "草稿"])
-        let scheduler = CaptionTranslationScheduler(provider: provider, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: provider, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
 
@@ -469,7 +469,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         turn.boundaryReason = .punctuation
         turn.boundaryStrength = .soft
         store.upsert(turn)
-        let scheduler = CaptionTranslationScheduler(provider: nil, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: nil, performanceEventLogger: nil)
 
         let updates = await scheduler.liveTranslationUpdates(for: store)
 
@@ -480,10 +480,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "hello team", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "大家好"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1
             )
@@ -499,10 +499,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "we should review the launch owner and timeline", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1
             )
@@ -518,10 +518,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "We agree.", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "我们同意"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1
             )
@@ -537,10 +537,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var draftStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         draftStore.upsert(draftTurn(text: "yeah", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "是的"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1
             )
@@ -563,10 +563,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     func testFollowUpDraftSmallChangeWithinMinimumIntervalIsSkipped() async {
         var now = Date(timeIntervalSince1970: 1_000)
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
@@ -595,10 +595,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     func testFollowUpDraftSemanticBoundaryTriggersAfterMinimumInterval() async {
         var now = Date(timeIntervalSince1970: 1_000)
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
@@ -624,10 +624,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     func testFollowUpDraftContentDeltaTriggersAfterMinimumInterval() async {
         var now = Date(timeIntervalSince1970: 1_000)
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
@@ -658,10 +658,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     func testFollowUpDraftMaximumWaitTriggersWithoutBoundaryOrContentDelta() async {
         var now = Date(timeIntervalSince1970: 1_000)
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
@@ -691,10 +691,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "first draft includes enough context to translate", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = CancellationRecordingTextTranslationProvider()
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let firstTask = Task {
@@ -720,10 +720,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var firstStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         firstStore.upsert(draftTurn(text: "hello team", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "大家好"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 1_500_000_000,
@@ -767,10 +767,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var draftStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         draftStore.upsert(draftTurn(text: "same words", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "翻译"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 followUpDraftMinimumIntervalNanoseconds: 10_000_000_000,
@@ -794,7 +794,7 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
     func testNilProviderLeavesHardSealedTranslationPending() async {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "hello", sourceLocale: "en-US", targetLocale: "zh-CN"))
-        let scheduler = CaptionTranslationScheduler(provider: nil, performanceEventLogger: nil)
+        let scheduler = ReplayTranslationBackfillScheduler(provider: nil, performanceEventLogger: nil)
 
         await scheduler.scheduleTranslations(in: &store)
 
@@ -810,10 +810,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(draftTurn(text: "draft text", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "草稿"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 2,
                 minimumInitialDraftWordCount: 1,
@@ -853,10 +853,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         secondStore.upsert(draftTurn(text: "new draft contains enough context to translate", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let firstStoreSnapshot = firstStore
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "新草稿"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
         )
 
         async let firstUpdates = scheduler.liveTranslationUpdates(for: firstStoreSnapshot)
@@ -879,10 +879,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         finalStore.upsert(hardSealedTurn(text: "same text", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let draftStoreSnapshot = draftStore
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "最终"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 30_000_000, maxConcurrentTranslationRequests: 2)
         )
 
         async let draftUpdates = scheduler.liveTranslationUpdates(for: draftStoreSnapshot)
@@ -911,10 +911,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         currentStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "旧草稿"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 2,
                 minimumInitialDraftWordCount: 1,
@@ -948,10 +948,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var currentStore = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         currentStore.upsert(draftTurn(text: "new draft", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(translations: ["segment-1": "旧草稿"])
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 2,
                 minimumInitialDraftWordCount: 1,
@@ -977,10 +977,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "private words", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = RecordingTextTranslationProvider(error: NSError(domain: "translation", code: 2))
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
         )
 
         await scheduler.scheduleTranslations(in: &store)
@@ -1007,10 +1007,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         store.upsert(hardSealedTurn(id: "segment-2", text: "second", sourceLocale: "en-US", targetLocale: "zh-CN"))
         store.upsert(hardSealedTurn(id: "segment-3", text: "third", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = DelayedRecordingTextTranslationProvider(delayNanoseconds: 20_000_000)
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 2)
         )
 
         let updates = await scheduler.translationUpdates(for: store)
@@ -1023,10 +1023,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         var store = LiveCaptionStore(sourceLocale: "en-US", targetLocale: "zh-CN")
         store.upsert(hardSealedTurn(text: "do not cancel network", sourceLocale: "en-US", targetLocale: "zh-CN"))
         let provider = CancellationRecordingTextTranslationProvider()
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: provider,
             performanceEventLogger: nil,
-            configuration: CaptionTranslationSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(draftDebounceNanoseconds: 0, maxConcurrentTranslationRequests: 1)
         )
 
         let task = Task {
@@ -1046,10 +1046,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let eventsURL = root.appendingPathComponent("performance-events.jsonl")
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: RecordingTextTranslationProvider(translations: ["segment-1": "我们应该审查发布计划"]),
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 minimumInitialDraftWordCount: 1,
@@ -1079,10 +1079,10 @@ final class CaptionTranslationSchedulerTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("caption-translation-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let eventsURL = root.appendingPathComponent("performance-events.jsonl")
-        let scheduler = CaptionTranslationScheduler(
+        let scheduler = ReplayTranslationBackfillScheduler(
             provider: RecordingTextTranslationProvider(translations: ["segment-1": "旧翻译"]),
             performanceEventLogger: PerformanceEventLogger(url: eventsURL),
-            configuration: CaptionTranslationSchedulerConfiguration(
+            configuration: ReplayTranslationBackfillSchedulerConfiguration(
                 draftDebounceNanoseconds: 0,
                 maxConcurrentTranslationRequests: 1,
                 minimumInitialDraftWordCount: 1,

@@ -94,6 +94,40 @@ final class TranslationExperiencePipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.liveResults.count, 1)
         XCTAssertEqual(snapshot.visibleResults.first?.translatedText, "我们确认负责人")
     }
+
+    func testCancelledApplyDoesNotPersistStableResults() async {
+        let provider = DelayedPipelineTranslationProvider()
+        var persisted: [TranslationResultPersistenceRecord] = []
+        var pipeline = TranslationExperiencePipeline(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            liveProvider: provider,
+            accurateProvider: provider,
+            persistFinalResult: { persisted.append($0) }
+        )
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            text: "We should approve the launch today.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let task = Task {
+            await pipeline.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+        }
+        for _ in 0..<50 where provider.pendingRequestCount == 0 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(provider.pendingRequestCount, 1)
+        task.cancel()
+        provider.completeRequest(at: 0, targetText: "我们今天应该批准上线。")
+        _ = await task.value
+
+        XCTAssertTrue(persisted.isEmpty)
+    }
 }
 
 private final class PipelineTranslationProvider: TextTranslationProvider {
@@ -131,5 +165,52 @@ private final class PipelineTranslationProvider: TextTranslationProvider {
             ],
             provenance: PipelineProvenance(profileID: "test-pipeline", successfulProviders: ["test-pipeline"])
         )
+    }
+}
+
+private final class DelayedPipelineTranslationProvider: TextTranslationProvider {
+    struct PendingRequest {
+        let transcript: TranscriptDocument
+        let continuation: CheckedContinuation<TranslatedTranscript, Error>
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "delayed-pipeline",
+        displayName: "Delayed Pipeline",
+        capability: .textTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    private(set) var pendingRequests: [PendingRequest] = []
+
+    var pendingRequestCount: Int {
+        pendingRequests.count
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingRequests.append(PendingRequest(transcript: transcript, continuation: continuation))
+        }
+    }
+
+    func completeRequest(at index: Int, targetText: String) {
+        let request = pendingRequests[index]
+        let segment = request.transcript.segments[0]
+        request.continuation.resume(returning: TranslatedTranscript(
+            sourceLocale: segment.language ?? "en-US",
+            targetLocale: "zh-CN",
+            segments: [
+                BilingualSubtitleSegment(
+                    id: segment.id,
+                    sourceText: segment.text,
+                    targetText: targetText
+                )
+            ],
+            provenance: PipelineProvenance(profileID: "delayed-pipeline", successfulProviders: ["delayed-pipeline"])
+        ))
     }
 }

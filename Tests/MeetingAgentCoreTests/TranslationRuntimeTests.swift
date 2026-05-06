@@ -2,6 +2,111 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranslationRuntimeTests: XCTestCase {
+    func testActorProviderlessStartReturnsActiveSnapshotAndResetReturnsIdle() async {
+        let actor = TranslationRuntimeActor()
+        await actor.start(context: TranslationRuntimeContext(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000556")!,
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            generation: 1
+        ))
+
+        let activeSnapshot = await actor.submit(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(id: "segment-1", text: "We approve the launch today", language: "en-US", isFinal: false)
+            ]),
+            generation: 1,
+            now: Date(timeIntervalSince1970: 1)
+        )
+        await actor.reset()
+        let idleSnapshot = await actor.submit(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(id: "segment-2", text: "This should not run", language: "en-US", isFinal: false)
+            ]),
+            generation: 1,
+            now: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(activeSnapshot.state, .active)
+        XCTAssertTrue(activeSnapshot.visibleResults.isEmpty)
+        XCTAssertEqual(idleSnapshot.state, .idle)
+    }
+
+    func testActorHydrateReturnsStableResultsFromPersistenceRecords() async {
+        let meetingID = UUID(uuidString: "00000000-0000-0000-0000-000000000557")!
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let record = TranslationResultPersistenceRecord(
+            meetingID: meetingID,
+            resultID: "stable-1",
+            sourceID: "block-1",
+            laneID: lane,
+            sourceSegmentIDs: ["segment-1"],
+            sourceTextHash: "hash",
+            sourceText: "We approve the rollout.",
+            translatedText: "我们批准上线。",
+            displayState: .stableFinal,
+            boundaryReason: .providerHardBoundary,
+            providerID: "test",
+            createdAt: Date(timeIntervalSince1970: 1),
+            finalizedAt: Date(timeIntervalSince1970: 2)
+        )
+        let actor = TranslationRuntimeActor()
+
+        let hydrated = await actor.hydrate(records: [record])
+
+        XCTAssertEqual(hydrated.map(\.id), ["stable-1"])
+        XCTAssertEqual(hydrated.first?.translatedText, "我们批准上线。")
+    }
+
+    func testActorSerializesRealtimeApplyAndStopWithoutLosingOpenStableBlock() async throws {
+        let provider = DelayedRuntimeTranslationProvider()
+        var persisted: [TranslationResultPersistenceRecord] = []
+        let actor = TranslationRuntimeActor()
+        await actor.start(
+            context: TranslationRuntimeContext(
+                meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000555")!,
+                sourceLocale: "en-US",
+                targetLocale: "zh-CN",
+                generation: 1
+            ),
+            liveProvider: provider,
+            accurateProvider: provider,
+            persistFinalResult: { persisted.append($0) }
+        )
+
+        let applyTask = Task {
+            await actor.submit(
+                document: TranscriptDocument(segments: [
+                    TranscriptSegment(
+                        id: "segment-1",
+                        text: "We should approve the launch today",
+                        language: "en-US",
+                        isFinal: true,
+                        speechFinal: false,
+                        createdAt: Date(timeIntervalSince1970: 1)
+                    )
+                ]),
+                generation: 1,
+                now: Date(timeIntervalSince1970: 2)
+            )
+        }
+        try await waitForRuntimeCondition { provider.pendingRequestCount == 1 }
+
+        let stopTask = Task {
+            await actor.finalize(generation: 1, now: Date(timeIntervalSince1970: 3))
+        }
+        provider.completeRequest(at: 0, targetText: "实时翻译先完成。")
+        _ = await applyTask.value
+        try await waitForRuntimeCondition { provider.pendingRequestCount == 2 }
+
+        provider.completeRequest(at: 1, targetText: "停止时稳定翻译必须完成。")
+        let stopSnapshot = await stopTask.value
+
+        XCTAssertEqual(stopSnapshot.state, .stopped)
+        XCTAssertEqual(stopSnapshot.stableResults.first?.translatedText, "停止时稳定翻译必须完成。")
+        XCTAssertEqual(persisted.map(\.translatedText), ["停止时稳定翻译必须完成。"])
+    }
+
     func testHydrateReturnsStableResultsFromPersistenceRecords() {
         let meetingID = UUID(uuidString: "00000000-0000-0000-0000-000000000111")!
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
@@ -284,6 +389,20 @@ private func readRuntimeEvents(from url: URL) throws -> [PerformanceEvent] {
         .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
+private func waitForRuntimeCondition(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: () -> Bool
+) async throws {
+    let started = DispatchTime.now().uptimeNanoseconds
+    while !condition() {
+        if DispatchTime.now().uptimeNanoseconds - started > timeoutNanoseconds {
+            XCTFail("Timed out waiting for runtime condition")
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+}
+
 private final class RuntimeTranslationProvider: TextTranslationProvider {
     let translations: [String: String]
     private(set) var requestIDs: [String] = []
@@ -320,5 +439,56 @@ private final class RuntimeTranslationProvider: TextTranslationProvider {
             ],
             provenance: PipelineProvenance(profileID: "runtime-test", successfulProviders: ["runtime-test"])
         )
+    }
+}
+
+private final class DelayedRuntimeTranslationProvider: TextTranslationProvider {
+    struct PendingRequest {
+        let transcript: TranscriptDocument
+        let continuation: CheckedContinuation<TranslatedTranscript, Error>
+    }
+
+    let descriptor = ProviderDescriptor(
+        id: "delayed-runtime-test",
+        displayName: "Delayed Runtime Test",
+        capability: .textTranslation,
+        executionMode: .hosted,
+        supportedSourceLocales: ["*"],
+        supportedTargetLocales: ["*"],
+        requiresNetwork: false,
+        requiresAPIKey: false
+    )
+
+    private(set) var pendingRequests: [PendingRequest] = []
+
+    var pendingRequestCount: Int {
+        pendingRequests.count
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingRequests.append(PendingRequest(transcript: transcript, continuation: continuation))
+        }
+    }
+
+    func completeRequest(at index: Int, targetText: String) {
+        let request = pendingRequests[index]
+        let segment = request.transcript.segments[0]
+        request.continuation.resume(returning: TranslatedTranscript(
+            sourceLocale: optionsSourceLocale(for: segment),
+            targetLocale: "zh-CN",
+            segments: [
+                BilingualSubtitleSegment(
+                    id: segment.id,
+                    sourceText: segment.text,
+                    targetText: targetText
+                )
+            ],
+            provenance: PipelineProvenance(profileID: "delayed-runtime-test", successfulProviders: ["delayed-runtime-test"])
+        ))
+    }
+
+    private func optionsSourceLocale(for segment: TranscriptSegment) -> String {
+        segment.language ?? "en-US"
     }
 }

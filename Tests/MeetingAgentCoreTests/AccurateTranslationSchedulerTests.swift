@@ -28,6 +28,43 @@ final class AccurateTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(results.first?.sourceSegmentIDs, ["segment-1"])
     }
 
+    func testLogsProviderCallStartAndFinishForStableBlock() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("accurate-translation-provider-events-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = AccurateRecordingTranslationProvider(translations: ["block-1": "我们批准上线日期。"])
+        var scheduler = AccurateTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let block = StableTranslationBlock(
+            id: "block-1",
+            laneID: lane,
+            sourceText: "We approved the launch date.",
+            sourceSegmentIDs: ["segment-1"],
+            boundaryReason: .terminalPunctuation,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        _ = await scheduler.translate([block])
+
+        let events = try readAccurateLoggedEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_started"
+                && $0.segmentID == "block-1"
+                && $0.metadata["translationKind"] == "final"
+                && $0.metadata["providerID"] == "test-accurate"
+        })
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_finished"
+                && $0.segmentID == "block-1"
+                && $0.metadata["translationKind"] == "final"
+                && $0.metadata["providerID"] == "test-accurate"
+        })
+    }
+
     func testRetriesRecoverableFailureBeforeStableFinal() async {
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
         let provider = AccurateSequencedTranslationProvider(outcomes: [
@@ -79,6 +116,43 @@ final class AccurateTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(results.first?.sourceSegmentIDs, ["segment-1"])
     }
 
+    func testLogsProviderCallFailureForStableBlock() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("accurate-translation-provider-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = AccurateSequencedTranslationProvider(outcomes: [
+            .failure(NSError(domain: "translation", code: 1))
+        ])
+        var scheduler = AccurateTranslationScheduler(
+            provider: provider,
+            configuration: AccurateTranslationSchedulerConfiguration(retryCount: 0),
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let block = StableTranslationBlock(
+            id: "block-1",
+            laneID: lane,
+            sourceText: "We approved the launch date.",
+            sourceSegmentIDs: ["segment-1"],
+            boundaryReason: .terminalPunctuation,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        _ = await scheduler.translate([block])
+
+        let events = try readAccurateLoggedEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_started"
+                && $0.segmentID == "block-1"
+        })
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_failed"
+                && $0.segmentID == "block-1"
+                && $0.metadata["providerID"] == "test-accurate-sequenced"
+        })
+    }
+
     func testDoesNotTranslateStableBlockTwiceAfterSuccess() async {
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
         let provider = AccurateRecordingTranslationProvider(translations: ["block-1": "我们批准上线日期。"])
@@ -124,6 +198,12 @@ final class AccurateTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(results.first?.translatedText, "")
         XCTAssertEqual(results.first?.displayState, .stableFinal)
     }
+}
+
+private func readAccurateLoggedEvents(from url: URL) throws -> [PerformanceEvent] {
+    try String(contentsOf: url, encoding: .utf8)
+        .split(separator: "\n")
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
 private final class AccurateRecordingTranslationProvider: TextTranslationProvider {

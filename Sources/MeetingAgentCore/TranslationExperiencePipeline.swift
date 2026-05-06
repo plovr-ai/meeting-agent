@@ -39,7 +39,10 @@ public struct TranslationExperiencePipeline {
         self.accurateProviderID = accurateProvider.descriptor.id
         self.unitBuilder = TranslationUnitBuilder(sourceLocale: sourceLocale, targetLocale: targetLocale)
         self.liveScheduler = LiveTranslationScheduler(provider: liveProvider, performanceEventLogger: performanceEventLogger)
-        self.accurateScheduler = AccurateTranslationScheduler(provider: accurateProvider)
+        self.accurateScheduler = AccurateTranslationScheduler(
+            provider: accurateProvider,
+            performanceEventLogger: performanceEventLogger
+        )
         self.performanceEventLogger = performanceEventLogger
         self.persistFinalResult = persistFinalResult
     }
@@ -51,6 +54,13 @@ public struct TranslationExperiencePipeline {
         let units = unitBuilder.apply(segments: segments, now: now)
         let liveResults = await liveScheduler.schedule(units.liveUnits)
         let stableResults = await accurateScheduler.translate(units.stableBlocks)
+        guard !Task.isCancelled else {
+            return TranslationExperiencePipelineSnapshot(
+                liveResults: [],
+                stableResults: [],
+                visibleResults: []
+            )
+        }
 
         for result in liveResults + stableResults {
             resultStore.attach(result)
@@ -69,6 +79,13 @@ public struct TranslationExperiencePipeline {
     public mutating func flushAndFinalize(now: Date = Date()) async -> TranslationExperiencePipelineSnapshot {
         let blocks = unitBuilder.flushOpenBlocks(now: now)
         let stableResults = await accurateScheduler.translate(blocks)
+        guard !Task.isCancelled else {
+            return TranslationExperiencePipelineSnapshot(
+                liveResults: [],
+                stableResults: [],
+                visibleResults: []
+            )
+        }
 
         for result in stableResults {
             resultStore.attach(result)

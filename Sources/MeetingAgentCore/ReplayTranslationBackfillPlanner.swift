@@ -1,12 +1,12 @@
 import Foundation
 
-struct CaptionTranslationPlanner {
-    private let configuration: CaptionTranslationSchedulerConfiguration
+struct ReplayTranslationBackfillPlanner {
+    private let configuration: ReplayTranslationBackfillSchedulerConfiguration
     private let now: () -> Date
     private var statesByTurnID: [String: CaptionTranslationPlanningState] = [:]
 
     init(
-        configuration: CaptionTranslationSchedulerConfiguration,
+        configuration: ReplayTranslationBackfillSchedulerConfiguration,
         now: @escaping () -> Date
     ) {
         self.configuration = configuration

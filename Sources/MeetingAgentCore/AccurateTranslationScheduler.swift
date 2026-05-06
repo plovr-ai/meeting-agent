@@ -13,16 +13,19 @@ public struct AccurateTranslationSchedulerConfiguration: Equatable {
 public struct AccurateTranslationScheduler {
     private let provider: TextTranslationProvider
     private let configuration: AccurateTranslationSchedulerConfiguration
+    private let performanceEventLogger: PerformanceEventLogger?
     private var translatedBlockIDs = Set<String>()
     private var now: () -> Date
 
     public init(
         provider: TextTranslationProvider,
         configuration: AccurateTranslationSchedulerConfiguration = AccurateTranslationSchedulerConfiguration(),
+        performanceEventLogger: PerformanceEventLogger? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.provider = provider
         self.configuration = configuration
+        self.performanceEventLogger = performanceEventLogger
         self.now = now
     }
 
@@ -45,6 +48,7 @@ public struct AccurateTranslationScheduler {
         while attempts <= configuration.retryCount {
             attempts += 1
             do {
+                logProviderEvent("translation_provider_call_started", block: block, attempt: attempts)
                 let transcript = TranscriptDocument(segments: [
                     TranscriptSegment(
                         id: block.id,
@@ -58,6 +62,7 @@ public struct AccurateTranslationScheduler {
                     transcript: transcript,
                     options: TranslationOptions(sourceLocale: block.laneID.sourceLocale, targetLocale: block.laneID.targetLocale)
                 )
+                logProviderEvent("translation_provider_call_finished", block: block, attempt: attempts)
                 return TranslationResult(
                     id: "\(block.id)-stable-result",
                     sourceID: block.id,
@@ -70,8 +75,10 @@ public struct AccurateTranslationScheduler {
                     sourceSegmentIDs: block.sourceSegmentIDs
                 )
             } catch where attempts <= configuration.retryCount {
+                logProviderEvent("translation_provider_call_failed", block: block, attempt: attempts)
                 continue
             } catch {
+                logProviderEvent("translation_provider_call_failed", block: block, attempt: attempts)
                 return TranslationResult(
                     id: "\(block.id)-stable-failed",
                     sourceID: block.id,
@@ -96,6 +103,26 @@ public struct AccurateTranslationScheduler {
             createdAt: now(),
             sourceCreatedAt: block.createdAt,
             sourceSegmentIDs: block.sourceSegmentIDs
+        )
+    }
+
+    private func logProviderEvent(
+        _ event: String,
+        block: StableTranslationBlock,
+        attempt: Int
+    ) {
+        performanceEventLogger?.log(
+            event,
+            segmentID: block.id,
+            isFinal: true,
+            textLength: block.sourceText.count,
+            metadata: [
+                "translationKind": "final",
+                "providerID": provider.descriptor.id,
+                "attempt": String(attempt),
+                "laneID": "\(block.laneID.speakerID)|\(block.laneID.sourceLocale)|\(block.laneID.targetLocale)",
+                "sourceSegmentIDs": block.sourceSegmentIDs.joined(separator: ",")
+            ]
         )
     }
 }

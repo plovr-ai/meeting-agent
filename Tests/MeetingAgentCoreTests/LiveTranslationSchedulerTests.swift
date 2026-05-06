@@ -24,9 +24,11 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         _ = await scheduler.drainPending()
 
         let events = try readLoggedEvents(from: eventsURL)
-        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_scheduled" }.map(\.segmentID), ["unit-1", "unit-3"])
-        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_stale" }.first?.segmentID, "unit-2")
-        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_stale" }.first?.metadata["reason"], "pending_replaced")
+        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_scheduled" }.map(\.segmentID), ["unit-3"])
+        XCTAssertEqual(events.filter { $0.event == "translation_unit_live_stale" }.map(\.segmentID), ["unit-1", "unit-2"])
+        XCTAssertTrue(events.filter { $0.event == "translation_unit_live_stale" }.allSatisfy {
+            $0.metadata["reason"] == "pending_replaced"
+        })
     }
 
     func testDuplicatePrefixIsLoggedAsStaleWithoutProviderCall() async throws {
@@ -68,7 +70,7 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         let completed = await scheduler.schedule([first, second, third])
         let drained = await scheduler.drainPending()
 
-        XCTAssertEqual(provider.requests.map(\.id), ["unit-1", "unit-3"])
+        XCTAssertEqual(provider.requests.map(\.id), ["unit-3"])
         XCTAssertEqual((completed + drained).last?.sourceID, "unit-3")
     }
 
@@ -94,6 +96,58 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(provider.requests.map(\.sourceText), ["We confirm the owner"])
         XCTAssertEqual(updates.first?.translatedText, "我们确认负责人")
         XCTAssertEqual(updates.first?.displayState, .liveFresh)
+    }
+
+    func testCoalescesSameLaneBatchToLatestLiveUnit() async {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = LiveRecordingTranslationProvider(translations: ["unit-3": "第三版"])
+        var scheduler = LiveTranslationScheduler(provider: provider)
+        let first = LiveTranslationUnit(id: "unit-1", laneID: lane, stablePrefixText: "We confirm the initial owner", sourceSegmentIDs: ["segment-1"], revision: 1, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let second = LiveTranslationUnit(id: "unit-2", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout", sourceSegmentIDs: ["segment-1"], revision: 2, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let third = LiveTranslationUnit(id: "unit-3", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout date", sourceSegmentIDs: ["segment-1"], revision: 3, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+
+        let updates = await scheduler.schedule([first, second, third])
+
+        XCTAssertEqual(provider.requests.map(\.id), ["unit-3"])
+        XCTAssertEqual(updates.map(\.sourceID), ["unit-3"])
+    }
+
+    func testLogsProviderCallStartAndFinishForLiveUnit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-translation-provider-events-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = LiveRecordingTranslationProvider(translations: ["unit-1": "我们确认负责人"])
+        var scheduler = LiveTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let unit = LiveTranslationUnit(
+            id: "unit-1",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-1"],
+            revision: 1,
+            createdAt: Date(timeIntervalSince1970: 1),
+            deadline: Date().addingTimeInterval(4)
+        )
+
+        _ = await scheduler.schedule([unit])
+
+        let events = try readLoggedEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_started"
+                && $0.segmentID == "unit-1"
+                && $0.metadata["translationKind"] == "live"
+                && $0.metadata["providerID"] == "test-live"
+        })
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_finished"
+                && $0.segmentID == "unit-1"
+                && $0.metadata["translationKind"] == "live"
+                && $0.metadata["providerID"] == "test-live"
+        })
     }
 
     func testBudgetDisablesExtraLiveRequests() async {
@@ -198,6 +252,41 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         let updates = await scheduler.schedule([unit])
 
         XCTAssertEqual(updates.first?.displayState, .failedRecoverable)
+    }
+
+    func testLogsProviderCallFailureForLiveUnit() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("live-translation-provider-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = FailingLiveTranslationProvider()
+        var scheduler = LiveTranslationScheduler(
+            provider: provider,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL)
+        )
+        let unit = LiveTranslationUnit(
+            id: "unit-1",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-1"],
+            revision: 1,
+            createdAt: Date(),
+            deadline: Date().addingTimeInterval(4)
+        )
+
+        _ = await scheduler.schedule([unit])
+
+        let events = try readLoggedEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_started"
+                && $0.segmentID == "unit-1"
+        })
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_provider_call_failed"
+                && $0.segmentID == "unit-1"
+                && $0.metadata["providerID"] == "test-live-failing"
+        })
     }
 
     func testProviderEmptySegmentsReturnsEmptyLiveTranslation() async {

@@ -232,6 +232,13 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
             event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:04Z", segmentID: "block-1", isFinal: true, textLength: 12, metadata: [
                 "translationKind": "final",
                 "translationState": "stableFinal",
+                "resultID": "stable-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:04Z", segmentID: "block-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationState": "stableFinal",
+                "resultID": "stable-1",
                 "sourceSegmentIDs": "segment-1"
             ]),
             event("translation_preview_dropped_after_stop", wallTime: "2026-05-06T00:00:05Z", segmentID: "unit-3", isFinal: false, textLength: 0),
@@ -245,6 +252,14 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
                 "stableResultCount": "1",
                 "visibleResultCount": "1",
                 "droppedResultCount": "1"
+            ]),
+            event("translation_runtime_snapshot", wallTime: "2026-05-06T00:00:08Z", metadata: [
+                "path": "realtime",
+                "state": "active",
+                "liveResultCount": "1",
+                "stableResultCount": "1",
+                "visibleResultCount": "1",
+                "droppedResultCount": "0"
             ])
         ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
 
@@ -255,13 +270,291 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Live Unit Scheduled Count: 1"))
         XCTAssertTrue(result.stdout.contains("Live Unit Stale Count: 1"))
         XCTAssertTrue(result.stdout.contains("Live Unit Dropped After Stop Count: 1"))
-        XCTAssertTrue(result.stdout.contains("Stable Unit Persisted Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Stable Unit Persisted Count: 2"))
         XCTAssertTrue(result.stdout.contains("Preview Dropped After Stop Count: 1"))
         XCTAssertTrue(result.stdout.contains("Preview Published After Stop Count: 0"))
-        XCTAssertTrue(result.stdout.contains("Translation Runtime Snapshot Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Translation Runtime Snapshot Count: 2"))
         XCTAssertTrue(result.stdout.contains("Translation Runtime Stop Snapshot Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Post-Stop Runtime Realtime Snapshot Count: 1"))
         XCTAssertTrue(result.stdout.contains("Translation Runtime Dropped Result Count: 1"))
-        XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 2"))
+        XCTAssertTrue(result.stdout.contains("Stable Unit Unique Result Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Stable Unit Duplicate Persist Count: 1"))
+        XCTAssertTrue(result.stdout.contains("Post-Stop Unit Translation Events: 3"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptFailsE2EValidationWhenUnitTranslationNeverCallsProvider() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-missing-provider-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", audio: 1, segmentID: "segment-1", isFinal: false, textLength: 48, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1"
+            ]),
+            event("translation_runtime_snapshot", wallTime: "2026-05-06T00:00:01.100Z", metadata: [
+                "path": "realtime",
+                "state": "active",
+                "liveResultCount": "0",
+                "stableResultCount": "0",
+                "visibleResultCount": "0",
+                "droppedResultCount": "0"
+            ]),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:01.200Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 42, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z"),
+            event("translation_runtime_snapshot", wallTime: "2026-05-06T00:00:03.100Z", metadata: [
+                "path": "stop",
+                "state": "stopped",
+                "liveResultCount": "0",
+                "stableResultCount": "0",
+                "visibleResultCount": "0",
+                "droppedResultCount": "0"
+            ])
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("End-to-End Translation Validation"))
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: FAIL"))
+        XCTAssertTrue(result.stdout.contains("Provider Calls Started: 0"))
+        XCTAssertTrue(result.stdout.contains("Provider Calls Finished: 0"))
+        XCTAssertTrue(result.stdout.contains("Translation Result Store Records: 0"))
+        XCTAssertTrue(result.stdout.contains("Failure: unit translations were scheduled but no provider call was observed"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptPassesE2EValidationWhenProviderOverlayAndStoreSucceed() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-pass-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        let resultsURL = meetingDirectory.appendingPathComponent("translation-results.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", audio: 1, segmentID: "segment-1", isFinal: false, textLength: 48, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1"
+            ]),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:01.100Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 42, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_provider_call_started", wallTime: "2026-05-06T00:00:01.200Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 42, metadata: [
+                "translationKind": "live",
+                "providerID": "test-provider",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_provider_call_finished", wallTime: "2026-05-06T00:00:01.800Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 12, metadata: [
+                "translationKind": "live",
+                "providerID": "test-provider",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_live_result_visible", wallTime: "2026-05-06T00:00:01.900Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 12, metadata: [
+                "translationState": "liveFresh",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("caption_translation_overlay_published", wallTime: "2026-05-06T00:00:02Z", segmentID: "segment-1", isFinal: false, textLength: 12, metadata: [
+                "path": "realtime"
+            ]),
+            event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:03Z", segmentID: "stable-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationState": "stableFinal",
+                "resultID": "stable-1-result",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:04Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+        try #"{"resultID":"stable-1-result","translatedText":"通过"}"#.appending("\n")
+            .write(to: resultsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: [meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: PASS"))
+        XCTAssertTrue(result.stdout.contains("Provider Calls Started: 1"))
+        XCTAssertTrue(result.stdout.contains("Provider Calls Finished: 1"))
+        XCTAssertTrue(result.stdout.contains("Translation Overlay Published Events: 1"))
+        XCTAssertTrue(result.stdout.contains("Translation Result Store Records: 1"))
+        XCTAssertFalse(result.stdout.contains("Failure:"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptFailsE2EValidationForSlowFirstTranslationAndLowCoverage() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-slow-low-coverage-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        let resultsURL = meetingDirectory.appendingPathComponent("translation-results.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", audio: 1, segmentID: "segment-1", isFinal: true, textLength: 48, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:03Z", audio: 3, segmentID: "segment-2", isFinal: true, textLength: 46, metadata: [
+                "path": "realtime",
+                "turnID": "turn-2",
+                "sourceSegmentIDs": "segment-2"
+            ]),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:05Z", audio: 5, segmentID: "segment-3", isFinal: true, textLength: 44, metadata: [
+                "path": "realtime",
+                "turnID": "turn-3",
+                "sourceSegmentIDs": "segment-3"
+            ]),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:01.200Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 42, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_provider_call_started", wallTime: "2026-05-06T00:00:01.300Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 42, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_provider_call_finished", wallTime: "2026-05-06T00:00:08.000Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 12, metadata: [
+                "translationKind": "live",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_live_result_visible", wallTime: "2026-05-06T00:00:08.100Z", segmentID: "segment-1-live-1", isFinal: false, textLength: 12, metadata: [
+                "translationState": "liveFresh",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("caption_translation_overlay_published", wallTime: "2026-05-06T00:00:08.200Z", segmentID: "segment-1", isFinal: false, textLength: 12, metadata: [
+                "path": "realtime",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:09Z", segmentID: "stable-1", isFinal: true, textLength: 12, metadata: [
+                "translationKind": "final",
+                "translationState": "stableFinal",
+                "resultID": "stable-1-result",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:12Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+        try #"{"resultID":"stable-1-result","sourceSegmentIDs":["segment-1"],"translatedText":"第一段"}"#.appending("\n")
+            .write(to: resultsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-translation-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: FAIL"))
+        XCTAssertTrue(result.stdout.contains("First Live Translation Latency: 8.10s"))
+        XCTAssertTrue(result.stdout.contains("Stable Translation Coverage: 33.3%"))
+        XCTAssertTrue(result.stdout.contains("Failure: first live translation exceeded latency budget"))
+        XCTAssertTrue(result.stdout.contains("Failure: stable translations did not cover realtime final caption turns"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptCanFailProcessForE2EValidationFailure() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-assert-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", segmentID: "segment-1", isFinal: false, textLength: 30, metadata: [
+                "path": "realtime"
+            ]),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:02Z", segmentID: "unit-1", isFinal: false, textLength: 24, metadata: [
+                "translationKind": "live"
+            ])
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-translation-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: FAIL"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptCanPassProcessForE2EValidationSuccess() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-assert-pass-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        let resultsURL = meetingDirectory.appendingPathComponent("translation-results.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", segmentID: "segment-1", isFinal: false, textLength: 30, metadata: [
+                "path": "realtime"
+            ]),
+            event("translation_unit_live_scheduled", wallTime: "2026-05-06T00:00:02Z", segmentID: "unit-1", isFinal: false, textLength: 24, metadata: [
+                "translationKind": "live"
+            ]),
+            event("translation_provider_call_started", wallTime: "2026-05-06T00:00:02.100Z", segmentID: "unit-1", isFinal: false, textLength: 24, metadata: [
+                "translationKind": "live"
+            ]),
+            event("translation_provider_call_finished", wallTime: "2026-05-06T00:00:02.400Z", segmentID: "unit-1", isFinal: false, textLength: 8, metadata: [
+                "translationKind": "live"
+            ]),
+            event("translation_live_result_visible", wallTime: "2026-05-06T00:00:02.500Z", segmentID: "unit-1", isFinal: false, textLength: 8),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+        try #"{"resultID":"unit-1","translatedText":"完成"}"#.appending("\n")
+            .write(to: resultsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-translation-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: PASS"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptFailsE2EValidationForProjectionMismatch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-projection-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        let resultsURL = meetingDirectory.appendingPathComponent("translation-results.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", segmentID: "segment-1", isFinal: true, textLength: 30, metadata: [
+                "path": "realtime",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("translation_provider_call_started", wallTime: "2026-05-06T00:00:02Z", segmentID: "block-1", isFinal: true, textLength: 60, metadata: [
+                "translationKind": "final"
+            ]),
+            event("translation_provider_call_finished", wallTime: "2026-05-06T00:00:03Z", segmentID: "block-1", isFinal: true, textLength: 20, metadata: [
+                "translationKind": "final"
+            ]),
+            event("translation_unit_final_persisted", wallTime: "2026-05-06T00:00:03.100Z", segmentID: "block-1", isFinal: true, textLength: 20, metadata: [
+                "translationKind": "final",
+                "translationState": "stableFinal",
+                "resultID": "stable-1",
+                "sourceSegmentIDs": "segment-1,segment-2"
+            ]),
+            event("translation_unit_projection_mismatch", wallTime: "2026-05-06T00:00:03.200Z", segmentID: "block-1", isFinal: true, textLength: 20, metadata: [
+                "translationKind": "final",
+                "resultID": "stable-1",
+                "sourceSegmentIDs": "segment-1,segment-2",
+                "turnSourceSegmentIDs": "segment-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:04Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+        try #"{"resultID":"stable-1","translatedText":"错位翻译"}"#.appending("\n")
+            .write(to: resultsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-translation-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: FAIL"))
+        XCTAssertTrue(result.stdout.contains("Translation Projection Mismatch Events: 1"))
+        XCTAssertTrue(result.stdout.contains("Failure: stable translation projection mismatched visible caption turns"))
     }
 
     private func runScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {

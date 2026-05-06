@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CaptionTranslationSchedulerConfiguration: Equatable {
+public struct ReplayTranslationBackfillSchedulerConfiguration: Equatable {
     public var draftDebounceNanoseconds: UInt64
     public var maxConcurrentTranslationRequests: Int
     public var followUpDraftMinimumIntervalNanoseconds: UInt64
@@ -60,23 +60,23 @@ public struct CaptionTranslationSchedulerConfiguration: Equatable {
 }
 
 @MainActor
-public final class CaptionTranslationScheduler {
+public final class ReplayTranslationBackfillScheduler {
     private let provider: TextTranslationProvider?
     private let performanceEventLogger: PerformanceEventLogger?
     private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
-    private let configuration: CaptionTranslationSchedulerConfiguration
+    private let configuration: ReplayTranslationBackfillSchedulerConfiguration
     private let now: () -> Date
     private var requestedFinalTranslationKeys: Set<String> = []
     private var activeRequestsByKey: [String: ActiveCaptionTranslationRequest] = [:]
     private var pendingDraftTokensByTurnID: [String: UUID] = [:]
     private var requestOrdinalsByTurnID: [String: Int] = [:]
-    private var planner: CaptionTranslationPlanner
+    private var planner: ReplayTranslationBackfillPlanner
 
     public init(
         provider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
         persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
-        configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration(),
+        configuration: ReplayTranslationBackfillSchedulerConfiguration = ReplayTranslationBackfillSchedulerConfiguration(),
         now: @escaping () -> Date = Date.init
     ) {
         self.provider = provider
@@ -84,7 +84,7 @@ public final class CaptionTranslationScheduler {
         self.persistTranslation = persistTranslation
         self.configuration = configuration
         self.now = now
-        planner = CaptionTranslationPlanner(configuration: configuration, now: now)
+        planner = ReplayTranslationBackfillPlanner(configuration: configuration, now: now)
     }
 
     public func scheduleTranslations(in store: inout LiveCaptionStore) async {
@@ -1070,7 +1070,7 @@ struct ActiveCaptionTranslationRequest: Equatable {
     var sourceText: String = ""
     var attachmentTarget: CaptionTranslationAttachmentTarget? = nil
     var providerID: String = ""
-    var configuration: CaptionTranslationSchedulerConfiguration = CaptionTranslationSchedulerConfiguration()
+    var configuration: ReplayTranslationBackfillSchedulerConfiguration = ReplayTranslationBackfillSchedulerConfiguration()
     var queueDepth: Int?
     var inFlightCount: Int?
 }

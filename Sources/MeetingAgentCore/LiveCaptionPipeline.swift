@@ -29,7 +29,7 @@ public final class LiveCaptionPipeline {
     private let performanceEventLogger: PerformanceEventLogger?
     private let persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)?
     private let translationMode: LiveCaptionTranslationMode
-    private var translationScheduler: CaptionTranslationScheduler
+    private var translationBackfillScheduler: ReplayTranslationBackfillScheduler
     private var store: LiveCaptionStore
     private var turnAssembler: CaptionTurnAssembler
     private var interimSegmentsByID: [String: TranscriptSegment] = [:]
@@ -57,7 +57,7 @@ public final class LiveCaptionPipeline {
         self.translationMode = translationMode
         store = LiveCaptionStore(sourceLocale: sourceLocale, targetLocale: targetLocale)
         turnAssembler = CaptionTurnAssembler(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        translationScheduler = CaptionTranslationScheduler(
+        translationBackfillScheduler = ReplayTranslationBackfillScheduler(
             provider: translationProvider,
             performanceEventLogger: performanceEventLogger,
             persistTranslation: persistTranslation
@@ -132,11 +132,6 @@ public final class LiveCaptionPipeline {
         )
     }
 
-    @available(*, deprecated, renamed: "scheduleLegacyReplayBackfillTranslations")
-    public func schedulePendingTranslations() async -> LiveCaptionPipelineSnapshot {
-        await scheduleLegacyReplayBackfillTranslations()
-    }
-
     public func scheduleLegacyReplayBackfillTranslations() async -> LiveCaptionPipelineSnapshot {
         await scheduleFinalTranslationsOnly()
         return snapshot(
@@ -171,7 +166,7 @@ public final class LiveCaptionPipeline {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
         resetCaptionProjection(sourceLocale: sourceLocale, targetLocale: targetLocale)
-        translationScheduler = CaptionTranslationScheduler(
+        translationBackfillScheduler = ReplayTranslationBackfillScheduler(
             provider: translationProvider,
             performanceEventLogger: performanceEventLogger,
             persistTranslation: persistTranslation
@@ -362,7 +357,7 @@ public final class LiveCaptionPipeline {
                 }
             }
         }
-        translationScheduler.cancelDraftsSuperseded(by: store.turns)
+        translationBackfillScheduler.cancelDraftsSuperseded(by: store.turns)
     }
 
     private func logSegmentIngestedIfNeeded(_ segment: TranscriptSegment, path: String) {
@@ -424,6 +419,7 @@ public final class LiveCaptionPipeline {
               result.displayState == .liveFresh || result.displayState == .stableFinal,
               let turnID = turnID(for: result)
         else {
+            logTranslationProjectionMismatchIfNeeded(result)
             return
         }
         store.attachTranslation(
@@ -441,14 +437,44 @@ public final class LiveCaptionPipeline {
 
     private func turnID(for result: TranslationResult) -> String? {
         let sourceSegmentIDs = Set(result.sourceSegmentIDs)
-        if !sourceSegmentIDs.isEmpty,
-           let turn = store.turns.last(where: { !$0.sourceSegmentIDs.filter(sourceSegmentIDs.contains).isEmpty }) {
-            return turn.id
+        if !sourceSegmentIDs.isEmpty {
+            if let exactTurn = store.turns.last(where: { Set($0.sourceSegmentIDs) == sourceSegmentIDs }) {
+                return exactTurn.id
+            }
+            if result.displayState == .liveFresh,
+               sourceSegmentIDs.count == 1,
+               let turn = store.turns.last(where: { !$0.sourceSegmentIDs.filter(sourceSegmentIDs.contains).isEmpty }) {
+                return turn.id
+            }
+            return nil
         }
         if let turn = store.turns.last(where: { $0.sourceSegmentID == result.sourceID || $0.id == result.sourceID }) {
             return turn.id
         }
         return nil
+    }
+
+    private func logTranslationProjectionMismatchIfNeeded(_ result: TranslationResult) {
+        guard result.displayState == .stableFinal,
+              !result.sourceSegmentIDs.isEmpty
+        else {
+            return
+        }
+        performanceEventLogger?.log(
+            "translation_unit_projection_mismatch",
+            segmentID: result.sourceID,
+            isFinal: true,
+            textLength: result.translatedText.count,
+            metadata: [
+                "translationKind": "final",
+                "translationState": result.displayState.rawValue,
+                "resultID": result.id,
+                "sourceSegmentIDs": result.sourceSegmentIDs.joined(separator: ","),
+                "turnSourceSegmentIDs": store.turns
+                    .map { $0.sourceSegmentIDs.joined(separator: ",") }
+                    .joined(separator: "|")
+            ]
+        )
     }
 
     private func snapshot(
@@ -465,15 +491,15 @@ public final class LiveCaptionPipeline {
     private func scheduleLiveTranslations() async {
         guard translationMode == .legacyReplayBackfill else { return }
         let generation = storeGeneration
-        let updates = await translationScheduler.liveTranslationUpdates(for: store)
+        let updates = await translationBackfillScheduler.liveTranslationUpdates(for: store)
         guard generation == storeGeneration else {
             for update in updates {
-                translationScheduler.discardStale(update, against: store)
+                translationBackfillScheduler.discardStale(update, against: store)
             }
             return
         }
         for update in updates {
-            let outcome = translationScheduler.apply(update, to: &store)
+            let outcome = translationBackfillScheduler.apply(update, to: &store)
             if outcome.publishedVisibleText {
                 logCaptionSnapshotPublished(for: update, publishedAt: Date())
             }
@@ -483,15 +509,15 @@ public final class LiveCaptionPipeline {
     private func scheduleFinalTranslationsOnly() async {
         guard translationMode == .legacyReplayBackfill else { return }
         let generation = storeGeneration
-        let updates = await translationScheduler.finalTranslationUpdates(for: store)
+        let updates = await translationBackfillScheduler.finalTranslationUpdates(for: store)
         guard generation == storeGeneration else {
             for update in updates {
-                translationScheduler.discardStale(update, against: store)
+                translationBackfillScheduler.discardStale(update, against: store)
             }
             return
         }
         for update in updates {
-            let outcome = translationScheduler.apply(update, to: &store)
+            let outcome = translationBackfillScheduler.apply(update, to: &store)
             if outcome.publishedVisibleText {
                 logCaptionSnapshotPublished(for: update, publishedAt: Date())
             }

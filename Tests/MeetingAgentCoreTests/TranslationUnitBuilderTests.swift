@@ -73,10 +73,10 @@ final class TranslationUnitBuilderTests: XCTestCase {
             )
         )
         _ = durationBuilder.apply(segments: [
-            TranscriptSegment(id: "segment-2", text: "Short open text", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 1))
+            TranscriptSegment(id: "segment-2", startTimeSeconds: 0, endTimeSeconds: 0.5, text: "Short open text", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 1))
         ], now: Date(timeIntervalSince1970: 1))
         let durationOutput = durationBuilder.apply(segments: [
-            TranscriptSegment(id: "segment-3", text: "Short open text continued", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 3))
+            TranscriptSegment(id: "segment-3", startTimeSeconds: 3, endTimeSeconds: 3.5, text: "Short open text continued.", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 3))
         ], now: Date(timeIntervalSince1970: 3))
 
         XCTAssertEqual(lengthOutput.stableBlocks.first?.boundaryReason, .maxLength)
@@ -278,6 +278,65 @@ final class TranslationUnitBuilderTests: XCTestCase {
         XCTAssertTrue(second.stableBlocks.isEmpty)
     }
 
+    func testRevisedFinalSegmentWithSameIDCanReplaceOpenBlockText() {
+        var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let first = TranscriptSegment(
+            id: "segment-1",
+            text: "We approved the launch date",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false
+        )
+        let revised = TranscriptSegment(
+            id: "segment-1",
+            text: "We approved the launch date and customer message",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false
+        )
+
+        _ = builder.apply(segments: [first], now: Date(timeIntervalSince1970: 1))
+        _ = builder.apply(segments: [revised], now: Date(timeIntervalSince1970: 2))
+        let flushed = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(flushed.first?.sourceText, "We approved the launch date and customer message")
+        XCTAssertEqual(flushed.first?.sourceSegmentIDs, ["segment-1"])
+    }
+
+    @MainActor
+    func testStableBlockBoundariesMatchVisibleCaptionTurnBoundaries() {
+        let segments = [
+            TranscriptSegment(id: "s0", startTimeSeconds: 0, endTimeSeconds: 3.5, text: "Actually means. Okay. So this is our Microsoft Teams public", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s1", startTimeSeconds: 3.61, endTimeSeconds: 8.5, text: "preview page, and I'll drop the link in the description. But, basically, first off, it says note,", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s2", startTimeSeconds: 8.63, endTimeSeconds: 12.9, text: "features included in preview might not be complete and could undergo changes before", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s3", startTimeSeconds: 13.01, endTimeSeconds: 17.8, text: "becoming available in the public release. Public preview for Microsoft Teams provides", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s4", startTimeSeconds: 17.9, endTimeSeconds: 22.5, text: "early access to unreleased features in Teams. Preview allows you to explore and test", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s5", startTimeSeconds: 22.6, endTimeSeconds: 27.2, text: "upcoming features. So, basically, we're giving you early access, which is awesome.", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s6", startTimeSeconds: 27.36, endTimeSeconds: 30, text: "Now I would say share this", language: "en-US", isFinal: true),
+            TranscriptSegment(id: "s7", startTimeSeconds: 30.14, endTimeSeconds: 33, text: "document with your admin because they have to set the", language: "en-US", isFinal: true)
+        ]
+        let document = TranscriptDocument(segments: segments)
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+        _ = pipeline.replayCaptionsOnly(document)
+        let captionSnapshot = pipeline.flushCaptionsOnly(reason: .manualStop)
+        let visibleTurnBoundaries = Set(captionSnapshot.turns.map { canonicalSourceIDs($0.sourceSegmentIDs) })
+        var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        var blocks: [StableTranslationBlock] = []
+        for segment in segments {
+            blocks.append(contentsOf: builder.apply(segments: [segment], now: segment.createdAt).stableBlocks)
+        }
+        blocks.append(contentsOf: builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 100)))
+
+        XCTAssertFalse(blocks.isEmpty)
+        XCTAssertTrue(blocks.allSatisfy { visibleTurnBoundaries.contains(canonicalSourceIDs($0.sourceSegmentIDs)) })
+    }
+
     func testRiskFlagsDetectCommitment() {
         var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
         let segment = TranscriptSegment(id: "segment-1", text: "We will confirm the launch owner today", language: "en-US", isFinal: false)
@@ -298,4 +357,8 @@ final class TranslationUnitBuilderTests: XCTestCase {
             TranslationUnitBuilderOutput(liveUnits: [], stableBlocks: [])
         )
     }
+}
+
+private func canonicalSourceIDs(_ ids: [String]) -> String {
+    ids.sorted().joined(separator: ",")
 }

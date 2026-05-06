@@ -36,8 +36,8 @@ public struct TranslationUnitBuilder {
     private let configuration: TranslationUnitBuilderConfiguration
     private var emittedStableBlockIDs = Set<String>()
     private var revisionsBySegmentID: [String: Int] = [:]
-    private var processedFinalSegmentIDs = Set<String>()
-    private var laneStates: [TranslationLaneID: TranslationLaneState] = [:]
+    private var processedFinalSegmentTextsByID: [String: String] = [:]
+    private var chunkersByLaneID: [TranslationLaneID: LiveCaptionChunker] = [:]
 
     public init(
         sourceLocale: String,
@@ -68,12 +68,9 @@ public struct TranslationUnitBuilder {
             var sealedStableBlock = false
 
             if segment.isFinal {
-                appendFinalSegment(segment, laneID: laneID)
-                if let reason = boundaryReason(for: segment, laneID: laneID, now: now),
-                   let block = sealBlock(for: laneID, reason: reason, now: now) {
-                    stableBlocks.append(block)
-                    sealedStableBlock = true
-                }
+                let blocks = appendFinalSegment(segment, laneID: laneID, now: now)
+                stableBlocks.append(contentsOf: blocks)
+                sealedStableBlock = !blocks.isEmpty
             }
 
             if !sealedStableBlock,
@@ -87,7 +84,7 @@ public struct TranslationUnitBuilder {
 
     public mutating func flushOpenBlocks(now: Date = Date()) -> [StableTranslationBlock] {
         var blocks: [StableTranslationBlock] = []
-        let lanes = laneStates.keys.sorted {
+        let lanes = chunkersByLaneID.keys.sorted {
             if $0.speakerID == $1.speakerID {
                 if $0.sourceLocale == $1.sourceLocale {
                     return $0.targetLocale < $1.targetLocale
@@ -97,8 +94,10 @@ public struct TranslationUnitBuilder {
             return $0.speakerID < $1.speakerID
         }
         for laneID in lanes {
-            guard let block = sealBlock(for: laneID, reason: .manualStop, now: now) else { continue }
-            blocks.append(block)
+            guard var chunker = chunkersByLaneID[laneID] else { continue }
+            let updates = chunker.flushOpenChunk(reason: LiveCaptionFreezeReason.manualStop)
+            chunkersByLaneID[laneID] = chunker
+            blocks.append(contentsOf: updates.compactMap { stableBlock(from: $0.turn, now: now) })
         }
         return blocks
     }
@@ -124,86 +123,83 @@ public struct TranslationUnitBuilder {
         )
     }
 
-    private mutating func appendFinalSegment(_ segment: TranscriptSegment, laneID: TranslationLaneID) {
-        guard processedFinalSegmentIDs.insert(segment.id).inserted else { return }
-        var state = laneStates[laneID, default: TranslationLaneState()]
-        state.segmentIDs.append(segment.id)
-        state.segmentTexts.append(segment.text)
-        state.firstCreatedAt = state.firstCreatedAt ?? segment.createdAt
-        state.lastCreatedAt = segment.createdAt
-        state.lastSeenSegmentID = segment.id
-        laneStates[laneID] = state
-    }
-
-    private func boundaryReason(
-        for segment: TranscriptSegment,
+    private mutating func appendFinalSegment(
+        _ segment: TranscriptSegment,
         laneID: TranslationLaneID,
         now: Date
-    ) -> StableTranslationBoundaryReason? {
-        guard let state = laneStates[laneID], !state.isEmpty else { return nil }
-        if segment.speechFinal {
-            return .providerHardBoundary
-        }
-        if hasTerminalPunctuation(state.sourceText),
-           state.sourceText.count >= configuration.minimumStableBlockCharacters {
-            return .terminalPunctuation
-        }
-        if state.sourceText.count >= configuration.maximumStableBlockCharacters {
-            return .maxLength
-        }
-        if let firstCreatedAt = state.firstCreatedAt,
-           now.timeIntervalSince(firstCreatedAt) >= configuration.maximumStableBlockDuration {
-            return .maxDuration
-        }
-        return nil
+    ) -> [StableTranslationBlock] {
+        guard processedFinalSegmentTextsByID[segment.id] != segment.text else { return [] }
+        processedFinalSegmentTextsByID[segment.id] = segment.text
+        var chunker = chunkersByLaneID[laneID] ?? makeChunker()
+        let updates = chunker.append(segment)
+        chunkersByLaneID[laneID] = chunker
+        return updates.compactMap { stableBlock(from: $0.turn, now: now) }
     }
 
-    private mutating func sealBlock(
-        for laneID: TranslationLaneID,
-        reason: StableTranslationBoundaryReason,
-        now: Date
-    ) -> StableTranslationBlock? {
-        guard let state = laneStates[laneID] else { return nil }
-        let text = state.sourceText
-        guard !text.isEmpty else {
-            laneStates[laneID] = TranslationLaneState()
-            return nil
-        }
-        guard text.count >= configuration.minimumStableBlockCharacters || reason == .manualStop else { return nil }
-        guard !fillerLike(text) else {
-            laneStates[laneID] = TranslationLaneState()
-            return nil
-        }
-        let blockID = [
-            "stable",
-            laneID.speakerID,
-            StableTranslationBlock.stableHash(text),
-            state.segmentIDs.joined(separator: ",")
-        ].joined(separator: "-")
-        guard emittedStableBlockIDs.insert(blockID).inserted else {
-            laneStates[laneID] = TranslationLaneState()
-            return nil
-        }
-        laneStates[laneID] = TranslationLaneState()
-        let createdAt: Date
-        if let firstCreatedAt = state.firstCreatedAt {
-            createdAt = firstCreatedAt
-        } else {
-            createdAt = now
-        }
-        return StableTranslationBlock(
-            id: blockID,
-            laneID: laneID,
-            sourceText: text,
-            sourceSegmentIDs: state.segmentIDs,
-            boundaryReason: reason,
-            createdAt: createdAt
+    private func makeChunker() -> LiveCaptionChunker {
+        LiveCaptionChunker(
+            sourceLocale: sourceLocale,
+            targetLocale: targetLocale,
+            policy: LiveCaptionChunkingPolicy(
+                maxCharacters: configuration.maximumStableBlockCharacters,
+                maxDurationSeconds: configuration.maximumStableBlockDuration,
+                minPunctuationCharacters: configuration.minimumStableBlockCharacters,
+                readableCharacterLimit: configuration.maximumStableBlockCharacters,
+                shortFragmentCharacters: 24,
+                maxMergeGapSeconds: configuration.pauseBoundaryInterval,
+                minSentenceBoundaryCharacters: configuration.minimumStableBlockCharacters
+            )
         )
     }
 
-    private func hasTerminalPunctuation(_ text: String) -> Bool {
-        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
-        return [".", "?", "!", "。", "？", "！"].contains(String(last))
+    private mutating func stableBlock(from turn: LiveCaptionTurn, now: Date) -> StableTranslationBlock? {
+        guard turn.displayState == .sealed,
+              let reason = stableBoundaryReason(from: turn.boundaryReason)
+        else {
+            return nil
+        }
+        let text = turn.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        guard text.count >= configuration.minimumStableBlockCharacters || reason == .manualStop else { return nil }
+        guard !fillerLike(text) else { return nil }
+        let blockID = [
+            "stable",
+            turn.speaker.identifier ?? "default",
+            StableTranslationBlock.stableHash(text),
+            turn.sourceSegmentIDs.joined(separator: ",")
+        ].joined(separator: "-")
+        guard emittedStableBlockIDs.insert(blockID).inserted else { return nil }
+        return StableTranslationBlock(
+            id: blockID,
+            laneID: TranslationLaneID(
+                speaker: turn.speaker,
+                sourceLocale: turn.sourceLocale,
+                targetLocale: turn.targetLocale
+            ),
+            sourceText: text,
+            sourceSegmentIDs: turn.sourceSegmentIDs,
+            boundaryReason: reason,
+            createdAt: turn.createdAt
+        )
+    }
+
+    private func stableBoundaryReason(from reason: LiveCaptionFreezeReason?) -> StableTranslationBoundaryReason? {
+        switch reason {
+        case .speechFinal:
+            return .providerHardBoundary
+        case .speakerChanged:
+            return .speakerChanged
+        case .maxLength:
+            return .maxLength
+        case .maxDuration:
+            return .maxDuration
+        case .punctuation:
+            return .terminalPunctuation
+        case .manualStop:
+            return .manualStop
+        case nil:
+            return nil
+        }
     }
 
     private func riskFlags(in text: String) -> Set<TranslationRiskFlag> {
@@ -233,24 +229,5 @@ public struct TranslationUnitBuilder {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)
         return ["", "um", "uh", "er", "ah", "hmm", "yeah", "ok", "okay"].contains(normalized)
-    }
-}
-
-private struct TranslationLaneState: Equatable {
-    var segmentIDs: [String] = []
-    var segmentTexts: [String] = []
-    var firstCreatedAt: Date?
-    var lastCreatedAt: Date?
-    var lastSeenSegmentID: String?
-
-    var sourceText: String {
-        segmentTexts
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    var isEmpty: Bool {
-        sourceText.isEmpty
     }
 }

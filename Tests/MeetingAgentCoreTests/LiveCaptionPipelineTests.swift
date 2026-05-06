@@ -46,6 +46,58 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .live)
     }
 
+    func testStableTranslationResultDoesNotAttachToPartialOverlappingTurn() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("translation-projection-mismatch-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let eventsURL = root.appendingPathComponent("performance-events.jsonl")
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: PerformanceEventLogger(url: eventsURL),
+            translationMode: .unitPipelineActiveRecording
+        )
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "This visible turn only contains the first segment.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        let snapshot = pipeline.attachTranslationResults([
+            TranslationResult(
+                id: "stable-1",
+                sourceID: "block-1",
+                laneID: lane,
+                sourceText: "This block covers two segments.",
+                translatedText: "这个翻译块覆盖两个字幕段。",
+                displayState: .stableFinal,
+                createdAt: Date(timeIntervalSince1970: 2),
+                sourceCreatedAt: Date(timeIntervalSince1970: 1),
+                sourceSegmentIDs: ["segment-1", "segment-2"]
+            )
+        ], visibleUpdatedAt: Date(timeIntervalSince1970: 3))
+
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .pending)
+        let events = try readPipelineEvents(from: eventsURL)
+        XCTAssertTrue(events.contains {
+            $0.event == "translation_unit_projection_mismatch"
+                && $0.segmentID == "block-1"
+                && $0.metadata["resultID"] == "stable-1"
+                && $0.metadata["sourceSegmentIDs"] == "segment-1,segment-2"
+        })
+    }
+
     func testAttachTranslationResultCanFallbackToSourceIDWhenSegmentIndexIsMissing() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -84,6 +136,56 @@ final class LiveCaptionPipelineTests: XCTestCase {
         ], visibleUpdatedAt: Date(timeIntervalSince1970: 3))
 
         XCTAssertEqual(snapshot.turns.first?.translatedText, "我们应该确认上线负责人。")
+        XCTAssertEqual(snapshot.turns.first?.translationFreshness, .fresh)
+    }
+
+    func testLiveFreshTranslationCanAttachToSingleSegmentInsideVisibleTurn() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: nil,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+        let initial = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We need to align on the launch timeline",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: false
+                ),
+                TranscriptSegment(
+                    id: "segment-2",
+                    text: "before we leave today.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1", "segment-2"],
+            plainTextReplacement: nil
+        ))
+        XCTAssertEqual(initial.turns.count, 1)
+        XCTAssertEqual(initial.turns[0].sourceSegmentIDs, ["segment-1", "segment-2"])
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+
+        let snapshot = pipeline.attachTranslationResults([
+            TranslationResult(
+                id: "live-1",
+                sourceID: "segment-1",
+                laneID: lane,
+                sourceText: "We need to align on the launch timeline",
+                translatedText: "我们需要对齐上线时间线。",
+                displayState: .liveFresh,
+                createdAt: Date(timeIntervalSince1970: 2),
+                sourceCreatedAt: Date(timeIntervalSince1970: 1),
+                sourceSegmentIDs: ["segment-1"]
+            )
+        ], visibleUpdatedAt: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(snapshot.turns.first?.translatedText, "我们需要对齐上线时间线。")
         XCTAssertEqual(snapshot.turns.first?.translationFreshness, .fresh)
     }
 
@@ -312,7 +414,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.translationHealth, .pending)
     }
 
-    func testLegacySchedulePendingTranslationsWrapperForwardsToReplayBackfill() async {
+    func testScheduleLegacyReplayBackfillTranslationsTranslatesFinalTurn() async {
         let provider = PipelineRecordingTranslationProvider(translations: [
             "segment-1": "最终翻译"
         ])
@@ -336,7 +438,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
             changedSegmentIDs: ["segment-1"],
             plainTextReplacement: nil
         ))
-        let snapshot = await pipeline.schedulePendingTranslations()
+        let snapshot = await pipeline.scheduleLegacyReplayBackfillTranslations()
 
         XCTAssertEqual(provider.requests, ["We approve the launch."])
         XCTAssertEqual(snapshot.turns.first?.translatedText, "最终翻译")

@@ -44,10 +44,12 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var liveCaptionPipelineUsesCaptionTranslationProvider = false
     private var liveCaptionPipelineHasTranslationProvider = false
     private var realtimeCaptionSessionUsesUnitTranslationPipeline = false
-    private var translationRuntime = TranslationRuntime()
-    private var translationResultPersistenceStore: TranslationResultPersistenceStore?
+    private let translationRuntime = TranslationRuntimeActor()
     private var translationRuntimeMeetingID: UUID?
     private var translationRuntimeGeneration = 0
+    private var translationExperienceApplyTask: Task<Void, Never>?
+    private var translationExperienceFinalizationTask: Task<Void, Never>?
+    private var pendingTranslationExperienceApply: PendingTranslationExperienceApply?
     private var activeCaptionApplySequence = 0
     private var activeCaptionApplyTask: Task<Void, Never>?
     private var activeCaptionTranslationTask: Task<Void, Never>?
@@ -103,6 +105,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         var context: ActiveCaptionApplyContext
         var latestChangedSegmentID: String?
         var changedSegmentCount: Int
+    }
+
+    private struct PendingTranslationExperienceApply {
+        var document: TranscriptDocument
+        var context: ActiveCaptionApplyContext
     }
 
     private struct SelectedMeetingReplaySignature: Equatable {
@@ -423,11 +430,12 @@ public final class MeetingAgentViewModel: ObservableObject {
                 }
             }
         } else {
-            let context = beginActiveCaptionApply()
-            activeCaptionApplyTask?.cancel()
-            if shouldThrottleDraftCaptionInput(transcriptResults, context: context) {
-                submitDraftCaptionInput(transcriptResults, context: context)
+            let currentContext = currentActiveCaptionApplyContext()
+            if shouldThrottleDraftCaptionInput(transcriptResults, context: currentContext) {
+                submitDraftCaptionInput(transcriptResults, context: currentContext)
             } else {
+                let context = beginActiveCaptionApply()
+                activeCaptionApplyTask?.cancel()
                 cancelPendingDraftCaptionInput(reason: "non_delayable_update")
                 activeCaptionApplyTask = Task { [weak self] in
                     guard let self else { return }
@@ -457,7 +465,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
             recentlyStoppedLiveMeetingID = stopped.id
         }
-        invalidateActiveCaptionApplyTasks()
+        invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         flushLiveCaptionPipeline(reason: .manualStop)
         startTranslationExperienceFinalizationAfterStop()
         allowActiveTargetReprompt()
@@ -479,7 +487,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
-        invalidateActiveCaptionApplyTasks()
+        invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         await finalizeTranslationExperienceAfterStop()
         allowActiveTargetReprompt()
         activeTarget = nil
@@ -1029,10 +1037,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         realtimeCaptionSessionUsesCaptionTranslationProvider = false
         realtimeCaptionSessionHasTranslationProvider = false
         realtimeCaptionSessionUsesUnitTranslationPipeline = false
-        translationRuntime = TranslationRuntime()
-        translationResultPersistenceStore = nil
         translationRuntimeMeetingID = nil
         translationRuntimeGeneration += 1
+        Task { [translationRuntime] in
+            await translationRuntime.reset()
+        }
+        translationExperienceApplyTask?.cancel()
+        translationExperienceApplyTask = nil
+        translationExperienceFinalizationTask?.cancel()
+        translationExperienceFinalizationTask = nil
+        pendingTranslationExperienceApply = nil
         invalidateActiveCaptionApplyTasks()
     }
 
@@ -1378,10 +1392,25 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
-    private func invalidateActiveCaptionApplyTasks() {
+    private func currentActiveCaptionApplyContext() -> ActiveCaptionApplyContext {
+        ActiveCaptionApplyContext(
+            sequence: activeCaptionApplySequence,
+            activeMeetingID: activeMeetingID,
+            selectedMeetingID: selectedMeetingID
+        )
+    }
+
+    private func invalidateActiveCaptionApplyTasks(cancelTranslationExperience: Bool = true) {
         activeCaptionApplySequence += 1
         activeCaptionApplyTask?.cancel()
         activeCaptionApplyTask = nil
+        if cancelTranslationExperience {
+            translationExperienceApplyTask?.cancel()
+            translationExperienceApplyTask = nil
+            translationExperienceFinalizationTask?.cancel()
+            translationExperienceFinalizationTask = nil
+            pendingTranslationExperienceApply = nil
+        }
         invalidateActiveCaptionTranslationTasks()
         cancelPendingDraftCaptionInput(reason: "active_apply_invalidated")
     }
@@ -1698,8 +1727,30 @@ public final class MeetingAgentViewModel: ObservableObject {
         document: TranscriptDocument,
         context: ActiveCaptionApplyContext
     ) {
-        Task { [weak self] in
-            await self?.applyTranslationExperience(document: document, context: context)
+        if translationExperienceApplyTask != nil {
+            pendingTranslationExperienceApply = PendingTranslationExperienceApply(document: document, context: context)
+            return
+        }
+        translationExperienceApplyTask = Task { [weak self] in
+            await self?.drainTranslationExperienceApplies(initialDocument: document, initialContext: context)
+        }
+    }
+
+    private func drainTranslationExperienceApplies(
+        initialDocument: TranscriptDocument,
+        initialContext: ActiveCaptionApplyContext
+    ) async {
+        var next: PendingTranslationExperienceApply? = PendingTranslationExperienceApply(
+            document: initialDocument,
+            context: initialContext
+        )
+        while let current = next, !Task.isCancelled {
+            pendingTranslationExperienceApply = nil
+            await applyTranslationExperience(document: current.document, context: current.context)
+            next = pendingTranslationExperienceApply
+        }
+        if !Task.isCancelled {
+            translationExperienceApplyTask = nil
         }
     }
 
@@ -1708,24 +1759,29 @@ public final class MeetingAgentViewModel: ObservableObject {
         context: ActiveCaptionApplyContext
     ) async {
         guard isCurrentActiveCaptionApply(context),
-              startOrReuseTranslationRuntime(document: document)
+              await startOrReuseTranslationRuntime(document: document)
         else {
             return
         }
         let generation = translationRuntimeGeneration
-        var runtime = translationRuntime
-        let snapshot = await runtime.apply(document: document, generation: generation)
-        guard isCurrentActiveCaptionApply(context) else { return }
-        translationRuntime = runtime
+        let snapshot = await translationRuntime.submit(document: document, generation: generation)
+        guard !Task.isCancelled,
+              isCurrentActiveCaptionApply(context),
+              translationRuntimeGeneration == generation
+        else { return }
         attachRuntimeTranslationSnapshot(snapshot, path: "realtime", visibleStates: [.liveFresh, .stableFinal])
     }
 
     private func startOrReuseTranslationRuntime(
         document: TranscriptDocument
-    ) -> Bool {
-        guard let meetingID = activeMeetingID ?? selectedMeetingID,
-              let provider = captionTranslationProviderForCurrentConfiguration(document: document)
-        else {
+    ) async -> Bool {
+        guard let meetingID = activeMeetingID ?? selectedMeetingID else {
+            logTranslationProviderUnavailable(reason: "missing_meeting", document: document)
+            return false
+        }
+        guard let provider = captionTranslationProviderForCurrentConfiguration(document: document) else {
+            let reason = translationProviderUnavailableReason(document: document)
+            logTranslationProviderUnavailable(reason: reason, document: document)
             return false
         }
         if translationRuntimeMeetingID == meetingID {
@@ -1733,26 +1789,63 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         let directoryURL = selectedMeeting?.transcriptJSONURL?.deletingLastPathComponent()
             ?? selectedMeeting?.transcriptURL?.deletingLastPathComponent()
-        if let directoryURL {
-            translationResultPersistenceStore = TranslationResultPersistenceStore(directoryURL: directoryURL)
-        }
+        let persistenceStore = directoryURL.map { TranslationResultPersistenceStore(directoryURL: $0) }
         translationRuntimeGeneration += 1
         translationRuntimeMeetingID = meetingID
-        translationRuntime.start(
+        let generation = translationRuntimeGeneration
+        await translationRuntime.start(
             context: TranslationRuntimeContext(
                 meetingID: meetingID,
                 sourceLocale: speechConfiguration.localeIdentifier,
                 targetLocale: speechConfiguration.targetLocaleIdentifier,
-                generation: translationRuntimeGeneration
+                generation: generation
             ),
             liveProvider: provider,
             accurateProvider: provider,
             performanceEventLogger: currentPerformanceEventLogger(),
-            persistFinalResult: { [weak self] record in
-                try? self?.translationResultPersistenceStore?.append(record)
+            persistFinalResult: { record in
+                try? persistenceStore?.append(record)
             }
         )
         return true
+    }
+
+    private func translationProviderUnavailableReason(document: TranscriptDocument) -> String {
+        if documentHasOnlySameLanguageSegments(document) {
+            return "same_language"
+        }
+        return "no_provider"
+    }
+
+    private func documentHasOnlySameLanguageSegments(_ document: TranscriptDocument) -> Bool {
+        let targetLocale = speechConfiguration.targetLocaleIdentifier
+        let pendingSegments = document.segments.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !pendingSegments.isEmpty else { return false }
+        return pendingSegments.allSatisfy {
+            TranslationOptions(
+                sourceLocale: $0.language ?? speechConfiguration.localeIdentifier,
+                targetLocale: targetLocale
+            ).isSameLanguage
+        }
+    }
+
+    private func logTranslationProviderUnavailable(reason: String, document: TranscriptDocument) {
+        let eventName = reason == "same_language"
+            ? "translation_provider_skipped_same_language"
+            : "translation_provider_unavailable"
+        currentPerformanceEventLogger()?.log(
+            eventName,
+            textLength: document.segments.reduce(0) { $0 + $1.text.count },
+            metadata: [
+                "reason": reason,
+                "sourceLocale": speechConfiguration.localeIdentifier,
+                "targetLocale": speechConfiguration.targetLocaleIdentifier,
+                "segmentCount": String(document.segments.count),
+                "sourceSegmentIDs": document.segments.map(\.id).joined(separator: ",")
+            ]
+        )
     }
 
     private func attachRuntimeTranslationSnapshot(
@@ -1809,7 +1902,8 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func startTranslationExperienceFinalizationAfterStop() {
         guard liveCaptionPipelineUsesUnitTranslation else { return }
-        Task { [weak self] in
+        translationExperienceFinalizationTask?.cancel()
+        translationExperienceFinalizationTask = Task { [weak self] in
             await self?.finalizeTranslationExperienceAfterStop()
         }
     }
@@ -1819,9 +1913,14 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
         let generation = translationRuntimeGeneration
-        var runtime = translationRuntime
-        let snapshot = await runtime.stopAndFinalize(generation: generation)
-        translationRuntime = runtime
+        let finalizationTask = Task { [translationRuntime] in
+            await translationRuntime.finalize(generation: generation)
+        }
+        pendingTranslationExperienceApply = nil
+        await translationExperienceApplyTask?.value
+        translationExperienceApplyTask = nil
+        let snapshot = await finalizationTask.value
+        translationExperienceFinalizationTask = nil
         attachRuntimeTranslationSnapshot(snapshot, path: "stop", visibleStates: [.stableFinal])
     }
 

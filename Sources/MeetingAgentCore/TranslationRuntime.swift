@@ -48,6 +48,129 @@ public struct TranslationRuntimeSnapshot: Equatable {
     }
 }
 
+public actor TranslationRuntimeActor {
+    private var runtime = TranslationRuntime()
+    private var tail: Task<Void, Never>?
+    private var currentOperation: Task<TranslationRuntimeSnapshot, Never>?
+    private var epoch = 0
+
+    public init() {}
+
+    public func start(
+        context: TranslationRuntimeContext,
+        liveProvider: TextTranslationProvider,
+        accurateProvider: TextTranslationProvider,
+        performanceEventLogger: PerformanceEventLogger? = nil,
+        persistFinalResult: ((TranslationResultPersistenceRecord) -> Void)? = nil
+    ) {
+        epoch += 1
+        tail?.cancel()
+        currentOperation?.cancel()
+        tail = nil
+        currentOperation = nil
+        runtime = TranslationRuntime()
+        runtime.start(
+            context: context,
+            liveProvider: liveProvider,
+            accurateProvider: accurateProvider,
+            performanceEventLogger: performanceEventLogger,
+            persistFinalResult: persistFinalResult
+        )
+    }
+
+    public func start(context: TranslationRuntimeContext) {
+        epoch += 1
+        tail?.cancel()
+        currentOperation?.cancel()
+        tail = nil
+        currentOperation = nil
+        runtime = TranslationRuntime()
+        runtime.start(context: context)
+    }
+
+    public func reset() {
+        epoch += 1
+        tail?.cancel()
+        currentOperation?.cancel()
+        tail = nil
+        currentOperation = nil
+        runtime = TranslationRuntime()
+    }
+
+    public func submit(
+        document: TranscriptDocument,
+        generation: Int,
+        now: Date = Date()
+    ) async -> TranslationRuntimeSnapshot {
+        let operationEpoch = epoch
+        let previous = tail
+        let operation = Task { [previous] in
+            await previous?.value
+            return await self.performSubmit(
+                document: document,
+                generation: generation,
+                now: now,
+                epoch: operationEpoch
+            )
+        }
+        currentOperation = operation
+        tail = Task { _ = await operation.value }
+        return await operation.value
+    }
+
+    public func finalize(
+        generation: Int,
+        now: Date = Date()
+    ) async -> TranslationRuntimeSnapshot {
+        let operationEpoch = epoch
+        let previous = tail
+        let operation = Task { [previous] in
+            await previous?.value
+            return await self.performFinalize(
+                generation: generation,
+                now: now,
+                epoch: operationEpoch
+            )
+        }
+        currentOperation = operation
+        tail = Task { _ = await operation.value }
+        return await operation.value
+    }
+
+    public func hydrate(records: [TranslationResultPersistenceRecord]) -> [TranslationResult] {
+        runtime.hydrate(records: records)
+    }
+
+    private func performSubmit(
+        document: TranscriptDocument,
+        generation: Int,
+        now: Date,
+        epoch operationEpoch: Int
+    ) async -> TranslationRuntimeSnapshot {
+        var localRuntime = runtime
+        let snapshot = await localRuntime.apply(document: document, generation: generation, now: now)
+        guard operationEpoch == epoch else {
+            return TranslationRuntimeSnapshot(state: .idle)
+        }
+        runtime = localRuntime
+        return snapshot
+    }
+
+    private func performFinalize(
+        generation: Int,
+        now: Date,
+        epoch operationEpoch: Int
+    ) async -> TranslationRuntimeSnapshot {
+        var localRuntime = runtime
+        let snapshot = await localRuntime.stopAndFinalizeCurrent(now: now)
+        guard operationEpoch == epoch else {
+            return TranslationRuntimeSnapshot(state: .idle)
+        }
+        runtime = localRuntime
+        return snapshot
+    }
+}
+
 public struct TranslationRuntime {
     private var context: TranslationRuntimeContext?
     private var state: TranslationRuntimeState = .idle
@@ -134,6 +257,15 @@ public struct TranslationRuntime {
         now: Date = Date()
     ) async -> TranslationRuntimeSnapshot {
         guard let context, context.generation == generation else {
+            return TranslationRuntimeSnapshot(state: state)
+        }
+        return await stopAndFinalizeCurrent(now: now)
+    }
+
+    public mutating func stopAndFinalizeCurrent(
+        now: Date = Date()
+    ) async -> TranslationRuntimeSnapshot {
+        guard context != nil else {
             return TranslationRuntimeSnapshot(state: state)
         }
         state = .stopping
