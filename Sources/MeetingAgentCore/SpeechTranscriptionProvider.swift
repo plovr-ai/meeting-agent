@@ -21,6 +21,18 @@ public extension AudioFrameTranscriber {
 
 public protocol TranscriptUpdateSink: AnyObject {
     func receive(_ update: TranscriptSegmentUpdate)
+    func receiveRealtime(_ update: TranscriptSegmentUpdate)
+    func receiveFinal(_ update: TranscriptSegmentUpdate)
+}
+
+public extension TranscriptUpdateSink {
+    func receiveRealtime(_ update: TranscriptSegmentUpdate) {
+        receive(update)
+    }
+
+    func receiveFinal(_ update: TranscriptSegmentUpdate) {
+        receive(update)
+    }
 }
 
 public struct SpeechTranscriptionContext: Equatable {

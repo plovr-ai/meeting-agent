@@ -3,6 +3,24 @@ import XCTest
 
 @MainActor
 final class LiveCaptionPipelineTests: XCTestCase {
+    func testAccumulationResultCarriesRealtimeSourceKind() async {
+        let result = TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "deepgram-transcribe-stream-0.0",
+                    text: "Realtime only",
+                    sourceProvider: "deepgram-transcribe",
+                    isFinal: false
+                )
+            ]),
+            changedSegmentIDs: ["deepgram-transcribe-stream-0.0"],
+            plainTextReplacement: nil,
+            source: .realtime
+        )
+
+        XCTAssertEqual(result.source, .realtime)
+    }
+
     func testReplayBuildsCaptionTurnsFromFinalTranscriptSegments() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",

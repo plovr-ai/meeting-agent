@@ -7,10 +7,28 @@ public enum TranscriptSegmentUpdate: Equatable {
     case translationPatch(segmentID: String, text: String, targetLocale: String, isFinal: Bool)
 }
 
+public enum TranscriptSegmentUpdateSource: String, Codable, Equatable {
+    case final
+    case realtime
+}
+
 public struct TranscriptSegmentAccumulationResult: Equatable {
     public let document: TranscriptDocument
     public let changedSegmentIDs: [String]
     public let plainTextReplacement: String?
+    public let source: TranscriptSegmentUpdateSource
+
+    public init(
+        document: TranscriptDocument,
+        changedSegmentIDs: [String],
+        plainTextReplacement: String?,
+        source: TranscriptSegmentUpdateSource = .final
+    ) {
+        self.document = document
+        self.changedSegmentIDs = changedSegmentIDs
+        self.plainTextReplacement = plainTextReplacement
+        self.source = source
+    }
 }
 
 public struct TranscriptSegmentAccumulator {
