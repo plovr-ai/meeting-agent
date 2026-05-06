@@ -81,3 +81,70 @@ struct RegressionFixtureTranslationLookup {
             .joined(separator: ",")
     }
 }
+
+struct RegressionCommandResult {
+    var status: Int32
+    var stdout: String
+    var stderr: String
+}
+
+enum RegressionFixtureFiles {
+    static var testDirectory: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    }
+
+    static var repositoryRoot: URL {
+        testDirectory
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    static var fixtureRoot: URL {
+        testDirectory
+            .appendingPathComponent("Fixtures")
+            .appendingPathComponent("RegressionMeetings")
+    }
+
+    static func allFixtureDirectories() throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: fixtureRoot.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: fixtureRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        .filter { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    static func loadManifest(in fixtureURL: URL) throws -> RegressionFixtureManifest {
+        try JSONDecoder.meetingAgent.decode(
+            RegressionFixtureManifest.self,
+            from: Data(contentsOf: fixtureURL.appendingPathComponent("manifest.json"))
+        )
+    }
+
+    static func runAnalyzer(_ fixtureURL: URL) throws -> RegressionCommandResult {
+        let process = Process()
+        process.currentDirectoryURL = repositoryRoot
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "swift",
+            "scripts/analyze-meeting-performance.swift",
+            "--assert-translation-e2e",
+            fixtureURL.path
+        ]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        return RegressionCommandResult(
+            status: process.terminationStatus,
+            stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+            stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        )
+    }
+}
