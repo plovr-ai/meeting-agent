@@ -148,3 +148,55 @@ enum RegressionFixtureFiles {
         )
     }
 }
+
+extension RegressionFixtureFiles {
+    static func loadExpectedUI(in fixtureURL: URL) throws -> RegressionExpectedUI {
+        try JSONDecoder.meetingAgent.decode(
+            RegressionExpectedUI.self,
+            from: Data(contentsOf: fixtureURL.appendingPathComponent("expected-ui.json"))
+        )
+    }
+
+    static func loadTranscript(in fixtureURL: URL) throws -> TranscriptDocument {
+        try JSONDecoder.meetingAgent.decode(
+            TranscriptDocument.self,
+            from: Data(contentsOf: fixtureURL.appendingPathComponent("transcript.json"))
+        )
+    }
+
+    static func loadTranslationRecords(in fixtureURL: URL) throws -> [TranslationResultPersistenceRecord] {
+        let lines = try String(
+            contentsOf: fixtureURL.appendingPathComponent("translation-results.jsonl"),
+            encoding: .utf8
+        )
+        .split(separator: "\n")
+        return try lines.map {
+            try JSONDecoder.meetingAgent.decode(TranslationResultPersistenceRecord.self, from: Data($0.utf8))
+        }
+    }
+
+    static func projectStableTranslationTurns(
+        in fixtureURL: URL,
+        manifest: RegressionFixtureManifest
+    ) throws -> [LiveCaptionTurn] {
+        let transcript = try loadTranscript(in: fixtureURL)
+        let segmentsByID = Dictionary(uniqueKeysWithValues: transcript.segments.map { ($0.id, $0) })
+        return try loadTranslationRecords(in: fixtureURL).map { record in
+            let sourceText = record.sourceSegmentIDs.compactMap { segmentsByID[$0]?.text }.joined(separator: " ")
+            return LiveCaptionTurn(
+                id: RegressionFixtureTranslationLookup.canonical(record.sourceSegmentIDs),
+                sourceSegmentID: record.sourceSegmentIDs.first ?? record.sourceID,
+                sourceSegmentIDs: record.sourceSegmentIDs,
+                speaker: TranscriptSpeaker(identifier: record.laneID.speakerID, label: nil),
+                originalText: sourceText,
+                translatedText: record.translatedText,
+                translationFreshness: .final,
+                sourceLocale: manifest.sourceLocale,
+                targetLocale: manifest.targetLocale,
+                isFinal: true,
+                translationHealth: .live,
+                translationState: .final
+            )
+        }
+    }
+}
