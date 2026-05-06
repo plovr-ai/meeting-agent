@@ -18,8 +18,8 @@ final class RealtimeCaptionSession {
         pipeline.flushCaptionsOnly(reason: reason)
     }
 
-    func schedulePendingTranslations() async -> LiveCaptionPipelineSnapshot {
-        await pipeline.schedulePendingTranslations()
+    func scheduleLegacyReplayBackfillTranslations() async -> LiveCaptionPipelineSnapshot {
+        await pipeline.scheduleLegacyReplayBackfillTranslations()
     }
 
     func scheduleLivePendingTranslations() async -> LiveCaptionPipelineSnapshot {

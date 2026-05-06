@@ -925,7 +925,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         translationProvider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger? = nil,
         persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
-        translationMode: LiveCaptionTranslationMode = .legacyCaptionScheduler
+        translationMode: LiveCaptionTranslationMode = .legacyReplayBackfill
     ) -> LiveCaptionPipeline {
         LiveCaptionPipeline(
             sourceLocale: configuration.localeIdentifier,
@@ -939,7 +939,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func makeLiveCaptionPipeline(
         translationProvider: TextTranslationProvider? = nil,
-        translationMode: LiveCaptionTranslationMode = .legacyCaptionScheduler
+        translationMode: LiveCaptionTranslationMode = .legacyReplayBackfill
     ) -> LiveCaptionPipeline {
         let textURL = selectedMeeting?.transcriptURL
         let structuredURL = selectedMeeting?.transcriptJSONURL
@@ -1348,7 +1348,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             let translationProvider = captionTranslationProviderForCurrentConfiguration(document: latest.document)
             let translationMode: LiveCaptionTranslationMode = liveCaptionPipelineUsesUnitTranslation
                 ? .unitPipelineActiveRecording
-                : .legacyCaptionScheduler
+                : .legacyReplayBackfill
             realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline(
                 translationProvider: translationProvider,
                 translationMode: translationMode
@@ -1845,7 +1845,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         publishRealtimeCaptionPipelineSnapshot(flushedSnapshot)
         activeCaptionApplyTask = Task { [weak self] in
             guard let self else { return }
-            let snapshot = await realtimeCaptionSession.schedulePendingTranslations()
+            let snapshot = await realtimeCaptionSession.scheduleLegacyReplayBackfillTranslations()
             guard !Task.isCancelled, isCurrentCaptionFlush(context) else { return }
             publishRealtimeCaptionPipelineSnapshot(snapshot)
         }

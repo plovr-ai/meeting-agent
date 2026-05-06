@@ -280,6 +280,38 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertTrue(provider.requests.isEmpty)
     }
 
+    func testUnitPipelineModeDoesNotScheduleLegacyReplayBackfillTranslations() async {
+        let provider = PipelineRecordingTranslationProvider(translations: [
+            "segment-1": "翻译"
+        ])
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            translationProvider: provider,
+            performanceEventLogger: nil,
+            translationMode: .unitPipelineActiveRecording
+        )
+
+        _ = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We approve the launch.",
+                    language: "en-US",
+                    isFinal: true,
+                    speechFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        let snapshot = await pipeline.scheduleLegacyReplayBackfillTranslations()
+
+        XCTAssertEqual(provider.requests.count, 0)
+        XCTAssertEqual(snapshot.translationHealth, .pending)
+    }
+
     func testApplyLogsCaptionTurnVisibleWithoutRawText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("live-caption-pipeline-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -939,12 +971,12 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         _ = pipeline.replayCaptionsOnly(document)
         let firstSchedule = Task {
-            await pipeline.schedulePendingTranslations()
+            await pipeline.scheduleLegacyReplayBackfillTranslations()
         }
         try await Task.sleep(nanoseconds: 10_000_000)
 
         _ = pipeline.replayCaptionsOnly(document)
-        let secondSnapshot = await pipeline.schedulePendingTranslations()
+        let secondSnapshot = await pipeline.scheduleLegacyReplayBackfillTranslations()
         let firstSnapshot = await firstSchedule.value
 
         XCTAssertEqual(provider.requests, ["final text"])
@@ -981,13 +1013,13 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         _ = pipeline.replayCaptionsOnly(document)
         let firstSchedule = Task {
-            await pipeline.schedulePendingTranslations()
+            await pipeline.scheduleLegacyReplayBackfillTranslations()
         }
         try await Task.sleep(nanoseconds: 10_000_000)
 
         _ = pipeline.replayCaptionsOnly(document)
         let secondSchedule = Task {
-            await pipeline.schedulePendingTranslations()
+            await pipeline.scheduleLegacyReplayBackfillTranslations()
         }
         _ = await firstSchedule.value
         _ = await secondSchedule.value
@@ -1163,7 +1195,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
             plainTextReplacement: nil
         ))
         let finalTranslation = Task {
-            await pipeline.schedulePendingTranslations()
+            await pipeline.scheduleLegacyReplayBackfillTranslations()
         }
         try await waitForPipelineCondition { provider.pendingRequestCount == 2 }
 
@@ -1174,7 +1206,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         provider.completeRequest(at: 0, targetText: "草稿翻译")
         _ = await draftTranslation.value
-        let currentSnapshot = await pipeline.schedulePendingTranslations()
+        let currentSnapshot = await pipeline.scheduleLegacyReplayBackfillTranslations()
 
         XCTAssertEqual(currentSnapshot.turns.first?.translatedText, "最终翻译")
         XCTAssertEqual(currentSnapshot.turns.first?.translationState, .final)

@@ -17,7 +17,7 @@ public struct LiveCaptionPipelineSnapshot: Equatable {
 }
 
 public enum LiveCaptionTranslationMode: Equatable {
-    case legacyCaptionScheduler
+    case legacyReplayBackfill
     case unitPipelineActiveRecording
 }
 
@@ -47,7 +47,7 @@ public final class LiveCaptionPipeline {
         translationProvider: TextTranslationProvider?,
         performanceEventLogger: PerformanceEventLogger?,
         persistTranslation: ((CaptionTranslationAttachmentTarget, String, Bool) -> Bool)? = nil,
-        translationMode: LiveCaptionTranslationMode = .legacyCaptionScheduler
+        translationMode: LiveCaptionTranslationMode = .legacyReplayBackfill
     ) {
         self.sourceLocale = sourceLocale
         self.targetLocale = targetLocale
@@ -132,7 +132,12 @@ public final class LiveCaptionPipeline {
         )
     }
 
+    @available(*, deprecated, renamed: "scheduleLegacyReplayBackfillTranslations")
     public func schedulePendingTranslations() async -> LiveCaptionPipelineSnapshot {
+        await scheduleLegacyReplayBackfillTranslations()
+    }
+
+    public func scheduleLegacyReplayBackfillTranslations() async -> LiveCaptionPipelineSnapshot {
         await scheduleFinalTranslationsOnly()
         return snapshot(
             captionHealth: store.turns.isEmpty ? .idle : .live,
@@ -458,7 +463,7 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleLiveTranslations() async {
-        guard translationMode == .legacyCaptionScheduler else { return }
+        guard translationMode == .legacyReplayBackfill else { return }
         let generation = storeGeneration
         let updates = await translationScheduler.liveTranslationUpdates(for: store)
         guard generation == storeGeneration else {
@@ -476,7 +481,7 @@ public final class LiveCaptionPipeline {
     }
 
     private func scheduleFinalTranslationsOnly() async {
-        guard translationMode == .legacyCaptionScheduler else { return }
+        guard translationMode == .legacyReplayBackfill else { return }
         let generation = storeGeneration
         let updates = await translationScheduler.finalTranslationUpdates(for: store)
         guard generation == storeGeneration else {
