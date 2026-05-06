@@ -458,6 +458,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         invalidateActiveCaptionApplyTasks()
         flushLiveCaptionPipeline(reason: .manualStop)
+        startTranslationExperienceFinalizationAfterStop()
         allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
@@ -478,6 +479,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             stoppedID = nil
         }
         invalidateActiveCaptionApplyTasks()
+        await finalizeTranslationExperienceAfterStop()
         allowActiveTargetReprompt()
         activeTarget = nil
         activeMeetingID = nil
@@ -800,6 +802,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             recentlyStoppedLiveMeetingID = stopped.id
         }
         flushLiveCaptionPipeline(reason: .manualStop)
+        startTranslationExperienceFinalizationAfterStop()
         statusText = "Target process ended: \(activeTarget.displayName)"
         self.activeTarget = nil
         activeMeetingID = nil
@@ -1752,6 +1755,24 @@ public final class MeetingAgentViewModel: ObservableObject {
         if generation == activeCaptionTranslationGeneration {
             activeCaptionTranslationTask = nil
         }
+    }
+
+    private func startTranslationExperienceFinalizationAfterStop() {
+        guard liveCaptionPipelineUsesUnitTranslation else { return }
+        Task { [weak self] in
+            await self?.finalizeTranslationExperienceAfterStop()
+        }
+    }
+
+    private func finalizeTranslationExperienceAfterStop() async {
+        guard liveCaptionPipelineUsesUnitTranslation,
+              var pipeline = translationExperiencePipeline
+        else {
+            return
+        }
+        let snapshot = await pipeline.flushAndFinalize()
+        translationExperiencePipeline = pipeline
+        logTranslationExperienceSnapshot(snapshot, path: "stop")
     }
 
     private func hasSameLanguagePendingTranslation(in snapshot: LiveCaptionPipelineSnapshot) -> Bool {
