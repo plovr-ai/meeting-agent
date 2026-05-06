@@ -50,4 +50,52 @@ final class TranslationResultStoreTests: XCTestCase {
         XCTAssertNil(store.carriedForwardResult(for: lane, currentRiskFlags: [.number]))
         XCTAssertNotNil(store.carriedForwardResult(for: lane, currentRiskFlags: []))
     }
+
+    func testSamePriorityVisibleResultPrefersLatestAndStoreEquatable() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        var store = TranslationResultStore()
+        let older = TranslationResult(
+            id: "live-1",
+            sourceID: "unit-1",
+            laneID: lane,
+            sourceText: "We approve",
+            translatedText: "旧翻译",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 1),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = TranslationResult(
+            id: "live-2",
+            sourceID: "unit-2",
+            laneID: lane,
+            sourceText: "We approve",
+            translatedText: "新翻译",
+            displayState: .liveFresh,
+            createdAt: Date(timeIntervalSince1970: 2),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        store.attach(older)
+        store.attach(newer)
+
+        XCTAssertEqual(store.visibleResult(for: lane)?.translatedText, "新翻译")
+        XCTAssertNotEqual(store, TranslationResultStore())
+    }
+
+    func testLaggingLiveResultCanCarryForwardWhenCurrentTextIsLowRisk() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        var store = TranslationResultStore()
+        store.attach(TranslationResult(
+            id: "live-lagging",
+            sourceID: "unit-1",
+            laneID: lane,
+            sourceText: "We confirm",
+            translatedText: "我们确认",
+            displayState: .liveLagging,
+            createdAt: Date(timeIntervalSince1970: 1),
+            sourceCreatedAt: Date(timeIntervalSince1970: 1)
+        ))
+
+        XCTAssertEqual(store.carriedForwardResult(for: lane, currentRiskFlags: [])?.displayState, .liveCarried)
+    }
 }

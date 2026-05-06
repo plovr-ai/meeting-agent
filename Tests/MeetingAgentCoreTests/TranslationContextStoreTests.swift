@@ -32,4 +32,20 @@ final class TranslationContextStoreTests: XCTestCase {
 
         XCTAssertNotEqual(original, store.context(for: lane).contextHash)
     }
+
+    func testStoreEqualityIgnoresClockAndRecentBlocksAreCapped() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        var first = TranslationContextStore(maxRecentBlocks: 1, now: { Date(timeIntervalSince1970: 1) })
+        var second = TranslationContextStore(maxRecentBlocks: 1, now: { Date(timeIntervalSince1970: 1) })
+
+        first.updateMeetingGoal(" Confirm launch ")
+        second.updateMeetingGoal("Confirm launch")
+        first.recordStableTranslation(sourceText: "First block", translatedText: "第一段", laneID: lane)
+        first.recordStableTranslation(sourceText: "Second block", translatedText: "第二段", laneID: lane)
+        second.recordStableTranslation(sourceText: "Second block", translatedText: "第二段", laneID: lane)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.context(for: lane).recentBlocks.map(\.sourceText), ["Second block"])
+        XCTAssertEqual(first.context(for: lane), second.context(for: lane))
+    }
 }

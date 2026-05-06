@@ -59,4 +59,19 @@ final class TranslationExperienceModelsTests: XCTestCase {
         XCTAssertFalse(block.contextHash.isEmpty)
         XCTAssertNotEqual(block.sourceTextHash, block.contextHash)
     }
+
+    func testStableBlockContextHashHandlesKeyTermWithoutTranslationHint() {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let block = StableTranslationBlock(
+            id: "block-1",
+            laneID: lane,
+            sourceText: "We approved the launch date.",
+            sourceSegmentIDs: ["segment-1"],
+            keyTerms: [MeetingKeyTerm(id: "api", value: "API", translationHint: nil)],
+            boundaryReason: .terminalPunctuation,
+            createdAt: Date(timeIntervalSince1970: 20)
+        )
+
+        XCTAssertFalse(block.contextHash.isEmpty)
+    }
 }

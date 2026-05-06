@@ -66,4 +66,56 @@ final class TranslationUnitBuilderTests: XCTestCase {
         XCTAssertTrue(output.liveUnits.first?.riskFlags.contains(.number) == true)
         XCTAssertTrue(output.liveUnits.first?.riskFlags.contains(.negation) == true)
     }
+
+    func testFinalWithoutTerminalPunctuationDoesNotCreateStableBlock() {
+        var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            text: "We approved the launch date",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false
+        )
+
+        let output = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertTrue(output.stableBlocks.isEmpty)
+    }
+
+    func testDuplicateStableBlockIsEmittedOnce() {
+        var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            text: "We approved the launch date.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true
+        )
+
+        _ = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+        let second = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 3))
+
+        XCTAssertTrue(second.stableBlocks.isEmpty)
+    }
+
+    func testRiskFlagsDetectCommitment() {
+        var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
+        let segment = TranscriptSegment(id: "segment-1", text: "We will confirm the launch owner today", language: "en-US", isFinal: false)
+
+        let output = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertTrue(output.liveUnits.first?.riskFlags.contains(.commitment) == true)
+    }
+
+    func testConfigurationAndOutputEquality() {
+        XCTAssertEqual(
+            TranslationUnitBuilderConfiguration(minimumLiveWords: 1, unstableTailWords: 1, minimumStableBlockCharacters: 10),
+            TranslationUnitBuilderConfiguration(minimumLiveWords: 1, unstableTailWords: 1, minimumStableBlockCharacters: 10)
+        )
+
+        XCTAssertEqual(
+            TranslationUnitBuilderOutput(liveUnits: [], stableBlocks: []),
+            TranslationUnitBuilderOutput(liveUnits: [], stableBlocks: [])
+        )
+    }
 }

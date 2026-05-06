@@ -81,6 +81,66 @@ final class LiveTranslationSchedulerTests: XCTestCase {
         XCTAssertEqual(updates.first?.displayState, .liveFresh)
         XCTAssertEqual(updates.first?.riskFlags, [.number])
     }
+
+    func testCachedPrefixRebasesResultWithoutProviderCall() async {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = LiveRecordingTranslationProvider(translations: ["unit-1": "我们确认负责人"])
+        var scheduler = LiveTranslationScheduler(provider: provider)
+        let first = LiveTranslationUnit(
+            id: "unit-1",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-1"],
+            revision: 1,
+            createdAt: Date(timeIntervalSince1970: 1),
+            deadline: Date(timeIntervalSince1970: 5)
+        )
+        let second = LiveTranslationUnit(
+            id: "unit-2",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-2"],
+            revision: 2,
+            createdAt: Date(timeIntervalSince1970: 2),
+            deadline: Date(timeIntervalSince1970: 6)
+        )
+
+        _ = await scheduler.schedule([first])
+        let updates = await scheduler.schedule([second])
+
+        XCTAssertEqual(provider.requests.count, 1)
+        XCTAssertEqual(updates.first?.sourceID, "unit-2")
+        XCTAssertEqual(updates.first?.translatedText, "我们确认负责人")
+    }
+
+    func testProviderFailureReturnsRecoverableResult() async {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = FailingLiveTranslationProvider()
+        var scheduler = LiveTranslationScheduler(provider: provider)
+        let unit = LiveTranslationUnit(
+            id: "unit-1",
+            laneID: lane,
+            stablePrefixText: "We confirm the owner",
+            sourceSegmentIDs: ["segment-1"],
+            revision: 1,
+            createdAt: Date(),
+            deadline: Date().addingTimeInterval(4)
+        )
+
+        let updates = await scheduler.schedule([unit])
+
+        XCTAssertEqual(updates.first?.displayState, .failedRecoverable)
+    }
+
+    func testConfigurationNormalizesMinimumsAndSupportsEquality() {
+        let configuration = LiveTranslationSchedulerConfiguration(
+            maxConcurrentRequests: 0,
+            maxCallsPerMinute: 0,
+            draftTimeoutNanoseconds: 1
+        )
+
+        XCTAssertEqual(configuration, LiveTranslationSchedulerConfiguration(maxConcurrentRequests: 1, maxCallsPerMinute: 1, draftTimeoutNanoseconds: 1))
+    }
 }
 
 private final class LiveRecordingTranslationProvider: TextTranslationProvider {
@@ -124,5 +184,24 @@ private final class LiveRecordingTranslationProvider: TextTranslationProvider {
             ],
             provenance: PipelineProvenance(profileID: "test-live", successfulProviders: ["test-live"])
         )
+    }
+}
+
+private final class FailingLiveTranslationProvider: TextTranslationProvider {
+    var descriptor: ProviderDescriptor {
+        ProviderDescriptor(
+            id: "test-live-failing",
+            displayName: "Test Live Failing",
+            capability: .textTranslation,
+            executionMode: .hosted,
+            supportedSourceLocales: ["*"],
+            supportedTargetLocales: ["*"],
+            requiresNetwork: false,
+            requiresAPIKey: false
+        )
+    }
+
+    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript {
+        throw NSError(domain: "translation", code: 1)
     }
 }
