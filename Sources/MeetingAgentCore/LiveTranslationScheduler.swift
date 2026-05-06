@@ -20,7 +20,7 @@ public struct LiveTranslationScheduler {
     private let provider: TextTranslationProvider
     private let configuration: LiveTranslationSchedulerConfiguration
     private var requestTimes: [Date] = []
-    private var lastRequestedPrefixByLane: [TranslationLaneID: String] = [:]
+    private var laneStates: [TranslationLaneID: LiveTranslationLaneState] = [:]
     private var cachedResultByLaneAndPrefix: [CacheKey: TranslationResult] = [:]
     private var now: () -> Date
 
@@ -36,32 +36,80 @@ public struct LiveTranslationScheduler {
 
     public mutating func schedule(_ units: [LiveTranslationUnit]) async -> [TranslationResult] {
         var results: [TranslationResult] = []
+        var immediateUnits: [LiveTranslationUnit] = []
+        var lanesScheduledInThisBatch = Set<TranslationLaneID>()
 
         for unit in units {
-            let cacheKey = CacheKey(laneID: unit.laneID, sourceText: unit.stablePrefixText)
-            if let cachedResult = cachedResultByLaneAndPrefix[cacheKey] {
-                results.append(cachedResult.rebased(to: unit, createdAt: now()))
+            var state = laneStates[unit.laneID, default: LiveTranslationLaneState()]
+            if state.inFlightUnitID != nil || lanesScheduledInThisBatch.contains(unit.laneID) {
+                state.pendingLatestUnit = unit
+                laneStates[unit.laneID] = state
                 continue
             }
+            laneStates[unit.laneID] = state
+            lanesScheduledInThisBatch.insert(unit.laneID)
+            immediateUnits.append(unit)
+        }
 
-            pruneRequestTimes()
-            guard requestTimes.count < configuration.maxCallsPerMinute else {
-                results.append(disabledBudgetResult(for: unit))
-                continue
+        for unit in immediateUnits {
+            if let result = await scheduleImmediately(unit) {
+                results.append(result)
             }
-
-            guard lastRequestedPrefixByLane[unit.laneID] != unit.stablePrefixText else {
-                continue
-            }
-
-            requestTimes.append(now())
-            lastRequestedPrefixByLane[unit.laneID] = unit.stablePrefixText
-            let result = await translate(unit)
-            cachedResultByLaneAndPrefix[cacheKey] = result
-            results.append(result)
         }
 
         return results
+    }
+
+    public mutating func drainPending() async -> [TranslationResult] {
+        var results: [TranslationResult] = []
+        let lanes = Array(laneStates.keys)
+        for lane in lanes {
+            guard var state = laneStates[lane],
+                  state.inFlightUnitID == nil,
+                  let pending = state.pendingLatestUnit
+            else { continue }
+            state.pendingLatestUnit = nil
+            laneStates[lane] = state
+            if let result = await scheduleImmediately(pending) {
+                results.append(result)
+            }
+        }
+        return results
+    }
+
+    private mutating func scheduleImmediately(_ unit: LiveTranslationUnit) async -> TranslationResult? {
+        let cacheKey = CacheKey(laneID: unit.laneID, sourceText: unit.stablePrefixText)
+        if let cachedResult = cachedResultByLaneAndPrefix[cacheKey] {
+            return cachedResult.rebased(to: unit, createdAt: now())
+        }
+
+        pruneRequestTimes()
+        guard requestTimes.count < configuration.maxCallsPerMinute else {
+            return disabledBudgetResult(for: unit)
+        }
+
+        var state = laneStates[unit.laneID, default: LiveTranslationLaneState()]
+        guard state.lastRequestedSourcePrefix != unit.stablePrefixText else {
+            return nil
+        }
+
+        requestTimes.append(now())
+        state.lastRequestedSourcePrefix = unit.stablePrefixText
+        state.inFlightUnitID = unit.id
+        laneStates[unit.laneID] = state
+
+        let result = await translate(unit)
+
+        var completionState = laneStates[unit.laneID, default: LiveTranslationLaneState()]
+        if completionState.inFlightUnitID == unit.id {
+            completionState.inFlightUnitID = nil
+        }
+        if result.displayState == .liveFresh {
+            completionState.lastVisibleSourcePrefix = unit.stablePrefixText
+            cachedResultByLaneAndPrefix[cacheKey] = result
+        }
+        laneStates[unit.laneID] = completionState
+        return result
     }
 
     private mutating func pruneRequestTimes() {
@@ -79,7 +127,8 @@ public struct LiveTranslationScheduler {
             displayState: .disabledBudget,
             createdAt: now(),
             sourceCreatedAt: unit.createdAt,
-            riskFlags: unit.riskFlags
+            riskFlags: unit.riskFlags,
+            sourceSegmentIDs: unit.sourceSegmentIDs
         )
     }
 
@@ -107,7 +156,8 @@ public struct LiveTranslationScheduler {
                 displayState: .liveFresh,
                 createdAt: now(),
                 sourceCreatedAt: unit.createdAt,
-                riskFlags: unit.riskFlags
+                riskFlags: unit.riskFlags,
+                sourceSegmentIDs: unit.sourceSegmentIDs
             )
         } catch {
             return TranslationResult(
@@ -119,10 +169,18 @@ public struct LiveTranslationScheduler {
                 displayState: .failedRecoverable,
                 createdAt: now(),
                 sourceCreatedAt: unit.createdAt,
-                riskFlags: unit.riskFlags
+                riskFlags: unit.riskFlags,
+                sourceSegmentIDs: unit.sourceSegmentIDs
             )
         }
     }
+}
+
+private struct LiveTranslationLaneState {
+    var inFlightUnitID: String?
+    var pendingLatestUnit: LiveTranslationUnit?
+    var lastVisibleSourcePrefix: String = ""
+    var lastRequestedSourcePrefix: String = ""
 }
 
 private struct CacheKey: Hashable {
@@ -141,7 +199,8 @@ private extension TranslationResult {
             displayState: displayState,
             createdAt: createdAt,
             sourceCreatedAt: unit.createdAt,
-            riskFlags: unit.riskFlags
+            riskFlags: unit.riskFlags,
+            sourceSegmentIDs: unit.sourceSegmentIDs
         )
     }
 }

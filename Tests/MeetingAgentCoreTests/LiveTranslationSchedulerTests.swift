@@ -4,6 +4,27 @@ import XCTest
 
 @MainActor
 final class LiveTranslationSchedulerTests: XCTestCase {
+    func testInFlightLaneKeepsOnlyLatestPendingUnit() async {
+        let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
+        let provider = LiveRecordingTranslationProvider(translations: [
+            "unit-1": "第一版",
+            "unit-3": "第三版"
+        ])
+        var scheduler = LiveTranslationScheduler(
+            provider: provider,
+            configuration: LiveTranslationSchedulerConfiguration(maxConcurrentRequests: 1, maxCallsPerMinute: 10, draftTimeoutNanoseconds: 1_000_000_000)
+        )
+        let first = LiveTranslationUnit(id: "unit-1", laneID: lane, stablePrefixText: "We confirm the initial owner", sourceSegmentIDs: ["segment-1"], revision: 1, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let second = LiveTranslationUnit(id: "unit-2", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout", sourceSegmentIDs: ["segment-1"], revision: 2, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+        let third = LiveTranslationUnit(id: "unit-3", laneID: lane, stablePrefixText: "We confirm the initial owner and rollout date", sourceSegmentIDs: ["segment-1"], revision: 3, createdAt: Date(), deadline: Date().addingTimeInterval(4))
+
+        let completed = await scheduler.schedule([first, second, third])
+        let drained = await scheduler.drainPending()
+
+        XCTAssertEqual(provider.requests.map(\.id), ["unit-1", "unit-3"])
+        XCTAssertEqual((completed + drained).last?.sourceID, "unit-3")
+    }
+
     func testSchedulesOneLiveRequestPerLane() async {
         let lane = TranslationLaneID(speaker: .default, sourceLocale: "en-US", targetLocale: "zh-CN")
         let provider = LiveRecordingTranslationProvider(translations: ["unit-1": "我们确认负责人"])
