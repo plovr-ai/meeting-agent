@@ -2,6 +2,87 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranslationUnitBuilderTests: XCTestCase {
+    func testIsFinalAdvancesStablePrefixButDoesNotSealBlock() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumLiveWords: 4, unstableTailWords: 1, minimumStableBlockCharacters: 10)
+        )
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            text: "Select settings and about",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let output = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertEqual(output.liveUnits.count, 1)
+        XCTAssertEqual(output.liveUnits.first?.stablePrefixText, "Select settings and")
+        XCTAssertTrue(output.stableBlocks.isEmpty)
+    }
+
+    func testSpeechFinalSealsAccumulatedLaneBlock() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumLiveWords: 4, unstableTailWords: 1, minimumStableBlockCharacters: 10)
+        )
+        let first = TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            text: "Select settings and about",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let second = TranscriptSegment(
+            id: "segment-2",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            text: "then choose public preview.",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: true,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+
+        _ = builder.apply(segments: [first], now: Date(timeIntervalSince1970: 3))
+        let output = builder.apply(segments: [first, second], now: Date(timeIntervalSince1970: 4))
+
+        XCTAssertEqual(output.stableBlocks.count, 1)
+        XCTAssertEqual(output.stableBlocks.first?.sourceText, "Select settings and about then choose public preview.")
+        XCTAssertEqual(output.stableBlocks.first?.sourceSegmentIDs, ["segment-1", "segment-2"])
+        XCTAssertEqual(output.stableBlocks.first?.boundaryReason, .providerHardBoundary)
+    }
+
+    func testManualStopFlushSealsOpenBlock() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumLiveWords: 4, unstableTailWords: 1, minimumStableBlockCharacters: 10)
+        )
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-1"),
+            text: "We should review the rollout status",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        _ = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+        let flushed = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 3))
+
+        XCTAssertEqual(flushed.count, 1)
+        XCTAssertEqual(flushed.first?.sourceText, "We should review the rollout status")
+        XCTAssertEqual(flushed.first?.boundaryReason, .manualStop)
+    }
+
     func testInterimChurnUpdatesLiveUnitWithoutStableBlock() {
         var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
         let createdAt = Date(timeIntervalSince1970: 1)
