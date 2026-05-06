@@ -188,7 +188,8 @@ public struct TranscriptSegmentAccumulator {
             return false
         }
         if first.sourceProvider == SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID {
-            return true
+            return first.isFinal && second.isFinal
+                || normalizedTextsOverlap(first.text, second.text)
         }
         return normalizedTextsOverlap(first.text, second.text)
     }
