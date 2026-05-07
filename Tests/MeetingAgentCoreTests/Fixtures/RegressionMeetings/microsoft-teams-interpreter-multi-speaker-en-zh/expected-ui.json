@@ -1,0 +1,232 @@
+{
+  "displayModes" : {
+    "both" : [
+      {
+        "isFinal" : true,
+        "primaryText" : "在微软担任Copilot首席技术专家。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-0.0"
+        ],
+        "sourceText" : "Work at Microsoft as a Copilot principal technical specialist.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "在这个频道上，我们经常构建自己的自主代理，但今天，我非常兴奋地分享微软开发的一个代理——解释器代理。所以我，我只是，不，它确实有效。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-3.66",
+          "deepgram-transcribe-stream-8.61",
+          "deepgram-transcribe-stream-12.43",
+          "deepgram-transcribe-stream-17.08"
+        ],
+        "sourceText" : "Now on this channel, we often build our own autonomous agents, but today, I'm very excited to share an agent that Microsoft has built and that is the interpreter agent. So I I just No. It works.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "效果非常好，真的非常非常好。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-22.289999"
+        ],
+        "sourceText" : "works very well. It works very, very well.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "哇，太棒了。这个代理是为你的 Microsoft Teams 会议设计的，基本上可以实现多语言 Teams 会议的语音到语音翻译。现在每个人都可以用自己选择的语言发言，不必总是用英语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-22.05",
+          "deepgram-transcribe-stream-25.52",
+          "deepgram-transcribe-stream-33.92",
+          "deepgram-transcribe-stream-37.68"
+        ],
+        "sourceText" : "It Oh, wow. That's awesome. Now this agent is for your Microsoft Teams meetings and basically does speech to speech translations for your multilingual Teams meetings. Now everyone can speak in their language of choice. It doesn't have to necessarily be English all the time.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "我听了Jerome的发言，我知道Jerome是在说法语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-46.39"
+        ],
+        "sourceText" : "I listened to Jerome. I know that Jerome is speaking in French.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "我听他用西班牙语说话，也听莎伦说话。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-50.780003"
+        ],
+        "sourceText" : "I hear him in Spanish, and I listen to Sharon.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "也有西班牙语。而且他用的是你的声音。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-54.13"
+        ],
+        "sourceText" : "In Spanish too. And it's that he uses your voice.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "你的语气听起来就像你真的在说西班牙语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-57.95"
+        ],
+        "sourceText" : "Your tone of voice. It's like you're really speaking in Spanish.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "太不可思议了。丹尼，所以，丹尼。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-61.83"
+        ],
+        "sourceText" : "It's incredible. Danny So Danny.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "就是，去设置那里。对，然后让它使用你自己的声音。没错。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-72.740005"
+        ],
+        "sourceText" : "just just go to the settings Yeah. And just have it use your own voice. Absolutely.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "太棒了。我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-45.149998",
+          "deepgram-transcribe-stream-64.71",
+          "deepgram-transcribe-stream-66.47",
+          "deepgram-transcribe-stream-69.57"
+        ],
+        "sourceText" : "Incredible. You I think you selected a female voice. Right? Maybe yeah. That's what I'm hearing. I'm hearing a female voice. So",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "模拟你的声音。真是难以置信。是的。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-40.96",
+          "deepgram-transcribe-stream-42.43"
+        ],
+        "sourceText" : "Simulate your voice. It's unbelievable. Yes.",
+        "translationState" : "final"
+      }
+    ],
+    "translationOnly" : [
+      {
+        "isFinal" : true,
+        "primaryText" : "在微软担任Copilot首席技术专家。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-0.0"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "在这个频道上，我们经常构建自己的自主代理，但今天，我非常兴奋地分享微软开发的一个代理——解释器代理。所以我，我只是，不，它确实有效。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-3.66",
+          "deepgram-transcribe-stream-8.61",
+          "deepgram-transcribe-stream-12.43",
+          "deepgram-transcribe-stream-17.08"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "效果非常好，真的非常非常好。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-22.289999"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "哇，太棒了。这个代理是为你的 Microsoft Teams 会议设计的，基本上可以实现多语言 Teams 会议的语音到语音翻译。现在每个人都可以用自己选择的语言发言，不必总是用英语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-22.05",
+          "deepgram-transcribe-stream-25.52",
+          "deepgram-transcribe-stream-33.92",
+          "deepgram-transcribe-stream-37.68"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "我听了Jerome的发言，我知道Jerome是在说法语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-46.39"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "我听他用西班牙语说话，也听莎伦说话。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-50.780003"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "也有西班牙语。而且他用的是你的声音。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-54.13"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "你的语气听起来就像你真的在说西班牙语。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-57.95"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "太不可思议了。丹尼，所以，丹尼。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-61.83"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "就是，去设置那里。对，然后让它使用你自己的声音。没错。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-72.740005"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "太棒了。我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-45.149998",
+          "deepgram-transcribe-stream-64.71",
+          "deepgram-transcribe-stream-66.47",
+          "deepgram-transcribe-stream-69.57"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "模拟你的声音。真是难以置信。是的。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-40.96",
+          "deepgram-transcribe-stream-42.43"
+        ],
+        "translationState" : "final"
+      }
+    ]
+  }
+}

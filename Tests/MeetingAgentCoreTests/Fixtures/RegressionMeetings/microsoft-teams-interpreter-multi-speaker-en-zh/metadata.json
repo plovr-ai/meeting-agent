@@ -1,0 +1,28 @@
+{
+  "agendaTopics" : [
+
+  ],
+  "attendees" : [
+
+  ],
+  "audioURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/audio.wav",
+  "diagnosticsURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/diagnostics.json",
+  "endedAt" : "2026-05-07T12:08:32Z",
+  "id" : "DF69D4F7-2F0E-4AE2-B633-592839B94D15",
+  "meetingGoals" : [
+
+  ],
+  "meetingProgressJSONURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/meeting-progress.json",
+  "name" : "微软Teams会议多语言语音翻译代理介绍",
+  "performanceEventsURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/performance-events.jsonl",
+  "speechLocaleIdentifier" : "en-US",
+  "speechProvider" : "whisper",
+  "startedAt" : "2026-05-07T12:07:10Z",
+  "summaryJSONURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/summary.json",
+  "summaryMarkdownURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/summary.md",
+  "summaryURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/summary.md",
+  "transcriptJSONURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/transcript.json",
+  "transcriptURL" : "file:\/\/\/Users\/allan\/Library\/Application%20Support\/MeetingAgent\/Meetings\/DF69D4F7-2F0E-4AE2-B633-592839B94D15\/transcript.txt",
+  "transcriptionProviderID" : "deepgram-transcribe",
+  "transcriptionStatus" : "transcribed"
+}
