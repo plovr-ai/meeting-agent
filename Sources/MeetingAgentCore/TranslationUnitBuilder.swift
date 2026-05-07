@@ -68,9 +68,10 @@ public struct TranslationUnitBuilder {
             var sealedStableBlock = false
 
             if segment.isFinal {
+                let alreadyProcessedFinalText = processedFinalSegmentTextsByID[segment.id] == segment.text
                 let blocks = appendFinalSegment(segment, laneID: laneID, now: now)
                 stableBlocks.append(contentsOf: blocks)
-                sealedStableBlock = !blocks.isEmpty
+                sealedStableBlock = alreadyProcessedFinalText || !blocks.isEmpty
             }
 
             if !sealedStableBlock,

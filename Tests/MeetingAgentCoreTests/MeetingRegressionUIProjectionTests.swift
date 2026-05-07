@@ -2,10 +2,23 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class MeetingRegressionUIProjectionTests: XCTestCase {
+    @MainActor
     func testGoldenFixturesMatchExpectedDisplayState() throws {
         for fixtureURL in try RegressionFixtureFiles.allFixtureDirectories() {
             let manifest = try RegressionFixtureFiles.loadManifest(in: fixtureURL)
             guard manifest.purpose == .golden else { continue }
+            let expected = try RegressionFixtureFiles.loadExpectedUI(in: fixtureURL)
+            let turns = try RegressionFixtureFiles.projectStableTranslationTurns(in: fixtureURL, manifest: manifest)
+
+            try assertDisplayMode("both", expected: expected, turns: turns, displayMode: .both, fixtureID: manifest.id)
+            try assertDisplayMode("translationOnly", expected: expected, turns: turns, displayMode: .translationOnly, fixtureID: manifest.id)
+        }
+    }
+
+    @MainActor
+    func testAllFixturesExpectedUIDescribesCurrentProjection() throws {
+        for fixtureURL in try RegressionFixtureFiles.allFixtureDirectories() {
+            let manifest = try RegressionFixtureFiles.loadManifest(in: fixtureURL)
             let expected = try RegressionFixtureFiles.loadExpectedUI(in: fixtureURL)
             let turns = try RegressionFixtureFiles.projectStableTranslationTurns(in: fixtureURL, manifest: manifest)
 

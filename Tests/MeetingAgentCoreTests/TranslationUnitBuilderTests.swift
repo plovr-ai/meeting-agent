@@ -278,6 +278,28 @@ final class TranslationUnitBuilderTests: XCTestCase {
         XCTAssertTrue(second.stableBlocks.isEmpty)
     }
 
+    func testRepeatedFinalSegmentDoesNotEmitDuplicateLiveUnit() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumLiveWords: 3)
+        )
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            text: "We should keep this caption open",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false
+        )
+
+        let first = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 1))
+        let second = builder.apply(segments: [segment], now: Date(timeIntervalSince1970: 2))
+
+        XCTAssertEqual(first.liveUnits.count, 1)
+        XCTAssertTrue(second.liveUnits.isEmpty)
+        XCTAssertTrue(second.stableBlocks.isEmpty)
+    }
+
     func testRevisedFinalSegmentWithSameIDCanReplaceOpenBlockText() {
         var builder = TranslationUnitBuilder(sourceLocale: "en-US", targetLocale: "zh-CN")
         let first = TranscriptSegment(
