@@ -2,20 +2,20 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class TranslationUnitBuilderTests: XCTestCase {
-    func testFlushOpenBlocksSortsMultipleLanesDeterministically() {
+    func testSpeakerChangedBlocksEmitInConversationOrder() {
         var builder = TranslationUnitBuilder(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
             configuration: TranslationUnitBuilderConfiguration(minimumStableBlockCharacters: 5)
         )
-        _ = builder.apply(segments: [
-            TranscriptSegment(id: "segment-b", speaker: TranscriptSpeaker(identifier: "speaker-b"), text: "Second lane text", language: "en-US", isFinal: true),
-            TranscriptSegment(id: "segment-a", speaker: TranscriptSpeaker(identifier: "speaker-a"), text: "First lane text", language: "en-US", isFinal: true)
+        let output = builder.apply(segments: [
+            TranscriptSegment(id: "segment-b", speaker: TranscriptSpeaker(identifier: "speaker-b"), text: "Second lane text", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 1)),
+            TranscriptSegment(id: "segment-a", speaker: TranscriptSpeaker(identifier: "speaker-a"), text: "First lane text", language: "en-US", isFinal: true, createdAt: Date(timeIntervalSince1970: 2))
         ], now: Date(timeIntervalSince1970: 1))
 
-        let blocks = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 2))
+        let blocks = output.stableBlocks + builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 2))
 
-        XCTAssertEqual(blocks.map(\.sourceSegmentIDs), [["segment-a"], ["segment-b"]])
+        XCTAssertEqual(blocks.map(\.sourceSegmentIDs), [["segment-b"], ["segment-a"]])
     }
 
     func testLiveUnitUsesConfiguredSourceLocaleWhenSegmentLanguageIsMissing() {
@@ -156,6 +156,57 @@ final class TranslationUnitBuilderTests: XCTestCase {
         XCTAssertEqual(output.stableBlocks.first?.sourceText, "Select settings and about then choose public preview.")
         XCTAssertEqual(output.stableBlocks.first?.sourceSegmentIDs, ["segment-1", "segment-2"])
         XCTAssertEqual(output.stableBlocks.first?.boundaryReason, .providerHardBoundary)
+    }
+
+    func testSpeakerInterruptionSealsPreviousLaneBeforeSameSpeakerContinues() {
+        var builder = TranslationUnitBuilder(
+            sourceLocale: "en-US",
+            targetLocale: "zh-CN",
+            configuration: TranslationUnitBuilderConfiguration(minimumStableBlockCharacters: 5)
+        )
+        let speakerA = TranscriptSpeaker(identifier: "speaker-a")
+        let speakerB = TranscriptSpeaker(identifier: "speaker-b")
+
+        let firstA = TranscriptSegment(
+            id: "segment-a1",
+            speaker: speakerA,
+            text: "Alpha opens enough words",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let firstB = TranscriptSegment(
+            id: "segment-b1",
+            speaker: speakerB,
+            text: "Beta answers clearly",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let secondA = TranscriptSegment(
+            id: "segment-a2",
+            speaker: speakerA,
+            text: "Alpha continues separately",
+            language: "en-US",
+            isFinal: true,
+            speechFinal: false,
+            createdAt: Date(timeIntervalSince1970: 3)
+        )
+
+        let firstOutput = builder.apply(segments: [firstA], now: Date(timeIntervalSince1970: 1))
+        let secondOutput = builder.apply(segments: [firstB], now: Date(timeIntervalSince1970: 2))
+        let thirdOutput = builder.apply(segments: [secondA], now: Date(timeIntervalSince1970: 3))
+        let flushed = builder.flushOpenBlocks(now: Date(timeIntervalSince1970: 4))
+
+        XCTAssertTrue(firstOutput.stableBlocks.isEmpty)
+        XCTAssertEqual(secondOutput.stableBlocks.map(\.sourceSegmentIDs), [["segment-a1"]])
+        XCTAssertEqual(secondOutput.stableBlocks.first?.boundaryReason, .speakerChanged)
+        XCTAssertEqual(thirdOutput.stableBlocks.map(\.sourceSegmentIDs), [["segment-b1"]])
+        XCTAssertEqual(thirdOutput.stableBlocks.first?.boundaryReason, .speakerChanged)
+        XCTAssertEqual(flushed.map(\.sourceSegmentIDs), [["segment-a2"]])
+        XCTAssertEqual(flushed.first?.boundaryReason, .manualStop)
     }
 
     func testManualStopFlushSealsOpenBlock() {

@@ -35,12 +35,21 @@
         "isFinal" : true,
         "primaryText" : "哇，太棒了。这个代理是为你的 Microsoft Teams 会议设计的，基本上可以实现多语言 Teams 会议的语音到语音翻译。现在每个人都可以用自己选择的语言发言，不必总是用英语。",
         "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-22.05",
           "deepgram-transcribe-stream-25.52",
           "deepgram-transcribe-stream-33.92",
           "deepgram-transcribe-stream-37.68"
         ],
-        "sourceText" : "It Oh, wow. That's awesome. Now this agent is for your Microsoft Teams meetings and basically does speech to speech translations for your multilingual Teams meetings. Now everyone can speak in their language of choice. It doesn't have to necessarily be English all the time.",
+        "sourceText" : "Oh, wow. That's awesome. Now this agent is for your Microsoft Teams meetings and basically does speech to speech translations for your multilingual Teams meetings. Now everyone can speak in their language of choice. It doesn't have to necessarily be English all the time.",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "模拟你的声音。真是难以置信。是的。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-40.96",
+          "deepgram-transcribe-stream-42.43"
+        ],
+        "sourceText" : "Simulate your voice. It's unbelievable. Yes.",
         "translationState" : "final"
       },
       {
@@ -90,33 +99,22 @@
       },
       {
         "isFinal" : true,
+        "primaryText" : "我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-64.71",
+          "deepgram-transcribe-stream-66.47",
+          "deepgram-transcribe-stream-69.57"
+        ],
+        "sourceText" : "You I think you selected a female voice. Right? Maybe yeah. That's what I'm hearing. I'm hearing a female voice. So",
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
         "primaryText" : "就是，去设置那里。对，然后让它使用你自己的声音。没错。",
         "sourceSegmentIDs" : [
           "deepgram-transcribe-stream-72.740005"
         ],
         "sourceText" : "just just go to the settings Yeah. And just have it use your own voice. Absolutely.",
-        "translationState" : "final"
-      },
-      {
-        "isFinal" : true,
-        "primaryText" : "太棒了。我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
-        "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-45.149998",
-          "deepgram-transcribe-stream-64.71",
-          "deepgram-transcribe-stream-66.47",
-          "deepgram-transcribe-stream-69.57"
-        ],
-        "sourceText" : "Incredible. You I think you selected a female voice. Right? Maybe yeah. That's what I'm hearing. I'm hearing a female voice. So",
-        "translationState" : "final"
-      },
-      {
-        "isFinal" : true,
-        "primaryText" : "模拟你的声音。真是难以置信。是的。",
-        "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-40.96",
-          "deepgram-transcribe-stream-42.43"
-        ],
-        "sourceText" : "Simulate your voice. It's unbelievable. Yes.",
         "translationState" : "final"
       }
     ],
@@ -152,10 +150,18 @@
         "isFinal" : true,
         "primaryText" : "哇，太棒了。这个代理是为你的 Microsoft Teams 会议设计的，基本上可以实现多语言 Teams 会议的语音到语音翻译。现在每个人都可以用自己选择的语言发言，不必总是用英语。",
         "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-22.05",
           "deepgram-transcribe-stream-25.52",
           "deepgram-transcribe-stream-33.92",
           "deepgram-transcribe-stream-37.68"
+        ],
+        "translationState" : "final"
+      },
+      {
+        "isFinal" : true,
+        "primaryText" : "模拟你的声音。真是难以置信。是的。",
+        "sourceSegmentIDs" : [
+          "deepgram-transcribe-stream-40.96",
+          "deepgram-transcribe-stream-42.43"
         ],
         "translationState" : "final"
       },
@@ -201,17 +207,8 @@
       },
       {
         "isFinal" : true,
-        "primaryText" : "就是，去设置那里。对，然后让它使用你自己的声音。没错。",
+        "primaryText" : "我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
         "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-72.740005"
-        ],
-        "translationState" : "final"
-      },
-      {
-        "isFinal" : true,
-        "primaryText" : "太棒了。我觉得你选了一个女性声音，对吧？可能是的。我听到的是女性声音。",
-        "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-45.149998",
           "deepgram-transcribe-stream-64.71",
           "deepgram-transcribe-stream-66.47",
           "deepgram-transcribe-stream-69.57"
@@ -220,10 +217,9 @@
       },
       {
         "isFinal" : true,
-        "primaryText" : "模拟你的声音。真是难以置信。是的。",
+        "primaryText" : "就是，去设置那里。对，然后让它使用你自己的声音。没错。",
         "sourceSegmentIDs" : [
-          "deepgram-transcribe-stream-40.96",
-          "deepgram-transcribe-stream-42.43"
+          "deepgram-transcribe-stream-72.740005"
         ],
         "translationState" : "final"
       }

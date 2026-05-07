@@ -1,21 +1,14 @@
 {
-  "expectedAnalyzerStatus" : "fail",
-  "expectedFailures" : [
-    "first live translation exceeded latency budget",
-    "stable translations did not cover realtime final caption turns",
-    "stable translation projection mismatched visible caption turns",
-    "persisted translations do not match visible caption turn boundaries",
-    "realtime translation snapshots were published after stop"
-  ],
+  "expectedAnalyzerStatus" : "pass",
+  "expectedFailures" : [],
   "id" : "microsoft-teams-interpreter-multi-speaker-en-zh",
   "notes" : [
     "Multi-speaker dialogue from a Microsoft Teams interpreter demo.",
-    "Current transcript speaker identifiers and labels are empty, so speaker attribution collapses instead of separating participants.",
-    "The segment 'works very well. It works very, very well.' should be attributed to the second speaker.",
-    "Translation is visibly delayed: first live translation latency is above the 4 second budget.",
+    "Speaker identifiers and labels are preserved in the transcript; the segment 'works very well. It works very, very well.' is attributed to User B/deepgram-speaker-1.",
+    "The fixture covers speaker interruption boundaries where translation units must not merge the same speaker across another participant.",
     "Final transcript segments have speechFinal=false."
   ],
-  "purpose" : "knownFailure",
+  "purpose" : "golden",
   "scenario" : "multi-speaker-speaker-attribution-translation-latency",
   "sourceLocale" : "en-US",
   "sourceMeetingID" : "DF69D4F7-2F0E-4AE2-B633-592839B94D15",

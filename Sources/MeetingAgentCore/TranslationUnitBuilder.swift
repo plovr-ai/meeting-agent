@@ -38,6 +38,7 @@ public struct TranslationUnitBuilder {
     private var revisionsBySegmentID: [String: Int] = [:]
     private var processedFinalSegmentTextsByID: [String: String] = [:]
     private var chunkersByLaneID: [TranslationLaneID: LiveCaptionChunker] = [:]
+    private var activeLaneID: TranslationLaneID?
 
     public init(
         sourceLocale: String,
@@ -95,11 +96,9 @@ public struct TranslationUnitBuilder {
             return $0.speakerID < $1.speakerID
         }
         for laneID in lanes {
-            guard var chunker = chunkersByLaneID[laneID] else { continue }
-            let updates = chunker.flushOpenChunk(reason: LiveCaptionFreezeReason.manualStop)
-            chunkersByLaneID[laneID] = chunker
-            blocks.append(contentsOf: updates.compactMap { stableBlock(from: $0.turn, now: now) })
+            blocks.append(contentsOf: flushOpenBlock(for: laneID, reason: .manualStop, now: now))
         }
+        activeLaneID = nil
         return blocks
     }
 
@@ -131,8 +130,27 @@ public struct TranslationUnitBuilder {
     ) -> [StableTranslationBlock] {
         guard processedFinalSegmentTextsByID[segment.id] != segment.text else { return [] }
         processedFinalSegmentTextsByID[segment.id] = segment.text
+
+        var blocks: [StableTranslationBlock] = []
+        if let activeLaneID, activeLaneID != laneID {
+            blocks.append(contentsOf: flushOpenBlock(for: activeLaneID, reason: .speakerChanged, now: now))
+        }
+        activeLaneID = laneID
+
         var chunker = chunkersByLaneID[laneID] ?? makeChunker()
         let updates = chunker.append(segment)
+        chunkersByLaneID[laneID] = chunker
+        blocks.append(contentsOf: updates.compactMap { stableBlock(from: $0.turn, now: now) })
+        return blocks
+    }
+
+    private mutating func flushOpenBlock(
+        for laneID: TranslationLaneID,
+        reason: LiveCaptionFreezeReason,
+        now: Date
+    ) -> [StableTranslationBlock] {
+        guard var chunker = chunkersByLaneID[laneID] else { return [] }
+        let updates = chunker.flushOpenChunk(reason: reason)
         chunkersByLaneID[laneID] = chunker
         return updates.compactMap { stableBlock(from: $0.turn, now: now) }
     }
