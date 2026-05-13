@@ -82,7 +82,11 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let liveCaptionPipelineUsesUnitTranslation: Bool
     private let processMonitor = MeetingProcessMonitor()
-    private var activeTarget: AudioCaptureTarget?
+    private var activeSource: AudioCaptureSource?
+
+    private var activeTarget: AudioCaptureTarget? {
+        activeSource?.processTarget
+    }
 
     struct ActiveCaptionApplyContext: Equatable {
         let sequence: Int
@@ -217,7 +221,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
         pendingCandidate = nil
-        activeTarget = candidate
+        activeSource = .process(candidate)
         activeMeetingID = record.id
         statusText = "Recording \(record.name)"
     }
@@ -305,7 +309,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         localeIdentifier: String?
     ) async throws {
         resetLiveCaptionStore()
-        activeTarget = candidate
+        activeSource = .process(candidate)
         activeMeetingID = record.id
         pendingCandidate = nil
         let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
@@ -323,7 +327,45 @@ public final class MeetingAgentViewModel: ObservableObject {
                let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
                 meetings[index] = stopped
             }
-            activeTarget = nil
+            activeSource = nil
+            activeMeetingID = nil
+            throw error
+        }
+        statusText = "Recording \(record.name)"
+    }
+
+    public func startOfflineMicrophoneRecording(
+        name: String = "Offline Discussion",
+        localeIdentifier: String? = nil,
+        startedAt: Date = Date()
+    ) async throws {
+        let source = AudioCaptureSource.microphone(displayName: "Computer Microphone")
+        var record = try recorder.prepareRecord(named: name, source: source, startedAt: startedAt)
+        record.meetingGoal = meetingGoal
+        meetings.insert(record, at: 0)
+        selectedMeetingID = record.id
+        persistMeetingGoalForSelectedMeeting()
+        resetLiveCaptionStore()
+        activeSource = source
+        activeMeetingID = record.id
+        pendingCandidate = nil
+
+        let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
+        var recordingConfiguration = speechConfiguration
+        recordingConfiguration.localeIdentifier = recordingLocaleIdentifier
+        do {
+            try await recorder.startRecording(
+                source: source,
+                record: record,
+                speechConfiguration: recordingConfiguration
+            )
+            refreshMeetingFromStore(record.id)
+        } catch {
+            if let stopped = try? recorder.stopRecording(),
+               let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+                meetings[index] = stopped
+            }
+            activeSource = nil
             activeMeetingID = nil
             throw error
         }
@@ -469,7 +511,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         flushLiveCaptionPipeline(reason: .manualStop)
         startTranslationExperienceFinalizationAfterStop()
         allowActiveTargetReprompt()
-        activeTarget = nil
+        activeSource = nil
         activeMeetingID = nil
         statusText = "Idle"
     }
@@ -490,7 +532,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         await finalizeTranslationExperienceAfterStop()
         allowActiveTargetReprompt()
-        activeTarget = nil
+        activeSource = nil
         activeMeetingID = nil
 
         guard let stoppedID else {
@@ -780,27 +822,28 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func updateRecordingStatus() {
-        guard let activeTarget, let status = recorder.currentCaptureStatus else { return }
+        guard let activeSource, let status = recorder.currentCaptureStatus else { return }
+        let displayName = activeSource.displayName
         switch status {
         case .preparingCapture:
-            statusText = "Preparing capture for \(activeTarget.displayName)"
+            statusText = "Preparing capture for \(displayName)"
         case .recording:
-            statusText = "Recording \(activeTarget.displayName)"
+            statusText = "Recording \(displayName)"
         case .recordingNoAudioDetected:
-            statusText = "Recording \(activeTarget.displayName), but no audio detected"
+            statusText = "Recording \(displayName), but no audio detected"
         case .recordingSilentAudio:
-            statusText = "Recording silent audio from \(activeTarget.displayName)"
+            statusText = "Recording silent audio from \(displayName)"
         case .targetProcessEnded:
-            statusText = "Target process ended: \(activeTarget.displayName)"
+            statusText = "Target process ended: \(displayName)"
         case .captureFailed:
-            statusText = "Capture failed: \(activeTarget.displayName)"
+            statusText = "Capture failed: \(displayName)"
         case .recordingSaved:
-            statusText = "Recording saved: \(activeTarget.displayName)"
+            statusText = "Recording saved: \(displayName)"
         }
     }
 
     private func stopRecordingIfTargetProcessEnded(at endedAt: Date = Date()) -> Bool {
-        guard let activeTarget else { return false }
+        guard let activeSource, case .process(let activeTarget) = activeSource else { return false }
         let targets = processTargetsProvider()
         guard processMonitor.hasProcessEnded(processID: activeTarget.processID, in: targets) else {
             return false
@@ -813,7 +856,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         flushLiveCaptionPipeline(reason: .manualStop)
         startTranslationExperienceFinalizationAfterStop()
         statusText = "Target process ended: \(activeTarget.displayName)"
-        self.activeTarget = nil
+        self.activeSource = nil
         activeMeetingID = nil
         return true
     }

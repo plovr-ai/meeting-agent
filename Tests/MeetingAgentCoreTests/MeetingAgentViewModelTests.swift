@@ -174,6 +174,48 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.transcriberFactory.requests.count, 2)
     }
 
+    func testStartOfflineMicrophoneRecordingCreatesMeetingWithoutCandidate() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [] }
+        )
+
+        try await viewModel.startOfflineMicrophoneRecording(startedAt: Date(timeIntervalSince1970: 100))
+
+        XCTAssertNil(viewModel.pendingCandidate)
+        XCTAssertEqual(viewModel.selectedMeeting?.name, "Offline Discussion")
+        XCTAssertEqual(viewModel.activeMeetingID, viewModel.selectedMeeting?.id)
+        XCTAssertEqual(viewModel.statusText, "Recording Offline Discussion")
+        XCTAssertEqual(fixture.session.startedSources, [.microphone(displayName: "Computer Microphone")])
+    }
+
+    func testProcessEndedPollingDoesNotStopMicrophoneRecording() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var targets: [AudioCaptureTarget] = []
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { targets }
+        )
+
+        try await viewModel.startOfflineMicrophoneRecording(startedAt: Date(timeIntervalSince1970: 100))
+        fixture.session.frameBuffer.push(AudioFrame(
+            pcm: Data([0, 64]),
+            sampleRate: 16_000,
+            channelCount: 1,
+            timestampNanos: 1
+        ))
+        targets = []
+        viewModel.drainRecordingFrames(endedAt: Date(timeIntervalSince1970: 200))
+
+        XCTAssertTrue(viewModel.isRecording)
+        XCTAssertEqual(viewModel.statusText, "Recording Computer Microphone")
+    }
+
     func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
