@@ -30,6 +30,8 @@ public struct CaptureDiagnostics: Codable, Equatable {
     public let startupReplayFrameCount: Int
     public let startupReplayDurationSeconds: Double
     public let startupReplayDroppedFrameCount: Int
+    public let sourceKind: AudioCaptureSourceKind
+    public let sourceDisplayName: String
     public let targetProcessID: pid_t
     public let targetDisplayName: String
     public let endedReason: CaptureEndedReason?
@@ -49,6 +51,8 @@ public struct CaptureDiagnostics: Codable, Equatable {
         startupReplayFrameCount: Int = 0,
         startupReplayDurationSeconds: Double = 0,
         startupReplayDroppedFrameCount: Int = 0,
+        sourceKind: AudioCaptureSourceKind = .process,
+        sourceDisplayName: String? = nil,
         targetProcessID: pid_t,
         targetDisplayName: String,
         endedReason: CaptureEndedReason?,
@@ -67,6 +71,8 @@ public struct CaptureDiagnostics: Codable, Equatable {
         self.startupReplayFrameCount = startupReplayFrameCount
         self.startupReplayDurationSeconds = startupReplayDurationSeconds
         self.startupReplayDroppedFrameCount = startupReplayDroppedFrameCount
+        self.sourceKind = sourceKind
+        self.sourceDisplayName = sourceDisplayName ?? targetDisplayName
         self.targetProcessID = targetProcessID
         self.targetDisplayName = targetDisplayName
         self.endedReason = endedReason
@@ -87,6 +93,8 @@ public struct CaptureDiagnostics: Codable, Equatable {
         case startupReplayFrameCount
         case startupReplayDurationSeconds
         case startupReplayDroppedFrameCount
+        case sourceKind
+        case sourceDisplayName
         case targetProcessID
         case targetDisplayName
         case endedReason
@@ -95,6 +103,9 @@ public struct CaptureDiagnostics: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedTargetDisplayName = try container.decode(String.self, forKey: .targetDisplayName)
+        let decodedSourceKind = try container.decodeIfPresent(AudioCaptureSourceKind.self, forKey: .sourceKind) ?? .process
+        let decodedSourceDisplayName = try container.decodeIfPresent(String.self, forKey: .sourceDisplayName) ?? decodedTargetDisplayName
         self.init(
             framesCaptured: try container.decode(Int.self, forKey: .framesCaptured),
             durationSeconds: try container.decode(Double.self, forKey: .durationSeconds),
@@ -109,8 +120,10 @@ public struct CaptureDiagnostics: Codable, Equatable {
             startupReplayFrameCount: try container.decodeIfPresent(Int.self, forKey: .startupReplayFrameCount) ?? 0,
             startupReplayDurationSeconds: try container.decodeIfPresent(Double.self, forKey: .startupReplayDurationSeconds) ?? 0,
             startupReplayDroppedFrameCount: try container.decodeIfPresent(Int.self, forKey: .startupReplayDroppedFrameCount) ?? 0,
+            sourceKind: decodedSourceKind,
+            sourceDisplayName: decodedSourceDisplayName,
             targetProcessID: try container.decode(pid_t.self, forKey: .targetProcessID),
-            targetDisplayName: try container.decode(String.self, forKey: .targetDisplayName),
+            targetDisplayName: decodedTargetDisplayName,
             endedReason: try container.decodeIfPresent(CaptureEndedReason.self, forKey: .endedReason),
             status: try container.decode(CaptureStatus.self, forKey: .status)
         )
@@ -125,7 +138,7 @@ public struct CaptureDiagnostics: Codable, Equatable {
 public final class CaptureDiagnosticsTracker {
     private static let silenceThreshold = 0.01
 
-    private let target: AudioCaptureTarget
+    private let source: AudioCaptureSource
     private var framesCaptured = 0
     private var durationSeconds = 0.0
     private var lastFrameAt: Date?
@@ -143,8 +156,12 @@ public final class CaptureDiagnosticsTracker {
     private var endedReason: CaptureEndedReason?
     private var status: CaptureStatus = .preparingCapture
 
-    public init(target: AudioCaptureTarget) {
-        self.target = target
+    public convenience init(target: AudioCaptureTarget) {
+        self.init(source: .process(target))
+    }
+
+    public init(source: AudioCaptureSource) {
+        self.source = source
     }
 
     public func markRecording(sampleRate: Double, channelCount: Int) {
@@ -235,8 +252,10 @@ public final class CaptureDiagnosticsTracker {
             startupReplayFrameCount: startupReplayFrameCount,
             startupReplayDurationSeconds: startupReplayDurationSeconds,
             startupReplayDroppedFrameCount: startupReplayDroppedFrameCount,
-            targetProcessID: target.processID,
-            targetDisplayName: target.displayName,
+            sourceKind: source.kind,
+            sourceDisplayName: source.displayName,
+            targetProcessID: source.processID,
+            targetDisplayName: source.displayName,
             endedReason: endedReason,
             status: status
         )

@@ -158,6 +158,19 @@ final class CaptureDiagnosticsTests: XCTestCase {
         XCTAssertEqual(decoded, diagnostics)
     }
 
+    func testMicrophoneDiagnosticsExposeSourceMetadata() {
+        let tracker = CaptureDiagnosticsTracker(source: .microphone(displayName: "Computer Microphone"))
+
+        tracker.markRecording(sampleRate: 16_000, channelCount: 1)
+        tracker.finish(endedReason: .saved)
+        let snapshot = tracker.snapshot()
+
+        XCTAssertEqual(snapshot.sourceKind, .microphone)
+        XCTAssertEqual(snapshot.sourceDisplayName, "Computer Microphone")
+        XCTAssertEqual(snapshot.targetProcessID, AudioCaptureSource.microphoneProcessID)
+        XCTAssertEqual(snapshot.targetDisplayName, "Computer Microphone")
+    }
+
     func testDiagnosticsDecodesLegacyJSONWithoutStartupReplayFields() throws {
         let data = Data("""
         {
@@ -182,6 +195,35 @@ final class CaptureDiagnosticsTests: XCTestCase {
         XCTAssertEqual(decoded.startupReplayFrameCount, 0)
         XCTAssertEqual(decoded.startupReplayDurationSeconds, 0)
         XCTAssertEqual(decoded.startupReplayDroppedFrameCount, 0)
+    }
+
+    func testDecodesLegacyDiagnosticsWithoutSourceFields() throws {
+        let json = """
+        {
+          "framesCaptured": 0,
+          "durationSeconds": 0,
+          "lastFrameAt": null,
+          "sampleRate": 0,
+          "channelCount": 0,
+          "averageLevel": 0,
+          "peakLevel": 0,
+          "silentDurationSeconds": 0,
+          "bufferBacklog": 0,
+          "droppedFrameCount": 0,
+          "startupReplayFrameCount": 0,
+          "startupReplayDurationSeconds": 0,
+          "startupReplayDroppedFrameCount": 0,
+          "targetProcessID": 42,
+          "targetDisplayName": "Zoom",
+          "endedReason": "saved",
+          "status": "recordingNoAudioDetected"
+        }
+        """.data(using: .utf8)!
+
+        let diagnostics = try JSONDecoder.meetingAgent.decode(CaptureDiagnostics.self, from: json)
+
+        XCTAssertEqual(diagnostics.sourceKind, .process)
+        XCTAssertEqual(diagnostics.sourceDisplayName, "Zoom")
     }
 
     private func int16PCM(_ samples: [Int16]) -> Data {
