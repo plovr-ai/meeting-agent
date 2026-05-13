@@ -319,6 +319,14 @@ public final class LiveCaptionPipeline {
         if let boundaryReason = turn.boundaryReason {
             metadata["boundaryReason"] = boundaryReason.rawValue
         }
+        if let speakerID = turn.speaker.identifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !speakerID.isEmpty {
+            metadata["speakerID"] = speakerID
+        }
+        if let speakerLabel = turn.speaker.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !speakerLabel.isEmpty {
+            metadata["speakerLabel"] = speakerLabel
+        }
         return metadata
     }
 

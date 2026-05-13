@@ -22,6 +22,7 @@ public final class MeetingRecorder {
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
     private var isStartingTranscriber = false
+    private let speakerAudioEvidenceStore = SpeakerAudioEvidenceStore()
     // Keep roughly 30 seconds of common 10 ms Core Audio callbacks while hosted STT connects.
     private let pendingTranscriptionFrameLimit = 3_000
 
@@ -177,6 +178,7 @@ public final class MeetingRecorder {
         )
         pendingTranscriptionFrames = []
         isStartingTranscriber = false
+        speakerAudioEvidenceStore.reset()
         try store.save(updatedRecord)
 
         let session: AudioCaptureSessionManaging
@@ -299,6 +301,7 @@ public final class MeetingRecorder {
             bufferBacklog: bufferBacklog,
             droppedFrameCount: droppedFrameCount
         )
+        speakerAudioEvidenceStore.append(frames)
         for frame in frames {
             try writer?.append(frame)
             if transcriber != nil {
@@ -311,6 +314,18 @@ public final class MeetingRecorder {
 
     public func drainTranscriptUpdates() -> [TranscriptSegmentAccumulationResult] {
         transcriptUpdateSink?.drainResults() ?? []
+    }
+
+    public func speakerEvidenceClip(
+        for segments: [TranscriptSegment],
+        to destinationURL: URL,
+        minimumDurationSeconds: Double
+    ) throws -> SpeakerAudioEvidenceClip? {
+        try speakerAudioEvidenceStore.writeClip(
+            for: segments,
+            to: destinationURL,
+            minimumDurationSeconds: minimumDurationSeconds
+        )
     }
 
     @discardableResult
@@ -382,6 +397,7 @@ public final class MeetingRecorder {
         )
         performanceEventLogger = nil
         activeRecord = nil
+        speakerAudioEvidenceStore.reset()
         state = .idle
         return record
     }

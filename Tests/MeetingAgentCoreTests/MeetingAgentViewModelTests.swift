@@ -192,6 +192,44 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.session.startedSources, [.microphone(displayName: "Computer Microphone")])
     }
 
+    func testSpeakerIdentityResolutionUpdatesLiveCaptionDisplayLabelWithoutChangingSpeakerID() async throws {
+        let viewModel = MeetingAgentViewModel()
+        let segment = TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "deepgram-speaker-2"),
+            startTimeSeconds: 0,
+            endTimeSeconds: 3,
+            text: "hello from the same person",
+            language: "en-US",
+            isFinal: true
+        )
+        await viewModel.applyTranscriptAccumulationResultsForTesting([
+            TranscriptSegmentAccumulationResult(
+                document: TranscriptDocument(segments: [segment]),
+                changedSegmentIDs: ["segment-1"],
+                plainTextReplacement: nil,
+                source: .realtime
+            )
+        ])
+
+        viewModel.applySpeakerIdentityResolutionForTesting(SpeakerIdentityResolution(
+            localSpeaker: TranscriptSpeaker(identifier: "deepgram-speaker-2"),
+            profile: SpeakerProfile(
+                displayName: "Allan",
+                anonymousName: "Speaker 1",
+                confirmationStatus: .confirmed,
+                embeddings: []
+            ),
+            decision: .matched,
+            confidence: 0.91,
+            secondBestConfidence: nil,
+            displayLabel: "Allan"
+        ))
+
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.speaker.identifier, "deepgram-speaker-2")
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.speaker.label, "Allan")
+    }
+
     func testProcessEndedPollingDoesNotStopMicrophoneRecording() async throws {
         let fixture = try ViewModelRecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

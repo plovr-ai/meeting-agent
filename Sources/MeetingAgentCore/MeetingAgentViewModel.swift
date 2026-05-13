@@ -56,6 +56,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var activeCaptionTranslationGeneration = 0
     private var liveCaptionReplayTask: Task<Void, Never>?
     private var liveCaptionReplaySequence = 0
+    private var realtimeSpeakerIdentificationRuntime: RealtimeSpeakerIdentificationRuntime?
+    private var speakerIdentityMap: [String: SpeakerIdentityResolution] = [:]
     private var activeCaptionDocumentSignature: String?
     private var selectedMeetingReplaySignature: SelectedMeetingReplaySignature?
     private var selectedMeetingReplayFileSignature: SelectedMeetingTranscriptFileSignature?
@@ -223,6 +225,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         pendingCandidate = nil
         activeSource = .process(candidate)
         activeMeetingID = record.id
+        startRealtimeSpeakerIdentificationRuntime()
         statusText = "Recording \(record.name)"
     }
 
@@ -311,6 +314,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         resetLiveCaptionStore()
         activeSource = .process(candidate)
         activeMeetingID = record.id
+        startRealtimeSpeakerIdentificationRuntime()
         pendingCandidate = nil
         let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
         var recordingConfiguration = speechConfiguration
@@ -348,6 +352,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         resetLiveCaptionStore()
         activeSource = source
         activeMeetingID = record.id
+        startRealtimeSpeakerIdentificationRuntime()
         pendingCandidate = nil
 
         let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
@@ -510,6 +515,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         flushLiveCaptionPipeline(reason: .manualStop)
         startTranslationExperienceFinalizationAfterStop()
+        stopRealtimeSpeakerIdentificationRuntime()
         allowActiveTargetReprompt()
         activeSource = nil
         activeMeetingID = nil
@@ -531,6 +537,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         await finalizeTranslationExperienceAfterStop()
+        stopRealtimeSpeakerIdentificationRuntime()
         allowActiveTargetReprompt()
         activeSource = nil
         activeMeetingID = nil
@@ -1386,6 +1393,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         await applyTranscriptAccumulationResultsToLiveCaptions(results, context: context)
     }
 
+    func applySpeakerIdentityResolutionForTesting(_ resolution: SpeakerIdentityResolution) {
+        applySpeakerIdentityResolution(resolution)
+    }
+
     private func applyTranscriptAccumulationResultsToLiveCaptions(
         _ results: [TranscriptSegmentAccumulationResult],
         context: ActiveCaptionApplyContext
@@ -1418,6 +1429,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         if liveCaptionPipelineUsesUnitTranslation {
             startTranslationExperienceApply(document: latest.document, context: context)
         }
+        submitRealtimeSpeakerIdentification(
+            document: latest.document,
+            changedSegmentIDs: Array(Set(results.flatMap(\.changedSegmentIDs)))
+        )
         startRealtimeCaptionTranslationPumpIfNeeded(
             context: currentActiveCaptionTranslationContext(),
             snapshot: snapshot
@@ -1728,9 +1743,94 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func publishLiveCaptionPipelineSnapshotImmediately(_ snapshot: LiveCaptionPipelineSnapshot) {
-        liveCaptionTurns = snapshot.turns
+        liveCaptionTurns = applyingSpeakerIdentityLabels(to: snapshot.turns)
         meetingProgressHealth.caption = snapshot.captionHealth
         meetingProgressHealth.translation = snapshot.translationHealth
+    }
+
+    private func startRealtimeSpeakerIdentificationRuntime() {
+        speakerIdentityMap = [:]
+        realtimeSpeakerIdentificationRuntime = RealtimeSpeakerIdentificationRuntime(
+            embeddingProvider: SidecarSpeakerEmbeddingProvider(),
+            performanceEventLogger: currentPerformanceEventLogger(),
+            clipProvider: { [weak self] segments, destinationURL, minimumDurationSeconds in
+                guard let self else { return nil }
+                return try self.recorder.speakerEvidenceClip(
+                    for: segments,
+                    to: destinationURL,
+                    minimumDurationSeconds: minimumDurationSeconds
+                )
+            },
+            resolutionHandler: { [weak self] resolution in
+                self?.applySpeakerIdentityResolution(resolution)
+            }
+        )
+    }
+
+    private func stopRealtimeSpeakerIdentificationRuntime() {
+        realtimeSpeakerIdentificationRuntime?.reset()
+        realtimeSpeakerIdentificationRuntime = nil
+    }
+
+    private func submitRealtimeSpeakerIdentification(
+        document: TranscriptDocument,
+        changedSegmentIDs: [String]
+    ) {
+        guard let realtimeSpeakerIdentificationRuntime,
+              activeMeetingID != nil,
+              !changedSegmentIDs.isEmpty
+        else {
+            return
+        }
+        let meetingID = activeMeetingID
+        Task { [weak realtimeSpeakerIdentificationRuntime] in
+            await realtimeSpeakerIdentificationRuntime?.submit(
+                document: document,
+                changedSegmentIDs: changedSegmentIDs,
+                meetingID: meetingID
+            )
+        }
+    }
+
+    private func applySpeakerIdentityResolution(_ resolution: SpeakerIdentityResolution) {
+        guard let speakerID = resolution.localSpeaker.identifier else { return }
+        speakerIdentityMap[speakerID] = resolution
+        let updatedTurns = applyingSpeakerIdentityLabels(to: liveCaptionTurns)
+        let visibleTurnCount = updatedTurns.filter { $0.speaker.identifier == speakerID }.count
+        liveCaptionTurns = updatedTurns
+        currentPerformanceEventLogger()?.log(
+            "speaker_identity_label_visible",
+            segmentID: speakerID,
+            metadata: [
+                "speakerID": speakerID,
+                "profileID": resolution.profile.id.uuidString,
+                "decision": resolution.decision.rawValue,
+                "displayLabel": resolution.displayLabel,
+                "confidence": Self.metricString(resolution.confidence),
+                "visibleTurnCount": String(visibleTurnCount)
+            ]
+        )
+        objectWillChange.send()
+    }
+
+    private func applyingSpeakerIdentityLabels(to turns: [LiveCaptionTurn]) -> [LiveCaptionTurn] {
+        turns.map { turn in
+            guard let speakerID = turn.speaker.identifier,
+                  let resolution = speakerIdentityMap[speakerID]
+            else {
+                return turn
+            }
+            var updated = turn
+            updated.speaker = TranscriptSpeaker(identifier: speakerID, label: resolution.displayLabel)
+            return updated
+        }
+    }
+
+    private static func metricString(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(format: "%.3f", value)
     }
 
     private func logCaptionSnapshotPublication(

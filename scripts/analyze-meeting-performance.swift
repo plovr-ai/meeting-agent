@@ -71,13 +71,16 @@ private let fractionalSecondsDateFormatter: ISO8601DateFormatter = {
 private let wholeSecondsDateFormatter = ISO8601DateFormatter()
 
 private func usage() -> Never {
-    fputs("Usage: swift scripts/analyze-meeting-performance.swift [--assert-translation-e2e] <meeting-directory|performance-events.jsonl>\n", stderr)
+    fputs("Usage: swift scripts/analyze-meeting-performance.swift [--assert-translation-e2e] [--assert-speaker-identification-e2e] <meeting-directory|performance-events.jsonl>\n", stderr)
     exit(2)
 }
 
 let rawArguments = Array(CommandLine.arguments.dropFirst())
 let assertTranslationE2E = rawArguments.contains("--assert-translation-e2e")
-let pathArguments = rawArguments.filter { $0 != "--assert-translation-e2e" }
+let assertSpeakerIdentificationE2E = rawArguments.contains("--assert-speaker-identification-e2e")
+let pathArguments = rawArguments.filter {
+    $0 != "--assert-translation-e2e" && $0 != "--assert-speaker-identification-e2e"
+}
 guard pathArguments.count == 1 else {
     usage()
 }
@@ -119,7 +122,8 @@ let analyzer = MeetingPerformanceAnalyzer(
     translationResultRecords: translationResultRecords
 )
 print(analyzer.report(inputPath: eventsURL.path))
-if assertTranslationE2E && !analyzer.e2eTranslationPassed() {
+if assertTranslationE2E && !analyzer.e2eTranslationPassed()
+    || assertSpeakerIdentificationE2E && !analyzer.e2eSpeakerIdentificationPassed() {
     exit(1)
 }
 
@@ -167,6 +171,7 @@ private func readTranslationResultRecords(from url: URL) -> [TranslationResultRe
 struct MeetingPerformanceAnalyzer {
     private static let firstLiveTranslationLatencyBudgetSeconds = 4.0
     private static let minimumStableTranslationCoveragePercent = 80.0
+    private static let firstSpeakerIdentityVisibleLatencyBudgetSeconds = 4.0
 
     let allEvents: [PerformanceEvent]
     let translationResultRecordCount: Int
@@ -260,6 +265,9 @@ struct MeetingPerformanceAnalyzer {
         lines.append("End-to-End Translation Validation")
         lines.append(contentsOf: e2eTranslationValidationLines())
         lines.append("")
+        lines.append("End-to-End Speaker Identification Validation")
+        lines.append(contentsOf: e2eSpeakerIdentificationValidationLines())
+        lines.append("")
         lines.append("Process Metrics")
         lines.append("First caption path: \(firstCaptionPathText())")
         lines.append("Caption visible lag p50/p95/max: \(format(stats: captionVisiblePipelineStats()))")
@@ -283,6 +291,10 @@ struct MeetingPerformanceAnalyzer {
 
     func e2eTranslationPassed() -> Bool {
         e2eTranslationValidation().passed
+    }
+
+    func e2eSpeakerIdentificationPassed() -> Bool {
+        e2eSpeakerIdentificationValidation().passed
     }
 
     private func replayOverheadLines() -> [String] {
@@ -693,6 +705,132 @@ struct MeetingPerformanceAnalyzer {
 
     private func e2eTranslationValidationLines() -> [String] {
         e2eTranslationValidation().lines
+    }
+
+    private func e2eSpeakerIdentificationValidationLines() -> [String] {
+        e2eSpeakerIdentificationValidation().lines
+    }
+
+    private func e2eSpeakerIdentificationValidation() -> (passed: Bool, lines: [String]) {
+        let speakerCaptionEvents = realtimeSpeakerCaptionEvents()
+        let scheduled = speakerIdentityEvents("speaker_identity_scheduled")
+        let embeddingStarted = speakerIdentityEvents("speaker_identity_embedding_started")
+        let embeddingFinished = speakerIdentityEvents("speaker_identity_embedding_finished")
+        let embeddingFailed = speakerIdentityEvents("speaker_identity_embedding_failed")
+        let clipUnavailable = speakerIdentityEvents("speaker_identity_clip_unavailable")
+        let resolved = speakerIdentityEvents("speaker_identity_resolved")
+        let labelVisible = speakerIdentityEvents("speaker_identity_label_visible")
+        let firstVisibleLatency = firstSpeakerIdentityVisibleLatency()
+        var failures: [String] = []
+
+        if speakerCaptionEvents.isEmpty
+            && scheduled.isEmpty
+            && embeddingStarted.isEmpty
+            && embeddingFinished.isEmpty
+            && embeddingFailed.isEmpty
+            && clipUnavailable.isEmpty
+            && resolved.isEmpty
+            && labelVisible.isEmpty {
+            return (false, [
+                "E2E Speaker Identification Status: SKIP",
+                "Realtime Speaker Caption Events: 0",
+                "Speaker Identity Scheduled Events: 0",
+                "Speaker Identity Embedding Started Events: 0",
+                "Speaker Identity Embedding Finished Events: 0",
+                "Speaker Identity Embedding Failed Events: 0",
+                "Speaker Identity Resolved Events: 0",
+                "Speaker Identity Label Visible Events: 0",
+                "First Speaker Identity Visible Latency: unavailable"
+            ])
+        }
+
+        if speakerCaptionEvents.isEmpty {
+            failures.append("Failure: no realtime captions with speaker IDs were visible")
+        }
+        if !speakerCaptionEvents.isEmpty && scheduled.isEmpty {
+            failures.append("Failure: speaker captions were visible but identity was never scheduled")
+        }
+        if !scheduled.isEmpty && embeddingStarted.isEmpty {
+            failures.append("Failure: speaker identity was scheduled but embedding never started")
+        }
+        if !embeddingStarted.isEmpty && embeddingFinished.isEmpty && embeddingFailed.isEmpty {
+            failures.append("Failure: speaker identity embedding started but never finished or failed")
+        }
+        if !embeddingFailed.isEmpty {
+            failures.append("Failure: speaker identity embedding failed")
+        }
+        if !clipUnavailable.isEmpty {
+            failures.append("Failure: speaker identity audio evidence clip was unavailable")
+        }
+        if !embeddingFinished.isEmpty && resolved.isEmpty {
+            failures.append("Failure: speaker identity embedding finished but no identity resolved")
+        }
+        if !resolved.isEmpty && labelVisible.isEmpty {
+            failures.append("Failure: speaker identity resolved but never became visible")
+        }
+        if labelVisible.contains(where: { Int($0.metadata["visibleTurnCount"] ?? "0") ?? 0 <= 0 }) {
+            failures.append("Failure: speaker identity visible event did not update any visible turns")
+        }
+        if let firstVisibleLatency,
+           firstVisibleLatency > Self.firstSpeakerIdentityVisibleLatencyBudgetSeconds {
+            failures.append("Failure: first speaker identity visible latency exceeded budget")
+        }
+
+        let passed = failures.isEmpty && !speakerCaptionEvents.isEmpty && !labelVisible.isEmpty
+        let status = passed ? "PASS" : "FAIL"
+        let lines = [
+            "E2E Speaker Identification Status: \(status)",
+            "Realtime Speaker Caption Events: \(speakerCaptionEvents.count)",
+            "Speaker Identity Scheduled Events: \(scheduled.count)",
+            "Speaker Identity Embedding Started Events: \(embeddingStarted.count)",
+            "Speaker Identity Embedding Finished Events: \(embeddingFinished.count)",
+            "Speaker Identity Embedding Failed Events: \(embeddingFailed.count)",
+            "Speaker Identity Resolved Events: \(resolved.count)",
+            "Speaker Identity Label Visible Events: \(labelVisible.count)",
+            "First Speaker Identity Visible Latency: \(format(duration: firstVisibleLatency))"
+        ] + failures
+        return (passed, lines)
+    }
+
+    private func realtimeSpeakerCaptionEvents() -> [PerformanceEvent] {
+        allEvents.filter {
+            $0.event == "caption_turn_visible"
+                && $0.metadata["path"] != "replay"
+                && speakerIDMetadata(for: $0) != nil
+        }
+    }
+
+    private func speakerIdentityEvents(_ name: String) -> [PerformanceEvent] {
+        allEvents.filter { $0.event == name }
+    }
+
+    private func firstSpeakerIdentityVisibleLatency() -> Double? {
+        guard let visible = speakerIdentityEvents("speaker_identity_label_visible").first else {
+            return nil
+        }
+        let visibleSpeakerID = speakerID(for: visible)
+        let sourceCaption = realtimeSpeakerCaptionEvents().first { event in
+            if let visibleSpeakerID {
+                return speakerID(for: event) == visibleSpeakerID
+            }
+            return event.wallTime <= visible.wallTime
+        } ?? realtimeSpeakerCaptionEvents().first
+        guard let sourceCaption else {
+            return nil
+        }
+        return max(0, visible.wallTime.timeIntervalSince(sourceCaption.wallTime))
+    }
+
+    private func speakerID(for event: PerformanceEvent) -> String? {
+        let raw = speakerIDMetadata(for: event) ?? event.segmentID
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private func speakerIDMetadata(for event: PerformanceEvent) -> String? {
+        let raw = event.metadata["speakerID"]
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 
     private func e2eTranslationValidation() -> (passed: Bool, lines: [String]) {

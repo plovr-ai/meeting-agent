@@ -512,6 +512,96 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("E2E Translation Status: PASS"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptPassesSpeakerIdentificationE2EWhenIdentityBecomesVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-speaker-identity-e2e-pass-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", segmentID: "segment-1", isFinal: true, textLength: 30, metadata: [
+                "path": "realtime",
+                "speakerID": "deepgram-speaker-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("speaker_identity_scheduled", wallTime: "2026-05-06T00:00:01.100Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("speaker_identity_embedding_started", wallTime: "2026-05-06T00:00:01.200Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1"
+            ]),
+            event("speaker_identity_embedding_finished", wallTime: "2026-05-06T00:00:01.700Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "durationSeconds": "3.00"
+            ]),
+            event("speaker_identity_resolved", wallTime: "2026-05-06T00:00:01.800Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "decision": "matched",
+                "displayLabel": "Allan",
+                "confidence": "0.94"
+            ]),
+            event("speaker_identity_label_visible", wallTime: "2026-05-06T00:00:01.900Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "displayLabel": "Allan",
+                "visibleTurnCount": "1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-speaker-identification-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("E2E Speaker Identification Status: PASS"))
+        XCTAssertTrue(result.stdout.contains("Speaker Identity Scheduled Events: 1"))
+        XCTAssertTrue(result.stdout.contains("Speaker Identity Label Visible Events: 1"))
+        XCTAssertTrue(result.stdout.contains("First Speaker Identity Visible Latency: 0.90s"))
+        XCTAssertFalse(result.stdout.contains("Failure: speaker"))
+    }
+
+    func testAnalyzeMeetingPerformanceScriptFailsSpeakerIdentificationE2EWhenIdentityNeverBecomesVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-speaker-identity-e2e-fail-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", segmentID: "segment-1", isFinal: true, textLength: 30, metadata: [
+                "path": "realtime",
+                "speakerID": "deepgram-speaker-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("speaker_identity_scheduled", wallTime: "2026-05-06T00:00:01.100Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "sourceSegmentIDs": "segment-1"
+            ]),
+            event("speaker_identity_embedding_started", wallTime: "2026-05-06T00:00:01.200Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1"
+            ]),
+            event("speaker_identity_embedding_finished", wallTime: "2026-05-06T00:00:01.700Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1"
+            ]),
+            event("speaker_identity_resolved", wallTime: "2026-05-06T00:00:01.800Z", segmentID: "deepgram-speaker-1", metadata: [
+                "speakerID": "deepgram-speaker-1",
+                "decision": "matched",
+                "displayLabel": "Allan",
+                "confidence": "0.94"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-speaker-identification-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 1)
+        XCTAssertTrue(result.stdout.contains("E2E Speaker Identification Status: FAIL"))
+        XCTAssertTrue(result.stdout.contains("Speaker Identity Label Visible Events: 0"))
+        XCTAssertTrue(result.stdout.contains("Failure: speaker identity resolved but never became visible"))
+    }
+
     func testAnalyzeMeetingPerformanceScriptFailsE2EValidationForProjectionMismatch() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-performance-e2e-projection-\(UUID().uuidString)", isDirectory: true)
