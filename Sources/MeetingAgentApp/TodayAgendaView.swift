@@ -20,6 +20,7 @@ struct TodayAgendaView: View {
     let selectMeeting: (MeetingRecord) -> Void
     let openWorkspace: (MeetingRecord) -> Void
     let startRecording: (MeetingRecord) -> Void
+    let startOfflineRecording: () -> Void
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let createMeeting: (() throws -> Void)?
 
@@ -82,6 +83,14 @@ struct TodayAgendaView: View {
             if let activeMeetingID, editableMeetings.contains(where: { $0.id == activeMeetingID }) {
                 CommandCenterChip(title: "Live recording", tint: CommandCenterPalette.primary, filled: true)
             }
+            Button {
+                startOfflineRecording()
+            } label: {
+                Label("Record Offline", systemImage: "mic")
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
+            .disabled(isRecording)
+            .help("Start an offline microphone recording")
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 16)

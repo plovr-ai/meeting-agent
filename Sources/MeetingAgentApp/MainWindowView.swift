@@ -105,6 +105,18 @@ struct MainWindowView: View {
                             }
                         }
                     },
+                    startOfflineRecording: {
+                        let returnDestination = destination.agendaReturnDestination
+                        Task {
+                            do {
+                                try await viewModel.startOfflineMicrophoneRecording()
+                                workspaceReturnDestination = returnDestination
+                                destination = .workspace
+                            } catch {
+                                viewModel.setRecordingStartError(error)
+                            }
+                        }
+                    },
                     saveAgenda: { meetingID, update in
                         try viewModel.saveAgenda(for: meetingID, update: update)
                     },
