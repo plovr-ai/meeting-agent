@@ -80,6 +80,35 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertTrue(performanceEvents.contains("recording_stopped"))
     }
 
+    func testStartMicrophoneRecordingUsesMicrophoneCaptureSource() async throws {
+        let fixture = try RecorderFixture()
+        let source = AudioCaptureSource.microphone(displayName: "Computer Microphone")
+        let record = try fixture.recorder.prepareRecord(
+            named: "Offline Discussion",
+            source: source,
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+
+        try await fixture.recorder.startRecording(
+            source: source,
+            record: record
+        )
+
+        XCTAssertEqual(record.name, "Offline Discussion")
+        XCTAssertEqual(fixture.session.startedSources, [source])
+        XCTAssertEqual(fixture.recorder.state, .recording(record.id))
+    }
+
+    func testExistingTargetStartStillUsesProcessSource() async throws {
+        let fixture = try RecorderFixture()
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+
+        XCTAssertEqual(fixture.session.startedSources, [.process(fixture.target)])
+        XCTAssertEqual(fixture.session.startedTargets, [fixture.target])
+    }
+
     func testDrainFramesSkipsSilentAudioOnlyForTranscription() async throws {
         let fixture = try RecorderFixture()
         let silentFrame = AudioFrame(pcm: Data([0, 0, 2, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)

@@ -9,7 +9,8 @@ public enum MeetingRecorderState: Equatable {
 public final class MeetingRecorder {
     private let store: MeetingStore
     private var activeRecord: MeetingRecord?
-    private let captureSessionFactory: () -> AudioCaptureSessionManaging
+    private let processCaptureSessionFactory: () -> AudioCaptureSessionManaging
+    private let microphoneCaptureSessionFactory: () -> AudioCaptureSessionManaging
     private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
     private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber
     private let silenceDetector: AudioSilenceDetector
@@ -29,7 +30,8 @@ public final class MeetingRecorder {
     public convenience init(store: MeetingStore = MeetingStore()) {
         self.init(
             store: store,
-            captureSessionFactory: { AudioCaptureSession() },
+            processCaptureSessionFactory: { AudioCaptureSession() },
+            microphoneCaptureSessionFactory: { MicrophoneCaptureSession() },
             wavWriterFactory: { url, sampleRate, channelCount in
                 try WavFileWriter(url: url, sampleRate: sampleRate, channelCount: channelCount)
             },
@@ -46,15 +48,34 @@ public final class MeetingRecorder {
         )
     }
 
-    init(
+    convenience init(
         store: MeetingStore,
         captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
         transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber,
         silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
     ) {
+        self.init(
+            store: store,
+            processCaptureSessionFactory: captureSessionFactory,
+            microphoneCaptureSessionFactory: captureSessionFactory,
+            wavWriterFactory: wavWriterFactory,
+            transcriberFactory: transcriberFactory,
+            silenceDetector: silenceDetector
+        )
+    }
+
+    init(
+        store: MeetingStore,
+        processCaptureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
+        microphoneCaptureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
+        wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
+        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber,
+        silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
+    ) {
         self.store = store
-        self.captureSessionFactory = captureSessionFactory
+        self.processCaptureSessionFactory = processCaptureSessionFactory
+        self.microphoneCaptureSessionFactory = microphoneCaptureSessionFactory
         self.wavWriterFactory = wavWriterFactory
         self.transcriberFactory = transcriberFactory
         self.silenceDetector = silenceDetector
@@ -64,12 +85,20 @@ public final class MeetingRecorder {
         for target: AudioCaptureTarget,
         startedAt: Date = Date()
     ) throws -> MeetingRecord {
+        try prepareRecord(named: target.displayName, source: .process(target), startedAt: startedAt)
+    }
+
+    public func prepareRecord(
+        named name: String,
+        source: AudioCaptureSource,
+        startedAt: Date = Date()
+    ) throws -> MeetingRecord {
         guard case .idle = state else {
             throw ProbeError.invalidArguments("A meeting recording is already active")
         }
 
         let stored = try store.createMeeting(
-            name: target.displayName,
+            name: name,
             startedAt: startedAt
         )
         activeRecord = stored.record
@@ -78,10 +107,11 @@ public final class MeetingRecorder {
             "meeting_prepared",
             metadata: [
                 "meetingID": stored.record.id.uuidString,
-                "targetDisplayName": target.displayName
+                "captureSourceKind": source.kind.rawValue,
+                "sourceDisplayName": source.displayName
             ]
         )
-        diagnosticsTracker = CaptureDiagnosticsTracker(target: target)
+        diagnosticsTracker = CaptureDiagnosticsTracker(source: source)
         state = .prepared(stored.record.id)
         return stored.record
     }
@@ -110,7 +140,7 @@ public final class MeetingRecorder {
     }
 
     public func startRecording(
-        target: AudioCaptureTarget,
+        source: AudioCaptureSource,
         record: MeetingRecord,
         speechProvider: SpeechProvider = .local,
         localeIdentifier: String = "en-US",
@@ -140,16 +170,24 @@ public final class MeetingRecorder {
             metadata: [
                 "meetingID": updatedRecord.id.uuidString,
                 "transcriptionProviderID": updatedRecord.transcriptionProviderID,
-                "speechLocaleIdentifier": updatedRecord.speechLocaleIdentifier
+                "speechLocaleIdentifier": updatedRecord.speechLocaleIdentifier,
+                "captureSourceKind": source.kind.rawValue,
+                "sourceDisplayName": source.displayName
             ]
         )
         pendingTranscriptionFrames = []
         isStartingTranscriber = false
         try store.save(updatedRecord)
 
-        let session = captureSessionFactory()
+        let session: AudioCaptureSessionManaging
+        switch source.kind {
+        case .process:
+            session = processCaptureSessionFactory()
+        case .microphone:
+            session = microphoneCaptureSessionFactory()
+        }
         do {
-            try session.start(target: target)
+            try session.start(source: source)
         } catch {
             diagnosticsTracker?.finish(endedReason: .captureFailed)
             try diagnosticsTracker?.snapshot().writeIfPossible(to: updatedRecord.diagnosticsURL)
@@ -220,6 +258,22 @@ public final class MeetingRecorder {
 
         state = .recording(record.id)
         performanceEventLogger?.log("recording_started")
+    }
+
+    public func startRecording(
+        target: AudioCaptureTarget,
+        record: MeetingRecord,
+        speechProvider: SpeechProvider = .local,
+        localeIdentifier: String = "en-US",
+        speechConfiguration: SpeechTranscriptionConfiguration? = nil
+    ) async throws {
+        try await startRecording(
+            source: .process(target),
+            record: record,
+            speechProvider: speechProvider,
+            localeIdentifier: localeIdentifier,
+            speechConfiguration: speechConfiguration
+        )
     }
 
     public func drainFrames() throws {
