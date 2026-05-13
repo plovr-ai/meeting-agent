@@ -65,6 +65,37 @@ public struct MeetingExportService {
         try write(readinessReport(for: record), to: destinationURL)
     }
 
+    public func exportKnowledgePackage(
+        for record: MeetingRecord,
+        summary: MeetingSummary?,
+        knowledge: MeetingKnowledge? = nil,
+        to destinationURL: URL
+    ) throws {
+        let document = try transcriptDocument(for: record)
+        let resolvedKnowledge: MeetingKnowledge
+        if let knowledge {
+            resolvedKnowledge = knowledge
+        } else if let summary {
+            resolvedKnowledge = MeetingKnowledgeExtractor.fromSummary(summary, segments: document.segments)
+        } else {
+            resolvedKnowledge = MeetingKnowledge(failureReason: "Knowledge extraction was not available.")
+        }
+        let package = MeetingKnowledgePackage(
+            record: record,
+            summary: summary,
+            segments: document.segments,
+            knowledge: resolvedKnowledge
+        )
+
+        try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try MeetingKnowledgePackageMarkdownRenderer.renderMeeting(package)
+            .write(to: destinationURL.appendingPathComponent("meeting.md"), atomically: true, encoding: .utf8)
+        try MeetingKnowledgePackageMarkdownRenderer.renderTranscript(package)
+            .write(to: destinationURL.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
+        try MeetingKnowledgePackageMarkdownRenderer.renderKnowledge(package)
+            .write(to: destinationURL.appendingPathComponent("knowledge.md"), atomically: true, encoding: .utf8)
+    }
+
     public func summaryText(for record: MeetingRecord) throws -> String {
         guard let summaryURL = record.summaryURL,
               fileManager.fileExists(atPath: summaryURL.path)

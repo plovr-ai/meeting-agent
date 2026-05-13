@@ -173,6 +173,11 @@ struct MainWindowView: View {
                             try viewModel.exportSubtitles(for: meeting.id, format: .vtt, to: destination)
                         }
                     },
+                    exportKnowledgePackage: { meeting in
+                        export("knowledge-package", for: meeting) { destination in
+                            try viewModel.exportKnowledgePackage(for: meeting.id, to: destination)
+                        }
+                    },
                     retryTranscription: { meeting in
                         Task {
                             await viewModel.retryTranscription(for: meeting.id)
@@ -406,6 +411,7 @@ private struct MeetingDetailView: View {
     let exportMeetingData: (MeetingRecord) -> Void
     let exportSRT: (MeetingRecord) -> Void
     let exportVTT: (MeetingRecord) -> Void
+    let exportKnowledgePackage: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
     let updateSpeakerLabel: (MeetingRecord, String, String) -> Void
 
@@ -438,6 +444,7 @@ private struct MeetingDetailView: View {
                     exportMeetingData: { exportMeetingData(meeting) },
                     exportSRT: { exportSRT(meeting) },
                     exportVTT: { exportVTT(meeting) },
+                    exportKnowledgePackage: { exportKnowledgePackage(meeting) },
                     retryTranscription: { retryTranscription(meeting) },
                     updateSpeakerLabel: { speakerID, label in
                         updateSpeakerLabel(meeting, speakerID, label)
@@ -592,6 +599,7 @@ private struct MeetingCommandCenterView: View {
     let exportMeetingData: () -> Void
     let exportSRT: () -> Void
     let exportVTT: () -> Void
+    let exportKnowledgePackage: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
     @State private var editAgendaTarget: MeetingRecord?
@@ -750,6 +758,13 @@ private struct MeetingCommandCenterView: View {
             } label: {
                 Label("Export VTT", systemImage: "captions.bubble")
             }
+
+            Button {
+                exportKnowledgePackage()
+            } label: {
+                Label("Export Knowledge Package", systemImage: "brain")
+            }
+            .disabled(isRecording || meeting.transcriptJSONURL == nil)
 
             Divider()
 

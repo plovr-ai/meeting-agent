@@ -161,6 +161,101 @@ final class MeetingExportServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("recordingSaved"))
         XCTAssertTrue(markdown.contains("Startup replay frames: 0"))
     }
+
+    func testExportsKnowledgePackageMarkdownFiles() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+        try fixture.writeStructuredTranscript([
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "a", label: "Alice"),
+                startTimeSeconds: 12,
+                text: "Let's start with Tokyo for Q3."
+            ),
+            TranscriptSegment(
+                id: "segment-2",
+                speaker: TranscriptSpeaker(identifier: "b", label: "Ken"),
+                startTimeSeconds: 48,
+                text: "I will confirm legal timing."
+            )
+        ])
+        let summary = MeetingSummary(
+            overview: "The team agreed to a Tokyo-only pilot.",
+            keyTopics: ["Japan GTM"],
+            decisions: [
+                MeetingDecision(
+                    description: "Q3 Japan launch will start with a Tokyo-only pilot.",
+                    participants: ["Alice", "Ken"],
+                    sourceSegmentIDs: ["segment-1"],
+                    confidence: 0.9
+                )
+            ],
+            actionItems: [
+                MeetingActionItem(
+                    description: "Ken will confirm legal timing.",
+                    owner: "Ken",
+                    dueDate: nil,
+                    sourceSegmentIDs: ["segment-2"],
+                    confidence: 0.8
+                )
+            ],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: ["segment-1", "segment-2"],
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_700),
+            provider: "test",
+            status: .succeeded,
+            failureReason: nil
+        )
+        let destination = fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
+
+        try MeetingExportService().exportKnowledgePackage(for: fixture.record, summary: summary, to: destination)
+
+        let files = try FileManager.default.contentsOfDirectory(atPath: destination.path).sorted()
+        XCTAssertEqual(files, ["knowledge.md", "meeting.md", "transcript.md"])
+        let meeting = try String(contentsOf: destination.appendingPathComponent("meeting.md"), encoding: .utf8)
+        let transcript = try String(contentsOf: destination.appendingPathComponent("transcript.md"), encoding: .utf8)
+        let knowledge = try String(contentsOf: destination.appendingPathComponent("knowledge.md"), encoding: .utf8)
+        XCTAssertTrue(meeting.contains("# Google Meet"))
+        XCTAssertTrue(transcript.contains(#"<a id="t-00-00-12"></a>"#))
+        XCTAssertTrue(knowledge.contains("### decision_001"))
+        XCTAssertTrue(knowledge.contains("[[transcript#t-00-00-12|Alice 00:00:12]]"))
+    }
+
+    func testKnowledgePackageExportFailsWhenStructuredTranscriptMissing() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+
+        XCTAssertThrowsError(try MeetingExportService().exportKnowledgePackage(
+            for: fixture.record,
+            summary: nil,
+            to: fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
+        )) { error in
+            XCTAssertEqual(error as? MeetingExportError, .missingArtifact("structured transcript"))
+        }
+    }
+
+    func testExportsKnowledgePackageWithFailureNote() throws {
+        let fixture = try MeetingExportFixture()
+        defer { fixture.cleanup() }
+        try fixture.writeStructuredTranscript([
+            TranscriptSegment(id: "segment-1", text: "Transcript exists.")
+        ])
+        let destination = fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
+
+        try MeetingExportService().exportKnowledgePackage(
+            for: fixture.record,
+            summary: nil,
+            knowledge: MeetingKnowledge(failureReason: "OpenRouter API key is not configured"),
+            to: destination
+        )
+
+        let knowledge = try String(contentsOf: destination.appendingPathComponent("knowledge.md"), encoding: .utf8)
+        XCTAssertTrue(knowledge.contains("## Extraction Status"))
+        XCTAssertTrue(knowledge.contains("Knowledge extraction failed: OpenRouter API key is not configured"))
+    }
 }
 
 private struct MeetingExportFixture {

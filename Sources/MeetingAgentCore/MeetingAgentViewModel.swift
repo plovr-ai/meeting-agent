@@ -675,6 +675,13 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    public func exportKnowledgePackage(for meetingID: UUID, to destinationURL: URL) throws {
+        try export("Knowledge package", for: meetingID) { record in
+            let summary = record.summaryJSONURL.flatMap { try? MeetingSummaryWriter.read(from: $0) }
+            try exportService.exportKnowledgePackage(for: record, summary: summary, to: destinationURL)
+        }
+    }
+
     public func summaryTextForClipboard(for meetingID: UUID) throws -> String {
         guard let record = meetings.first(where: { $0.id == meetingID }) else {
             let error = MeetingExportError.missingArtifact("meeting")

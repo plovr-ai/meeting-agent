@@ -578,10 +578,13 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("exportSRT"))
         XCTAssertTrue(source.contains("exportVTT"))
+        XCTAssertTrue(source.contains("exportKnowledgePackage"))
         XCTAssertTrue(source.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(source.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))
+        XCTAssertTrue(source.contains("Label(\"Export Knowledge Package\", systemImage: \"brain\")"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .srt"))
         XCTAssertTrue(source.contains("viewModel.exportSubtitles(for: meeting.id, format: .vtt"))
+        XCTAssertTrue(source.contains("viewModel.exportKnowledgePackage(for: meeting.id"))
         XCTAssertFalse(source.contains("exportReadinessReport"))
         XCTAssertFalse(source.contains("Readiness Report"))
     }

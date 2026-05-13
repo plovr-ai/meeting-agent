@@ -3739,11 +3739,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "VTT subtitles exported")
         try viewModel.exportReadinessReport(for: stored.record.id, to: readinessDestination)
         XCTAssertEqual(viewModel.statusText, "Readiness report exported")
+        let knowledgePackageDestination = root.appendingPathComponent("knowledge-package", isDirectory: true)
+        try viewModel.exportKnowledgePackage(for: stored.record.id, to: knowledgePackageDestination)
+        XCTAssertEqual(viewModel.statusText, "Knowledge package exported")
         XCTAssertTrue(FileManager.default.fileExists(atPath: summaryDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: dataDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: srtDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: vttDestination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: readinessDestination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: knowledgePackageDestination.appendingPathComponent("meeting.md").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: knowledgePackageDestination.appendingPathComponent("transcript.md").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: knowledgePackageDestination.appendingPathComponent("knowledge.md").path))
     }
 
     func testExportAndClipboardReportMissingMeetingAndSuccess() throws {
