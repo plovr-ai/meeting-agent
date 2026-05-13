@@ -196,14 +196,12 @@ public final class LiveCaptionPipeline {
                         with: sourceSegment,
                         applying: turn
                     )
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
                     logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     interimSegmentsByID[sourceSegment.id] = sourceSegment
                     continue
                 }
                 let updated = store.upsert(turn)
                 if let sourceSegment {
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
                     logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                 }
             case .sealed(let turn):
@@ -214,7 +212,6 @@ public final class LiveCaptionPipeline {
                         with: sourceSegment,
                         applying: turn
                     )
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
                     logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
@@ -223,7 +220,6 @@ public final class LiveCaptionPipeline {
                 }
                 let updated = store.upsert(turn)
                 if let sourceSegment {
-                    hydrateCachedTranslation(from: sourceSegment, toTurnID: updated.id)
                     logCaptionTurnVisible(updated, sourceSegment: sourceSegment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                     if sourceSegment.isFinal {
                         interimSegmentsByID[sourceSegment.id] = nil
@@ -231,7 +227,6 @@ public final class LiveCaptionPipeline {
                 }
             case .interimUpdated(let segment):
                 let turn = store.append(segment)
-                hydrateCachedTranslation(from: segment, toTurnID: turn.id)
                 logCaptionTurnVisible(turn, sourceSegment: segment, receivedAt: segmentReceivedAt, visibilityPath: visibilityPath)
                 interimSegmentsByID[segment.id] = segment
             case .removed(let turnID):
@@ -241,7 +236,7 @@ public final class LiveCaptionPipeline {
                    updatedTurn.sourceSegmentIDs.count == 1,
                    let sourceSegmentID = updatedTurn.sourceSegmentIDs.first,
                    let remainingSegment = currentSegments.first(where: { $0.id == sourceSegmentID }) {
-                    hydrateCachedTranslation(from: remainingSegment, toTurnID: updatedTurn.id)
+                    _ = remainingSegment
                 }
             }
         }
@@ -377,37 +372,7 @@ public final class LiveCaptionPipeline {
         )
     }
 
-    private func hydrateCachedTranslation(from segment: TranscriptSegment, toTurnID turnID: String) {
-        guard let translatedText = segment.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !translatedText.isEmpty,
-              let targetLocale = segment.translationTargetLocale?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let current = store.turns.first(where: { $0.id == turnID }),
-              current.sourceSegmentIDs == [segment.id],
-              targetLocale == current.targetLocale
-        else {
-            return
-        }
-        if current.displayState == .sealed,
-           current.boundaryStrength == .hard,
-           segment.translationIsFinal != true {
-            return
-        }
-        store.attachTranslation(translatedText, toTurnID: turnID)
-        if segment.translationIsFinal == true {
-            store.markTranslationFinal(forTurnID: turnID)
-        }
-    }
-
     private func completeTranslationsWithoutProviderIfNeeded() {
-        guard translationProvider == nil else { return }
-        guard store.turns.allSatisfy({
-            TranslationOptions(sourceLocale: $0.sourceLocale, targetLocale: $0.targetLocale).isSameLanguage
-        }) else {
-            return
-        }
-        for turn in store.turns where turn.translationHealth == .pending {
-            store.markTranslationCompleteWithoutText(forTurnID: turn.id)
-        }
     }
 
     private func attachTranslationResult(
@@ -547,18 +512,9 @@ public final class LiveCaptionPipeline {
         guard !store.turns.isEmpty else {
             return .idle
         }
-        if let failed = store.turns.first(where: {
-            if case .failed = $0.translationHealth { return true }
-            return false
+        if store.turns.contains(where: {
+            $0.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }) {
-            if case .failed(let message) = failed.translationHealth {
-                return .degraded(message)
-            }
-        }
-        if store.turns.contains(where: { $0.translationHealth == .pending }) {
-            return .pending
-        }
-        if store.turns.contains(where: { $0.translationHealth == .live }) {
             return .live
         }
         return .idle

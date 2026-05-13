@@ -20,28 +20,19 @@ final class BilingualProviderRegistryTests: XCTestCase {
         XCTAssertEqual(registry.descriptors(capability: .textTranslation), [])
     }
 
-    func testDescriptorSupportsWildcardLocales() {
+    func testDescriptorSupportsWildcardSourceLocales() {
         let descriptor = ProviderDescriptor(
-            id: "openai-translation",
-            displayName: "Hosted Translation",
-            capability: .textTranslation,
+            id: "openrouter-transcribe",
+            displayName: "OpenRouter Transcribe",
+            capability: .audioTranscription,
             executionMode: .hosted,
             supportedSourceLocales: ["*"],
-            supportedTargetLocales: ["*"],
+            supportedTargetLocales: [],
             requiresNetwork: true,
             requiresAPIKey: true
         )
 
-        XCTAssertTrue(descriptor.supports(sourceLocale: "ko-KR", targetLocale: "zh-CN"))
-    }
-
-    func testTranslationOptionsDetectSameLanguageLocales() {
-        XCTAssertTrue(TranslationOptions(sourceLocale: "en-US", targetLocale: "en-GB").isSameLanguage)
-        XCTAssertTrue(TranslationOptions(sourceLocale: " zh_CN ", targetLocale: "zh-TW").isSameLanguage)
-        XCTAssertTrue(TranslationOptions(sourceLocale: "JA", targetLocale: "ja-JP").isSameLanguage)
-        XCTAssertFalse(TranslationOptions(sourceLocale: "en-US", targetLocale: "zh-CN").isSameLanguage)
-        XCTAssertFalse(TranslationOptions(sourceLocale: "", targetLocale: "en-US").isSameLanguage)
-        XCTAssertFalse(TranslationOptions(sourceLocale: "   ", targetLocale: "   ").isSameLanguage)
+        XCTAssertTrue(descriptor.supports(sourceLocale: "ko-KR", targetLocale: nil))
     }
 
     func testBuiltInRegistryIncludesOpenAIRealtimeTranscriptionDescriptor() {

@@ -3,6 +3,35 @@ import XCTest
 
 @MainActor
 final class LiveCaptionPipelineTests: XCTestCase {
+    func testLegacyTranslatedSegmentFieldsAreNotProjectedIntoLiveCaptions() async {
+        let pipeline = LiveCaptionPipeline(
+            sourceLocale: "en-US",
+            targetLocale: "en-US",
+            translationProvider: nil,
+            performanceEventLogger: nil
+        )
+
+        let snapshot = await pipeline.apply(TranscriptSegmentAccumulationResult(
+            document: TranscriptDocument(segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    text: "We should confirm the launch owner today.",
+                    language: "en-US",
+                    isFinal: true,
+                    translatedText: "我们应该确认上线负责人。",
+                    translationTargetLocale: "zh-CN",
+                    translationIsFinal: true
+                )
+            ]),
+            changedSegmentIDs: ["segment-1"],
+            plainTextReplacement: nil
+        ))
+
+        XCTAssertEqual(snapshot.turns.first?.originalText, "We should confirm the launch owner today.")
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.translationHealth, .idle)
+    }
+
     func testAttachTranslationResultsPublishesUnitTranslationAndMarksStableFinal() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
@@ -189,7 +218,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.translationFreshness, .fresh)
     }
 
-    func testSameLanguageWithoutProviderCompletesTranslationWithoutText() async {
+    func testSameLanguageWithoutProviderKeepsTranslationIdle() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
             targetLocale: "en-US",
@@ -213,8 +242,8 @@ final class LiveCaptionPipelineTests: XCTestCase {
         ))
 
         XCTAssertNil(snapshot.turns.first?.translatedText)
-        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
-        XCTAssertEqual(snapshot.translationHealth, .live)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .pending)
+        XCTAssertEqual(snapshot.translationHealth, .idle)
     }
 
     func testAccumulationResultCarriesRealtimeSourceKind() async {
@@ -288,7 +317,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertEqual(snapshot.turns.map(\.originalText), ["We are aligned."])
         XCTAssertEqual(snapshot.captionHealth, .live)
-        XCTAssertEqual(snapshot.translationHealth, .pending)
+        XCTAssertEqual(snapshot.translationHealth, .idle)
     }
 
     func testApplyUsesChangedInterimSegmentsWithoutReloadingFiles() async {
@@ -411,7 +440,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let snapshot = await pipeline.scheduleLegacyReplayBackfillTranslations()
 
         XCTAssertEqual(provider.requests.count, 0)
-        XCTAssertEqual(snapshot.translationHealth, .pending)
+        XCTAssertEqual(snapshot.translationHealth, .idle)
     }
 
     func testScheduleLegacyReplayBackfillTranslationsTranslatesFinalTurn() async {
@@ -730,7 +759,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.boundaryStrength, .hard)
     }
 
-    func testApplyRemovalAfterProvisionalMergeRestoresRemainingCachedTranslation() async {
+    func testApplyRemovalAfterProvisionalMergeDoesNotProjectLegacyCachedTranslation() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
@@ -788,8 +817,8 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertEqual(snapshot.turns.count, 1)
         XCTAssertEqual(snapshot.turns.first?.sourceSegmentIDs, ["final-1"])
-        XCTAssertEqual(snapshot.turns.first?.translatedText, "选择德语")
-        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .pending)
         XCTAssertEqual(snapshot.turns.first?.translationState, .final)
     }
 
@@ -918,7 +947,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.displayState, .draft)
     }
 
-    func testReplayHydratesCachedTranslationFromFinalTranscriptSegment() async {
+    func testReplayIgnoresCachedTranslationFromFinalTranscriptSegment() async {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
@@ -941,8 +970,8 @@ final class LiveCaptionPipelineTests: XCTestCase {
         let snapshot = await pipeline.replay(document)
 
         XCTAssertEqual(snapshot.turns.count, 1)
-        XCTAssertEqual(snapshot.turns.first?.translatedText, "确认上线负责人。")
-        XCTAssertEqual(snapshot.turns.first?.translationHealth, .live)
+        XCTAssertNil(snapshot.turns.first?.translatedText)
+        XCTAssertEqual(snapshot.turns.first?.translationHealth, .pending)
         XCTAssertEqual(snapshot.turns.first?.translationState, .final)
     }
 
@@ -993,7 +1022,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         let replaySnapshot = pipeline.replayCaptionsOnly(document)
         XCTAssertNil(replaySnapshot.turns.first?.translatedText)
-        XCTAssertEqual(replaySnapshot.translationHealth, .pending)
+        XCTAssertEqual(replaySnapshot.translationHealth, .idle)
 
         let translatedSnapshot = await pipeline.scheduleLivePendingTranslations()
 
@@ -1072,7 +1101,7 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertTrue(provider.requests.isEmpty)
         XCTAssertNil(snapshot.turns.first?.translatedText)
-        XCTAssertEqual(snapshot.translationHealth, .pending)
+        XCTAssertEqual(snapshot.translationHealth, .idle)
         let events = FileManager.default.fileExists(atPath: eventsURL.path)
             ? try readPipelineEvents(from: eventsURL)
             : []

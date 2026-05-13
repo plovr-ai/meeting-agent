@@ -6,7 +6,7 @@ public enum SpeechConfigurationValidationStatus: Equatable {
 }
 
 public struct SpeechTranscriptionConfiguration: Codable, Equatable {
-    public static let defaultBilingualPipelineProfileID = "deepgram-stt-hosted-translation"
+    public static let defaultBilingualPipelineProfileID = "deepgram-stt"
     public static let defaultLocalTranscriptionProviderID = "whisper-local"
     public static let defaultLocalTranslationProviderID = "qwen-local-translation"
     public static let defaultHostedTranscriptionProviderID = "openrouter-transcribe"
@@ -202,11 +202,6 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
            Self.normalized(hostedTranscriptionModelID) == nil {
             return .unavailable("Hosted transcription model is not configured")
         }
-        if translationExecutionMode == .hosted,
-           Self.normalized(hostedTranslationModelID) == nil {
-            return .unavailable("Hosted translation model is not configured")
-        }
-
         guard transcriptionExecutionMode == .local,
               localTranscriptionProviderID == Self.defaultLocalTranscriptionProviderID,
               provider == .whisper
@@ -250,8 +245,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     }
 
     public var usesOpenRouter: Bool {
-        (transcriptionExecutionMode == .hosted && hostedTranscriptionProviderID == Self.defaultHostedTranscriptionProviderID)
-            || (translationExecutionMode == .hosted && hostedTranslationProviderID == Self.defaultHostedTranslationProviderID)
+        transcriptionExecutionMode == .hosted && hostedTranscriptionProviderID == Self.defaultHostedTranscriptionProviderID
     }
 
     public var usesDeepgram: Bool {

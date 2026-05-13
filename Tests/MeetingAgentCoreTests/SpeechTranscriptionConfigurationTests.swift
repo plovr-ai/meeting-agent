@@ -2,21 +2,18 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class SpeechTranscriptionConfigurationTests: XCTestCase {
-    func testDefaultBilingualSettings() {
+    func testDefaultSettingsAreTranscriptionAndSummaryOnly() {
         let configuration = SpeechTranscriptionConfiguration.default
 
-        XCTAssertEqual(configuration.targetLocaleIdentifier, "zh-CN")
-        XCTAssertEqual(configuration.bilingualPipelineProfileID, "deepgram-stt-hosted-translation")
         XCTAssertEqual(configuration.transcriptionExecutionMode, .hosted)
-        XCTAssertEqual(configuration.translationExecutionMode, .hosted)
         XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
         XCTAssertEqual(configuration.hostedTranscriptionProviderID, "deepgram-transcribe")
-        XCTAssertEqual(configuration.hostedTranslationProviderID, "openrouter-translation")
-        XCTAssertEqual(configuration.hostedTranslationModelID, "google/gemini-2.5-flash")
-        XCTAssertEqual(BilingualPipelineFactory.hostedTranslationModelOptions.first?.id, "google/gemini-2.5-flash")
         XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
         XCTAssertEqual(BilingualPipelineFactory.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+        XCTAssertFalse(BilingualPipelineFactory.builtInProviderDescriptors.contains {
+            $0.capability == .textTranslation || $0.capability == .speechTranslation || $0.capability == .bilingualSubtitle
+        })
     }
 
     func testReliableMVPDefaultsUseDeepgramHostedTranscription() {
@@ -28,7 +25,24 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID
         )
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
-        XCTAssertEqual(configuration.translationExecutionMode, .hosted)
+        XCTAssertFalse(BilingualPipelineFactory.builtInProfiles.contains { profile in
+            profile.steps.contains { $0.capability == .textTranslation }
+        })
+    }
+
+    func testValidationIgnoresLegacyBlankTranslationModel() {
+        var configuration = SpeechTranscriptionConfiguration.default
+        configuration.hostedTranslationModelID = " "
+
+        XCTAssertEqual(
+            configuration.validationStatus(
+                environment: ["MEETING_AGENT_DEEPGRAM_API_KEY": "test-key"],
+                fileManager: .default,
+                bundledResourceURL: nil,
+                developmentResourceSearchRoots: []
+            ),
+            .available
+        )
     }
 
     func testWhisperValidationReportsMissingPaths() {
@@ -436,7 +450,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         ))
     }
 
-    func testValidationReportsWhisperFileSystemProblemsAndHostedModelGaps() throws {
+    func testValidationReportsWhisperFileSystemProblemsAndHostedTranscriptionModelGaps() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("speech-config-validation-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -473,16 +487,8 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         config.hostedTranscriptionModelID = " "
         XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted transcription model is not configured"))
 
-        config = SpeechTranscriptionConfiguration(
-            provider: .local,
-            localeIdentifier: "en-US",
-            whisperBinaryPath: nil,
-            whisperModelPath: nil,
-            transcriptionExecutionMode: .local,
-            translationExecutionMode: .hosted
-        )
         config.hostedTranslationModelID = " "
-        XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted translation model is not configured"))
+        XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted transcription model is not configured"))
     }
 
     func testNormalizationAndStoreDefaults() throws {

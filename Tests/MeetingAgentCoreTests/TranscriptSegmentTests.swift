@@ -54,6 +54,24 @@ final class TranscriptSegmentTests: XCTestCase {
         XCTAssertEqual(decoded.timingSource, .unavailable)
     }
 
+    func testLegacyTranslationFieldsStillDecodeForHistoricalTranscripts() throws {
+        let json = """
+        {
+          "id": "segment-1",
+          "text": "hello",
+          "translatedText": "你好",
+          "translationTargetLocale": "zh-CN",
+          "translationIsFinal": true
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(TranscriptSegment.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.translatedText, "你好")
+        XCTAssertEqual(decoded.translationTargetLocale, "zh-CN")
+        XCTAssertEqual(decoded.translationIsFinal, true)
+    }
+
     func testDefaultSpeakerRendersAsUserA() {
         let output = TranscriptFormatter.render([
             TranscriptSegment(text: "hello")

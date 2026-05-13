@@ -2,7 +2,7 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class PrimaryChainPreflightTests: XCTestCase {
-    func testDeepgramPrimaryChainReportsMissingDeepgramAndOpenRouterCredentials() {
+    func testDeepgramPrimaryChainReportsMissingDeepgramCredentials() {
         let configuration = SpeechTranscriptionConfiguration.default
 
         let result = PrimaryChainPreflight.evaluate(
@@ -12,12 +12,11 @@ final class PrimaryChainPreflightTests: XCTestCase {
 
         XCTAssertEqual(result.status, .unavailable)
         XCTAssertEqual(result.messages, [
-            "Deepgram API key is not configured",
-            "OpenRouter API key is not configured"
+            "Deepgram API key is not configured"
         ])
     }
 
-    func testOpenAIRealtimeTranscriptionWithOpenRouterTranslationIsAvailableWithCredentials() {
+    func testOpenAIRealtimeTranscriptionIsAvailableWithCredentials() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
@@ -46,8 +45,7 @@ final class PrimaryChainPreflightTests: XCTestCase {
         let result = PrimaryChainPreflight.evaluate(
             configuration: .default,
             environment: [
-                "MEETING_AGENT_DEEPGRAM_API_KEY": "deepgram-key",
-                "MEETING_AGENT_OPENROUTER_API_KEY": "openrouter-key"
+                "MEETING_AGENT_DEEPGRAM_API_KEY": "deepgram-key"
             ]
         )
 

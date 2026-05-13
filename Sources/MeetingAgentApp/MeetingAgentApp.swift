@@ -5,7 +5,7 @@ import SwiftUI
 @main
 struct MeetingAgentApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var viewModel = MeetingAgentViewModel(liveCaptionPipelineUsesUnitTranslation: true)
+    @StateObject private var viewModel = MeetingAgentViewModel()
 
     private var defaultWindowSize: CGSize {
         DefaultWindowSizing.mainWindowSize()

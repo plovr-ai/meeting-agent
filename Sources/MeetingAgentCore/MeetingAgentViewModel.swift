@@ -1169,13 +1169,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         selectedMeetingReplayFileSignature = fileSignature
         nextSelectedMeetingPendingTranslationRetryAt = Self.nextSelectedMeetingPendingTranslationRetryDate()
         publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.replayCaptionsOnly(document))
-        let stableUnitResults = selectedMeeting.map { stableUnitTranslationResults(meeting: $0) } ?? []
-        if !stableUnitResults.isEmpty {
-            publishLiveCaptionPipelineSnapshot(liveCaptionPipeline.attachTranslationResults(stableUnitResults))
-            nextSelectedMeetingPendingTranslationRetryAt = nil
-            liveCaptionReplayTask = nil
-            return
-        }
         liveCaptionReplayTask = Task { [weak self] in
             guard let self else { return }
             guard liveCaptionReplaySequence == sequence else { return }
@@ -1370,7 +1363,12 @@ public final class MeetingAgentViewModel: ObservableObject {
             realtimeCaptionSessionUsesUnitTranslationPipeline = liveCaptionPipelineUsesUnitTranslation
         }
         activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
-        let snapshot = await realtimeCaptionSession.apply(latest)
+        var latestSnapshot: LiveCaptionPipelineSnapshot?
+        for result in results {
+            guard isCurrentActiveCaptionApply(context) else { return }
+            latestSnapshot = await realtimeCaptionSession.apply(result)
+        }
+        guard let snapshot = latestSnapshot else { return }
         guard !Task.isCancelled, isCurrentActiveCaptionApply(context) else { return }
         publishRealtimeCaptionPipelineSnapshot(snapshot)
         logCaptionSnapshotPublication(.original, snapshot: snapshot, path: "realtime")
@@ -1468,11 +1466,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard draftCaptionInputThrottleNanoseconds > 0 else { return false }
         guard isCurrentActiveCaptionApply(context) else { return false }
         guard activeMeetingID != nil else { return false }
-        guard let latest = results.last else { return false }
-        guard latest.plainTextReplacement == nil else { return false }
-        guard !latest.changedSegmentIDs.isEmpty else { return false }
-        let changedSegmentIDs = Set(latest.changedSegmentIDs)
-        let changedSegments = latest.document.segments.filter { changedSegmentIDs.contains($0.id) }
+        guard !results.isEmpty else { return false }
+        guard results.allSatisfy({ $0.plainTextReplacement == nil }) else { return false }
+        let changedSegments = results.flatMap { result in
+            let changedSegmentIDs = Set(result.changedSegmentIDs)
+            return result.document.segments.filter { changedSegmentIDs.contains($0.id) }
+        }
         guard !changedSegments.isEmpty else { return false }
         return changedSegments.allSatisfy { segment in
             !segment.isFinal && segment.speechFinal != true
@@ -1955,15 +1954,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     public nonisolated static func openRouterCaptionTranslationProvider(
         for configuration: SpeechTranscriptionConfiguration
     ) -> TextTranslationProvider? {
-        guard configuration.translationExecutionMode == .hosted,
-              configuration.hostedTranslationProviderID == SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID,
-              let apiKey = SpeechTranscriptionConfiguration.normalized(configuration.openRouterAPIKey)
-                ?? SpeechTranscriptionConfiguration.normalized(ProcessInfo.processInfo.environment["MEETING_AGENT_OPENROUTER_API_KEY"]),
-              let model = SpeechTranscriptionConfiguration.normalized(configuration.hostedTranslationModelID)
-        else {
-            return nil
-        }
-        return OpenRouterTextTranslationProvider(configuration: OpenRouterChatConfiguration(apiKey: apiKey, model: model))
+        nil
     }
 
     private func configureMeetingProgressCoordinator() {
