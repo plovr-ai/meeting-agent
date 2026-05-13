@@ -6,6 +6,7 @@ public protocol AudioCaptureSessionManaging: AnyObject {
     var frameBuffer: AudioFrameRingBuffer { get }
     var outputSampleRate: Double { get }
     var outputChannelCount: Int { get }
+    func start(source: AudioCaptureSource) throws
     func start(target: AudioCaptureTarget) throws
     func stop()
 }
@@ -57,6 +58,13 @@ public final class AudioCaptureSession {
         }
     }
 
+    public func start(source: AudioCaptureSource) throws {
+        guard let target = source.processTarget else {
+            throw ProbeError.invalidArguments("AudioCaptureSession only supports process capture sources")
+        }
+        try start(target: target)
+    }
+
     public func stop() {
         guard isRunning || reader != nil else { return }
         reader?.stop()
@@ -73,3 +81,10 @@ public final class AudioCaptureSession {
 
 @available(macOS 14.2, *)
 extension AudioCaptureSession: AudioCaptureSessionManaging {}
+
+@available(macOS 14.2, *)
+public extension AudioCaptureSessionManaging {
+    func start(target: AudioCaptureTarget) throws {
+        try start(source: .process(target))
+    }
+}

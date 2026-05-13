@@ -55,6 +55,23 @@ final class AudioCaptureSessionTests: XCTestCase {
         XCTAssertEqual(reader.startedDeviceIDs, [22])
     }
 
+    func testStartSourceRequiresProcessTarget() {
+        let session = AudioCaptureSession(
+            tapManager: FakeSessionTapManager(tapID: 11, tapUID: "tap-uid"),
+            aggregateManager: FakeSessionAggregateManager(deviceID: 22),
+            readerFactory: { _ in FakeSessionAudioReader(sampleRate: 16_000, channelCount: 1) }
+        )
+
+        XCTAssertThrowsError(
+            try session.start(source: .microphone(displayName: "Computer Microphone"))
+        ) { error in
+            XCTAssertEqual(
+                String(describing: error),
+                "Invalid arguments: AudioCaptureSession only supports process capture sources"
+            )
+        }
+    }
+
     func testStartCleansUpPartialResourcesWhenReaderFails() {
         let tapManager = FakeSessionTapManager(tapID: 11, tapUID: "tap-uid")
         let aggregateManager = FakeSessionAggregateManager(deviceID: 22)

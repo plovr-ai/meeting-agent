@@ -438,12 +438,23 @@ private final class FakeRecorderCaptureSession: AudioCaptureSessionManaging {
     let outputSampleRate: Double
     let outputChannelCount: Int
     var startError: Error?
+    var startedSources: [AudioCaptureSource] = []
     var startedTargets: [AudioCaptureTarget] = []
     var stopCallCount = 0
 
     init(sampleRate: Double, channelCount: Int) {
         outputSampleRate = sampleRate
         outputChannelCount = channelCount
+    }
+
+    func start(source: AudioCaptureSource) throws {
+        if let startError {
+            throw startError
+        }
+        startedSources.append(source)
+        if let target = source.processTarget {
+            startedTargets.append(target)
+        }
     }
 
     func start(target: AudioCaptureTarget) throws {
