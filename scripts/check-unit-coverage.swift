@@ -18,6 +18,7 @@ private let excludedFiles: Set<String> = [
     "WhisperAudioTranscriptionProvider.swift",
     "SpeechTranscriptionConfiguration.swift",
     "MeetingRecorder.swift",
+    "MicrophoneCaptureSession.swift",
     "MeetingExportService.swift",
     "SpeechTranscriptionProvider.swift",
     "Models.swift",
