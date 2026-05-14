@@ -150,9 +150,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await viewModel.startOfflineMicrophoneRecording(startedAt: Date(timeIntervalSince1970: 100))
 
         XCTAssertNil(viewModel.pendingCandidate)
-        XCTAssertEqual(viewModel.selectedMeeting?.name, "Offline Discussion")
+        XCTAssertEqual(viewModel.selectedMeeting?.name, "New Meeting")
         XCTAssertEqual(viewModel.activeMeetingID, viewModel.selectedMeeting?.id)
-        XCTAssertEqual(viewModel.statusText, "Recording Offline Discussion")
+        XCTAssertEqual(viewModel.statusText, "Recording New Meeting")
         XCTAssertEqual(fixture.session.startedSources, [.microphone(displayName: "Computer Microphone")])
     }
 

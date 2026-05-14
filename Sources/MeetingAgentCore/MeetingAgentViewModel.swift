@@ -309,7 +309,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func startOfflineMicrophoneRecording(
-        name: String = "Offline Discussion",
+        name: String = "New Meeting",
         localeIdentifier: String? = nil,
         startedAt: Date = Date()
     ) async throws {

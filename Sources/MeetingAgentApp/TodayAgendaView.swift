@@ -17,55 +17,20 @@ struct TodayAgendaView: View {
     let activeMeetingID: UUID?
     let pendingCandidate: AudioCaptureTarget?
     let isRecording: Bool
-    let selectMeeting: (MeetingRecord) -> Void
     let openWorkspace: (MeetingRecord) -> Void
     let startRecording: (MeetingRecord) -> Void
     let startOfflineRecording: () -> Void
-    let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
-    let createMeeting: (() throws -> Void)?
+    let createMeeting: (() throws -> MeetingRecord)?
 
-    @State private var draft = AgendaDraft()
-    @State private var recordBackedDraft = AgendaDraft()
-    @State private var draftMeetingID: UUID?
-    @State private var saveError: String?
     @State private var createError: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                header
-                agendaList
-            }
-            .frame(minWidth: 520)
-
-            if showsAgendaEditor {
-                Divider()
-                    .overlay(CommandCenterPalette.border)
-
-                AgendaEditorView(
-                    meeting: selectedMeeting,
-                    draft: $draft,
-                    saveError: saveError,
-                    save: saveSelectedAgenda,
-                    cancel: resetDraftFromSelection
-                )
-                .frame(minWidth: 360, idealWidth: 400, maxWidth: 440)
-            }
+        VStack(spacing: 0) {
+            header
+            agendaList
         }
+        .frame(minWidth: 520)
         .background(CommandCenterPalette.window)
-        .onAppear(perform: resetDraftFromSelection)
-        .onChange(of: selectedMeetingID) { _, _ in
-            resetDraftFromSelection()
-        }
-        .onChange(of: meetings) { _, _ in
-            guard draftMeetingID == selectedMeetingID else {
-                resetDraftFromSelection()
-                return
-            }
-            if draft == recordBackedDraft {
-                resetDraftFromSelection()
-            }
-        }
     }
 
     private var header: some View {
@@ -151,7 +116,6 @@ struct TodayAgendaView: View {
                             meeting: meeting,
                             isSelected: meeting.id == selectedMeetingID,
                             open: {
-                                selectMeeting(meeting)
                                 openWorkspace(meeting)
                             }
                         )
@@ -176,7 +140,7 @@ struct TodayAgendaView: View {
                             isActive: meeting.id == activeMeetingID,
                             actionTitle: actionTitle(for: meeting),
                             select: {
-                                selectMeeting(meeting)
+                                openWorkspace(meeting)
                             },
                             primaryAction: {
                                 primaryAction(for: meeting)
@@ -201,7 +165,7 @@ struct TodayAgendaView: View {
                     isActive: meeting.id == activeMeetingID,
                     actionTitle: actionTitle(for: meeting),
                     select: {
-                        selectMeeting(meeting)
+                        openWorkspace(meeting)
                     },
                     primaryAction: {
                         primaryAction(for: meeting)
@@ -218,7 +182,6 @@ struct TodayAgendaView: View {
                     meeting: meeting,
                     isSelected: meeting.id == selectedMeetingID,
                     open: {
-                        selectMeeting(meeting)
                         openWorkspace(meeting)
                     }
                 )
@@ -243,7 +206,8 @@ struct TodayAgendaView: View {
                 if let createMeeting {
                     Button("Create Meeting") {
                         do {
-                            try createMeeting()
+                            let meeting = try createMeeting()
+                            openWorkspace(meeting)
                             createError = nil
                         } catch {
                             createError = "Could not create meeting: \(error)"
@@ -283,18 +247,6 @@ struct TodayAgendaView: View {
         mode == .today ? todayMeetings : sortedMeetings
     }
 
-    private var showsAgendaEditor: Bool {
-        mode != .library
-    }
-
-    private var selectedMeeting: MeetingRecord? {
-        if let selectedMeetingID,
-           let selected = editableMeetings.first(where: { $0.id == selectedMeetingID }) {
-            return selected
-        }
-        return editableMeetings.first
-    }
-
     private func actionTitle(for meeting: MeetingRecord) -> String {
         if hasReadableTranscript(meeting) {
             return "Open Transcript"
@@ -331,32 +283,6 @@ struct TodayAgendaView: View {
             return true
         case .notStarted, .transcribing:
             return false
-        }
-    }
-
-    private func resetDraftFromSelection() {
-        guard let selectedMeeting else {
-            draft = AgendaDraft()
-            recordBackedDraft = draft
-            draftMeetingID = nil
-            saveError = nil
-            return
-        }
-        draft = AgendaDraft(meeting: selectedMeeting)
-        recordBackedDraft = draft
-        draftMeetingID = selectedMeeting.id
-        saveError = nil
-    }
-
-    private func saveSelectedAgenda() {
-        guard let meetingID = selectedMeeting?.id else { return }
-        do {
-            try saveAgenda(meetingID, draft.update())
-            saveError = nil
-            recordBackedDraft = draft
-            draftMeetingID = meetingID
-        } catch {
-            saveError = "Could not save agenda: \(error)"
         }
     }
 }
