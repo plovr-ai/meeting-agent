@@ -333,6 +333,17 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(insightSource.contains("No decisions, action items, open questions, or risks were found."))
     }
 
+    func testSummaryOverviewRendersTagChipsWithHoverHelp() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("SummaryTagChipsView(tags: summary.tags)"))
+        XCTAssertTrue(source.contains("private struct SummaryTagChipsView"))
+        XCTAssertTrue(source.contains("CommandCenterChip(title: tag.label"))
+        XCTAssertTrue(source.contains(".help(helpText(for: tag))"))
+        XCTAssertTrue(source.contains("\"Confidence: \\(confidencePercent(for: tag))%\""))
+        XCTAssertTrue(source.contains("\"Evidence: \\(tag.sourceSegmentIDs.count) segments\""))
+    }
+
     func testMainWindowHasSettingsDestinationAndNoInlineConfigurationFields() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

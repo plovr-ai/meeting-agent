@@ -1193,6 +1193,9 @@ private struct InsightPaneView: View {
         CommandCenterPanel {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Summary").commandCenterEyebrow()
+                if let summary, !summary.tags.isEmpty {
+                    SummaryTagChipsView(tags: summary.tags)
+                }
                 Text(summary?.overview.isEmpty == false ? summary?.overview ?? "" : "Meeting summary will appear here after recording stops.")
                     .commandCenterBody()
                     .lineSpacing(4)
@@ -1673,5 +1676,47 @@ private struct SummaryListView: View {
                 }
             }
         }
+    }
+}
+
+private struct SummaryTagChipsView: View {
+    let tags: [MeetingSummaryTag]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 8) {
+                tagChips
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                tagChips
+            }
+        }
+    }
+
+    private var visibleTags: [MeetingSummaryTag] {
+        tags.filter { !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    @ViewBuilder
+    private var tagChips: some View {
+        ForEach(Array(visibleTags.enumerated()), id: \.offset) { _, tag in
+            CommandCenterChip(title: tag.label, tint: CommandCenterPalette.primary, filled: false)
+                .help(helpText(for: tag))
+        }
+    }
+
+    private func helpText(for tag: MeetingSummaryTag) -> String {
+        var lines = [tag.label]
+        if let rationale = tag.rationale?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rationale.isEmpty {
+            lines.append(rationale)
+        }
+        lines.append("Confidence: \(confidencePercent(for: tag))%")
+        lines.append("Evidence: \(tag.sourceSegmentIDs.count) segments")
+        return lines.joined(separator: "\n")
+    }
+
+    private func confidencePercent(for tag: MeetingSummaryTag) -> Int {
+        Int((tag.confidence * 100).rounded())
     }
 }
