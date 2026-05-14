@@ -67,6 +67,15 @@ public struct CaptionReducer {
         guard !finalizedUtteranceKeys.contains(key) else { return }
 
         if let location = utteranceLocations[key], document.turns.indices.contains(location.turnIndex) {
+            if shouldMergeFinalWithoutReplacingVisibleDraft(payload, at: location) {
+                mergeCoveredFinal(payload, intoSectionAt: location)
+                finalizedUtteranceKeys.insert(key)
+                if payload.boundary.endsTurn {
+                    sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
+                    document.turns[location.turnIndex].state = .final
+                }
+                return
+            }
             updateSection(at: location, with: payload, state: .final)
             finalizedUtteranceKeys.insert(key)
             if payload.boundary.endsTurn {
@@ -184,34 +193,33 @@ public struct CaptionReducer {
     }
 
     private func finalPayloadIsCoveredByOpenDraft(_ payload: SpeechUtterancePayload, section: CaptionSection) -> Bool {
-        let existingText = normalizedText(section.text)
-        let incomingText = normalizedText(payload.text)
-        guard !existingText.isEmpty,
-              !incomingText.isEmpty,
-              existingText != incomingText,
-              existingText.contains(incomingText)
-        else {
-            return false
-        }
-        return timingsOverlap(section, payload: payload) || payload.startTimeSeconds == nil || section.startTimeSeconds == nil
+        return timingsAreNear(section, payload: payload) || payload.startTimeSeconds == nil || section.startTimeSeconds == nil
     }
 
     private func shouldReplaceOpenDraftSection(_ section: CaptionSection, with payload: SpeechUtterancePayload) -> Bool {
-        let existingText = section.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let incomingText = payload.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !existingText.isEmpty, !incomingText.isEmpty else { return false }
-        if normalizedText(incomingText).hasPrefix(normalizedText(existingText)) {
-            return true
+        return timingsAreNear(section, payload: payload)
+    }
+
+    private func shouldMergeFinalWithoutReplacingVisibleDraft(
+        _ payload: SpeechUtterancePayload,
+        at location: Location
+    ) -> Bool {
+        guard document.turns.indices.contains(location.turnIndex),
+              document.turns[location.turnIndex].state == .draft,
+              document.turns[location.turnIndex].sections.indices.contains(location.sectionIndex)
+        else {
+            return false
         }
-        return timingsOverlap(section, payload: payload)
-            && normalizedText(incomingText).contains(normalizedText(existingText))
+        let section = document.turns[location.turnIndex].sections[location.sectionIndex]
+        guard section.utteranceIDs.count > 1,
+              !sectionIsFullyFinalized(section, providerID: payload.providerID)
+        else {
+            return false
+        }
+        return timingsAreNear(section, payload: payload) || payload.startTimeSeconds == nil || section.startTimeSeconds == nil
     }
 
-    private func normalizedText(_ text: String) -> String {
-        text.filter { !$0.isWhitespace && !$0.isPunctuation }
-    }
-
-    private func timingsOverlap(_ section: CaptionSection, payload: SpeechUtterancePayload) -> Bool {
+    private func timingsAreNear(_ section: CaptionSection, payload: SpeechUtterancePayload) -> Bool {
         guard let sectionStart = section.startTimeSeconds,
               let sectionEnd = section.endTimeSeconds,
               let payloadStart = payload.startTimeSeconds,
@@ -219,8 +227,9 @@ public struct CaptionReducer {
         else {
             return false
         }
-        let tolerance = 0.25
-        return sectionStart <= payloadEnd + tolerance && payloadStart <= sectionEnd + tolerance
+        guard payloadEnd >= sectionStart else { return false }
+        let tolerance = 2.0
+        return payloadStart <= sectionEnd + tolerance
     }
 
     private mutating func updateSection(at location: Location, with payload: SpeechUtterancePayload, state: CaptionTurnState) {

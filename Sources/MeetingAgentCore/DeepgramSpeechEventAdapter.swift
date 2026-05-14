@@ -20,7 +20,12 @@ public enum DeepgramSpeechEventAdapter {
                     payload: SpeechUtterancePayload(
                         providerID: providerID,
                         providerResultID: response.metadata?.requestID,
-                        providerUtteranceID: activeUtteranceID(providerID: providerID, words: words, responseStart: response.start),
+                        providerUtteranceID: activeUtteranceID(
+                            providerID: providerID,
+                            words: words,
+                            responseStart: response.start,
+                            runIndex: nil
+                        ),
                         speaker: nil,
                         startTimeSeconds: response.start,
                         endTimeSeconds: response.start.map { $0 + (response.duration ?? 0) },
@@ -48,10 +53,15 @@ public enum DeepgramSpeechEventAdapter {
                 payload: SpeechUtterancePayload(
                     providerID: providerID,
                     providerResultID: response.metadata?.requestID,
-                    providerUtteranceID: activeUtteranceID(providerID: providerID, words: run.words, responseStart: response.start),
+                    providerUtteranceID: activeUtteranceID(
+                        providerID: providerID,
+                        words: run.words,
+                        responseStart: response.start,
+                        runIndex: runs.count > 1 ? index : nil
+                    ),
                     speaker: speaker(for: run.speaker),
-                    startTimeSeconds: run.words.first?.start,
-                    endTimeSeconds: run.words.last?.end,
+                    startTimeSeconds: response.start ?? run.words.first?.start,
+                    endTimeSeconds: response.start.map { $0 + (response.duration ?? 0) } ?? run.words.last?.end,
                     text: text,
                     language: response.metadata?.detectedLanguage,
                     confidence: alternative.confidence,
@@ -71,12 +81,21 @@ public enum DeepgramSpeechEventAdapter {
     private static func activeUtteranceID(
         providerID: String,
         words: [DeepgramStreamingResponse.Word],
-        responseStart: Double?
+        responseStart: Double?,
+        runIndex: Int?
     ) -> String {
-        if let start = words.first?.start ?? responseStart {
-            return "\(providerID)-stream-\(start)"
+        let baseID: String
+        if let responseStart {
+            baseID = "\(providerID)-stream-\(responseStart)"
+        } else if let start = words.first?.start {
+            baseID = "\(providerID)-stream-\(start)"
+        } else {
+            baseID = "\(providerID)-stream-active"
         }
-        return "\(providerID)-stream-active"
+        if let runIndex {
+            return "\(baseID)-run-\(runIndex)"
+        }
+        return baseID
     }
 
     private static func speakerRuns(from words: [DeepgramStreamingResponse.Word]) -> [SpeakerRun] {

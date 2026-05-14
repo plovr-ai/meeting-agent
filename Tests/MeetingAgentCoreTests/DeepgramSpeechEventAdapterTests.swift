@@ -101,13 +101,13 @@ final class DeepgramSpeechEventAdapterTests: XCTestCase {
 
     func testInterimResultsWithDriftingWordStartIDsStillCollapseInReducer() throws {
         let responses = [
-            deepgramResult(start: 7.6, duration: 0.4, isFinal: false, speechFinal: false, text: "英国", words: [
+            deepgramResult(start: 0.0, duration: 8.0, isFinal: false, speechFinal: false, text: "英国", words: [
                 word("英国", start: 7.6, end: 8.0)
             ]),
-            deepgramResult(start: 7.7, duration: 0.4, isFinal: false, speechFinal: false, text: "英国、法国、德国", words: [
+            deepgramResult(start: 0.0, duration: 8.1, isFinal: false, speechFinal: false, text: "英国、法国、德国", words: [
                 word("英国、法国、德国", start: 7.7, end: 8.1)
             ]),
-            deepgramResult(start: 7.7, duration: 1.5, isFinal: false, speechFinal: false, text: "英国、法国、德国这些在近代", words: [
+            deepgramResult(start: 0.0, duration: 9.2, isFinal: false, speechFinal: false, text: "英国、法国、德国这些在近代", words: [
                 word("英国、法国、德国这些在近代", start: 7.7, end: 9.2)
             ])
         ]
@@ -121,10 +121,12 @@ final class DeepgramSpeechEventAdapterTests: XCTestCase {
         }.document
 
         XCTAssertEqual(events.compactMap(\.payload?.providerUtteranceID), [
-            "deepgram-transcribe-stream-7.6",
-            "deepgram-transcribe-stream-7.7",
-            "deepgram-transcribe-stream-7.7"
+            "deepgram-transcribe-stream-0.0",
+            "deepgram-transcribe-stream-0.0",
+            "deepgram-transcribe-stream-0.0"
         ])
+        XCTAssertEqual(events.compactMap(\.payload?.startTimeSeconds), [0.0, 0.0, 0.0])
+        XCTAssertEqual(events.compactMap(\.payload?.endTimeSeconds), [8.0, 8.1, 9.2])
         XCTAssertEqual(document.turns.count, 1)
         XCTAssertEqual(document.turns[0].sections.count, 1)
         XCTAssertEqual(document.turns[0].text, "英国、法国、德国这些在近代")
@@ -275,6 +277,10 @@ final class DeepgramSpeechEventAdapterTests: XCTestCase {
 
         XCTAssertEqual(events.count, 2)
         XCTAssertEqual(events.compactMap(\.payload?.speaker?.identifier), ["deepgram-speaker-0", "deepgram-speaker-1"])
+        XCTAssertEqual(events.compactMap(\.payload?.providerUtteranceID), [
+            "deepgram-transcribe-stream-0.0-run-0",
+            "deepgram-transcribe-stream-0.0-run-1"
+        ])
         XCTAssertEqual(events.map(\.isFinal), [true, true])
         XCTAssertEqual(events.compactMap(\.payload?.boundary.speechFinal), [false, true])
         XCTAssertEqual(events.compactMap(\.payload?.boundary.punctuationFinal), [true, true])

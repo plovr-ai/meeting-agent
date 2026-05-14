@@ -27,6 +27,34 @@ final class CaptionReducerTests: XCTestCase {
         XCTAssertEqual(document.turns[0].source.utteranceIDs, ["utt-1", "utt-2", "utt-3"])
     }
 
+    func testDriftingInterimHypothesesWithinProtocolWindowReplaceOpenDraftSection() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(id: "utt-1", text: "决定找了一家", speakerID: "speaker-0", start: 0.80, end: 0.96)))
+        _ = reducer.apply(.hypothesis(payload(id: "utt-2", text: "这边找了一家女官", speakerID: "speaker-0", start: 1.20, end: 1.36)))
+        _ = reducer.apply(.hypothesis(payload(id: "utt-3", text: "这边找了一家旅馆正在", speakerID: "speaker-0", start: 1.52, end: 1.76)))
+        let document = reducer.apply(.hypothesis(payload(id: "utt-4", text: "指定找了一家旅馆正叫撞见老板娘在", speakerID: "speaker-0", start: 2.88, end: 3.04)))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 1)
+        XCTAssertEqual(document.turns[0].text, "指定找了一家旅馆正叫撞见老板娘在")
+        XCTAssertEqual(document.turns[0].source.utteranceIDs, ["utt-1", "utt-2", "utt-3", "utt-4"])
+    }
+
+    func testLateFinalForEarlierUtteranceDoesNotShortenNewerOverlappingDraft() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(id: "utt-1", text: "看到来了客人并将手下赶出去去", speakerID: "speaker-0", start: 5.44, end: 5.52)))
+        _ = reducer.apply(.hypothesis(payload(id: "utt-2", text: "我们看到来了客人并将手下赶出去铲去", speakerID: "speaker-0", start: 7.04, end: 7.20)))
+        let document = reducer.apply(.final(payload(id: "utt-1", text: "看到来了客人并将手下赶出去去", speakerID: "speaker-0", start: 5.44, end: 5.52)))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 1)
+        XCTAssertEqual(document.turns[0].text, "我们看到来了客人并将手下赶出去铲去")
+        XCTAssertEqual(document.turns[0].state, .draft)
+        XCTAssertEqual(document.turns[0].source.utteranceIDs, ["utt-1", "utt-2"])
+    }
+
     func testUnrelatedInterimHypothesisWithNewUtteranceIDStartsReadableSection() {
         var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
 

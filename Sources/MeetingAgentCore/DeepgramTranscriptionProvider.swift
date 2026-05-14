@@ -380,7 +380,12 @@ public enum DeepgramStreamingResponseMapper {
             guard !text.isEmpty else { return [] }
             return [
                 TranscriptSegment(
-                    id: activeSegmentID(providerID: providerID, words: words),
+                    id: activeSegmentID(
+                        providerID: providerID,
+                        words: words,
+                        responseStart: response.start,
+                        runIndex: nil
+                    ),
                     text: text,
                     language: response.metadata?.detectedLanguage,
                     sourceProvider: providerID,
@@ -390,7 +395,7 @@ public enum DeepgramStreamingResponseMapper {
                 )
             ]
         }
-        let mapped = runs.compactMap { run -> TranscriptSegment? in
+        let mapped = runs.enumerated().compactMap { index, run -> TranscriptSegment? in
             let text = run.words
                 .map { $0.displayText }
                 .joined(separator: " ")
@@ -399,7 +404,12 @@ public enum DeepgramStreamingResponseMapper {
             let firstWord = run.words.first
             let lastWord = run.words.last
             return TranscriptSegment(
-                id: activeSegmentID(providerID: providerID, words: run.words),
+                id: activeSegmentID(
+                    providerID: providerID,
+                    words: run.words,
+                    responseStart: response.start,
+                    runIndex: runs.count > 1 ? index : nil
+                ),
                 speaker: speaker(for: run.speaker),
                 startTimeSeconds: firstWord?.start,
                 endTimeSeconds: lastWord?.end,
@@ -432,13 +442,24 @@ public enum DeepgramStreamingResponseMapper {
         }
     }
 
-    private static func activeSegmentID(providerID: String, words: [DeepgramStreamingResponse.Word]) -> String {
-        guard let firstWord = words.first,
-              let start = firstWord.start
-        else {
-            return "\(providerID)-stream-active"
+    private static func activeSegmentID(
+        providerID: String,
+        words: [DeepgramStreamingResponse.Word],
+        responseStart: Double?,
+        runIndex: Int?
+    ) -> String {
+        let baseID: String
+        if let responseStart {
+            baseID = "\(providerID)-stream-\(responseStart)"
+        } else if let start = words.first?.start {
+            baseID = "\(providerID)-stream-\(start)"
+        } else {
+            baseID = "\(providerID)-stream-active"
         }
-        return "\(providerID)-stream-\(start)"
+        if let runIndex {
+            return "\(baseID)-run-\(runIndex)"
+        }
+        return baseID
     }
 
     private static func speakerRuns(from words: [DeepgramStreamingResponse.Word]) -> [SpeakerRun] {
