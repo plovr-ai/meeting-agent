@@ -346,6 +346,34 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.transcriberFactory.requests.first?.localeIdentifier, "zh-CN")
     }
 
+    func testStartRecordingExistingMeetingUsesMeetingLocaleOverride() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        var record = try fixture.store.createMeeting(
+            name: "Mandarin Standup",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        record.speechLocaleIdentifier = "zh-CN"
+        try fixture.store.save(record)
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [target] }
+        )
+        try viewModel.loadMeetings()
+
+        try await viewModel.startRecording(for: target, meetingID: record.id)
+
+        XCTAssertEqual(fixture.transcriberFactory.requests.first?.localeIdentifier, "zh-CN")
+        XCTAssertEqual(viewModel.meetings.first?.speechLocaleIdentifier, "zh-CN")
+    }
+
     func testStartRecordingForPendingCandidateWithoutCandidateIsNoop() async throws {
         let fixture = try ViewModelRecorderFixture()
         let viewModel = MeetingAgentViewModel(

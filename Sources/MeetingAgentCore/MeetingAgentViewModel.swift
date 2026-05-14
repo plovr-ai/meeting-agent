@@ -254,7 +254,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
         persistMeetingGoalForSelectedMeeting()
-        try await startRecordingPreparedRecord(record, target: candidate, localeIdentifier: localeIdentifier)
+        try await startRecordingPreparedRecord(
+            record,
+            target: candidate,
+            localeIdentifier: localeIdentifier ?? speechConfiguration.localeIdentifier
+        )
     }
 
     public func startRecording(
@@ -282,7 +286,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         activeMeetingID = record.id
         startRealtimeSpeakerIdentificationRuntime()
         pendingCandidate = nil
-        let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier) ?? speechConfiguration.localeIdentifier
+        let recordingLocaleIdentifier = localeIdentifier.map(Self.normalizedSpeechLocaleIdentifier)
+            ?? Self.normalizedSpeechLocaleIdentifier(record.speechLocaleIdentifier)
         var recordingConfiguration = speechConfiguration
         recordingConfiguration.localeIdentifier = recordingLocaleIdentifier
         do {
@@ -719,7 +724,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.transcriptionFailureReason = nil
         record.speechProvider = speechConfiguration.provider
         record.transcriptionProviderID = speechConfiguration.effectiveTranscriptionProviderID
-        record.speechLocaleIdentifier = speechConfiguration.localeIdentifier
+        let retryLocaleIdentifier = Self.normalizedSpeechLocaleIdentifier(record.speechLocaleIdentifier)
+        record.speechLocaleIdentifier = retryLocaleIdentifier
         meetings[index] = record
         try? store.save(record)
 
@@ -730,21 +736,25 @@ public final class MeetingAgentViewModel: ObservableObject {
         do {
             let previousTranscript = try? String(contentsOf: transcriptURL, encoding: .utf8)
             if speechConfiguration.usesDeepgram {
-                let provider = DeepgramAudioTranscriptionProvider(appConfiguration: speechConfiguration)
+                var retryConfiguration = speechConfiguration
+                retryConfiguration.localeIdentifier = retryLocaleIdentifier
+                let provider = DeepgramAudioTranscriptionProvider(appConfiguration: retryConfiguration)
                 let document = try await provider.transcribe(
-                    audio: AudioInput(wavURL: audioURL, localeIdentifier: speechConfiguration.localeIdentifier),
-                    options: TranscriptionOptions(sourceLocale: speechConfiguration.localeIdentifier)
+                    audio: AudioInput(wavURL: audioURL, localeIdentifier: retryLocaleIdentifier),
+                    options: TranscriptionOptions(sourceLocale: retryLocaleIdentifier)
                 )
                 try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(document.segments))
             } else {
+                var retryConfiguration = speechConfiguration
+                retryConfiguration.localeIdentifier = retryLocaleIdentifier
                 let provider = SpeechTranscriptionProviderFactory.provider(
-                    for: speechConfiguration.provider,
-                    configuration: speechConfiguration
+                    for: retryConfiguration.provider,
+                    configuration: retryConfiguration
                 )
                 try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
                     inputAudioURL: audioURL,
                     transcriptURL: transcriptURL,
-                    localeIdentifier: speechConfiguration.localeIdentifier,
+                    localeIdentifier: retryLocaleIdentifier,
                     meetingID: record.id,
                     previousTranscript: previousTranscript
                 ))
