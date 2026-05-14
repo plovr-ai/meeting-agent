@@ -265,6 +265,60 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(audioFrameSent.metadata["timestampNanos"], "10")
     }
 
+    func testStreamingProviderForwardsSpeechRecognitionEvents() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-events-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        }
+        let session = FakeDeepgramStreamingSession()
+        let client = FakeDeepgramStreamingClient(session: session)
+        let eventSink = RecordingSpeechRecognitionEventSinkForTests()
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "zh-CN",
+            sampleRate: 48_000,
+            channelCount: 1,
+            speechEventSink: eventSink
+        ))
+
+        session.yieldJSON("""
+        {
+          "is_final": false,
+          "channel": {
+            "alternatives": [
+              {
+                "transcript": "你好",
+                "confidence": 0.8,
+                "words": [
+                  { "word": "你好", "punctuated_word": "你好", "start": 0.0, "end": 0.4, "speaker": 0 }
+                ]
+              }
+            ]
+          },
+          "metadata": { "request_id": "request-1", "detected_language": "zh-CN" }
+        }
+        """)
+
+        try await waitFor {
+            eventSink.events.count == 1
+        }
+        transcriber.finish()
+
+        guard case .hypothesis(let payload) = eventSink.events.first else {
+            return XCTFail("Expected hypothesis event")
+        }
+        XCTAssertEqual(payload.text, "你好")
+        XCTAssertEqual(payload.speaker?.identifier, "deepgram-speaker-0")
+    }
+
     func testStreamingProviderPublishesAssignedSpeakerLabelsToLiveUpdateSink() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-live-speaker-label-\(UUID().uuidString)")
@@ -824,10 +878,12 @@ private func performanceEvents(at url: URL) throws -> [PerformanceEvent] {
 
 private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
+    private var eventContinuation: AsyncStream<SpeechRecognitionEvent>.Continuation?
     private(set) var sentFrames: [AudioFrame] = []
     var suspendedFramePCM: Data?
     private var suspendedSendContinuation: CheckedContinuation<Void, Never>?
     let segments: AsyncStream<TranscriptSegment>
+    let speechEvents: AsyncStream<SpeechRecognitionEvent>
 
     var isSuspendingFrame: Bool {
         suspendedSendContinuation != nil
@@ -835,10 +891,15 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
 
     init() {
         var streamContinuation: AsyncStream<TranscriptSegment>.Continuation!
+        var eventStreamContinuation: AsyncStream<SpeechRecognitionEvent>.Continuation!
         self.segments = AsyncStream { continuation in
             streamContinuation = continuation
         }
+        self.speechEvents = AsyncStream { continuation in
+            eventStreamContinuation = continuation
+        }
         self.continuation = streamContinuation
+        self.eventContinuation = eventStreamContinuation
     }
 
     func send(_ frame: AudioFrame) async throws {
@@ -857,6 +918,7 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
 
     func close() async {
         continuation?.finish()
+        eventContinuation?.finish()
     }
 
     func yield(_ segment: TranscriptSegment) {
@@ -870,6 +932,20 @@ private final class FakeDeepgramStreamingSession: DeepgramStreamingTranscription
         ) {
             continuation?.yield(segment)
         }
+        for event in DeepgramSpeechEventAdapter.events(
+            from: Data(json.utf8),
+            providerID: "deepgram-transcribe"
+        ) {
+            eventContinuation?.yield(event)
+        }
+    }
+}
+
+private final class RecordingSpeechRecognitionEventSinkForTests: SpeechRecognitionEventSink {
+    private(set) var events: [SpeechRecognitionEvent] = []
+
+    func receive(_ event: SpeechRecognitionEvent) {
+        events.append(event)
     }
 }
 
