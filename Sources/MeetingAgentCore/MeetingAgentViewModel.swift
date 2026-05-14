@@ -5,7 +5,7 @@ import Foundation
 public final class MeetingAgentViewModel: ObservableObject {
     public static let supportedLocaleIdentifiers = [
         "en-US",
-        "zh-CN",
+        "zh-Hans",
         "zh-TW",
         "ja-JP",
         "ko-KR",

@@ -2636,7 +2636,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
     func testSupportedLocaleIdentifiersIncludeInitialSettingsChoices() {
         XCTAssertEqual(MeetingAgentViewModel.supportedLocaleIdentifiers, [
             "en-US",
-            "zh-CN",
+            "zh-Hans",
             "zh-TW",
             "ja-JP",
             "ko-KR",
