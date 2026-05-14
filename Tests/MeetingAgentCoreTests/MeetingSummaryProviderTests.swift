@@ -105,10 +105,10 @@ final class MeetingSummaryProviderTests: XCTestCase {
                 endedAt: Date(timeIntervalSince1970: 1_777_000_600),
                 language: "en-US",
                 meetingGoal: nil,
-                segments: [
-                    TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
-                    TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
-                ],
+                transcript: Self.transcriptView(turns: [
+                    Self.turn(id: "segment-1", text: "We decided to launch on May 1.", sourceIDs: ["segment-1"]),
+                    Self.turn(id: "segment-2", text: "Alex will follow up with legal.", sourceIDs: ["segment-2"])
+                ]),
                 generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
             )
         )
@@ -137,6 +137,50 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertTrue(client.requests.first?.messages.last?.content.contains("segment-1") == true)
     }
 
+    func testOpenRouterSummaryPromptUsesConsumptionTurnsWithSourceEvidence() async throws {
+        let client = RecordingOpenRouterChatClient(responseContent: """
+        {
+          "overview": "团队确认负责人。",
+          "keyTopics": [],
+          "decisions": [],
+          "actionItems": [],
+          "openQuestions": [],
+          "risks": [],
+          "followUps": []
+        }
+        """)
+        let provider = OpenRouterMeetingSummaryProvider(
+            configuration: OpenRouterChatConfiguration(apiKey: "test-key", model: "openai/gpt-4.1-mini"),
+            client: client
+        )
+
+        _ = try await provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: "Launch Review",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                endedAt: nil,
+                language: "zh-CN",
+                meetingGoal: nil,
+                transcript: Self.transcriptView(turns: [
+                    Self.turn(
+                        id: "turn-1",
+                        speakerLabel: "Allan",
+                        text: "我们确认负责人。",
+                        startTimeSeconds: 12,
+                        endTimeSeconds: 25,
+                        sourceIDs: ["utt-1"]
+                    )
+                ]),
+                generatedAt: Date(timeIntervalSince1970: 1_777_000_100)
+            )
+        )
+
+        let prompt = try XCTUnwrap(client.requests.first?.messages.last?.content)
+        XCTAssertTrue(prompt.contains("[00:00:12-00:00:25] Allan"))
+        XCTAssertTrue(prompt.contains("我们确认负责人。"))
+        XCTAssertTrue(prompt.contains("source: utt-1"))
+    }
+
     func testOpenRouterProviderFallsBackToLocalGeneratedTitleWhenPayloadOmitsTitle() async throws {
         let client = RecordingOpenRouterChatClient(responseContent: """
         {
@@ -161,9 +205,9 @@ final class MeetingSummaryProviderTests: XCTestCase {
                 endedAt: Date(timeIntervalSince1970: 1_777_000_600),
                 language: "en-US",
                 meetingGoal: nil,
-                segments: [
-                    TranscriptSegment(id: "segment-1", text: "We agreed to update renewal pricing next week.", language: "en-US")
-                ],
+                transcript: Self.transcriptView(turns: [
+                    Self.turn(id: "segment-1", text: "We agreed to update renewal pricing next week.", sourceIDs: ["segment-1"])
+                ]),
                 generatedAt: Date(timeIntervalSince1970: 1_777_000_700)
             )
         )
@@ -198,9 +242,9 @@ final class MeetingSummaryProviderTests: XCTestCase {
                 language: "en-US",
                 targetLanguage: "zh-CN",
                 meetingGoal: nil,
-                segments: [
-                    TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US")
-                ],
+                transcript: Self.transcriptView(turns: [
+                    Self.turn(id: "segment-1", text: "We decided to launch on May 1.", sourceIDs: ["segment-1"])
+                ]),
                 generatedAt: Date(timeIntervalSince1970: 1_777_000_100)
             )
         )
@@ -224,7 +268,9 @@ final class MeetingSummaryProviderTests: XCTestCase {
                 endedAt: nil,
                 language: "en-US",
                 meetingGoal: nil,
-                segments: [TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.")],
+                transcript: Self.transcriptView(turns: [
+                    Self.turn(id: "segment-1", text: "We decided to launch on May 1.", sourceIDs: ["segment-1"])
+                ]),
                 generatedAt: Date(timeIntervalSince1970: 1_777_000_100)
             )
         )
@@ -306,6 +352,43 @@ final class MeetingSummaryProviderTests: XCTestCase {
 
         XCTAssertTrue(markdown.contains("Status: failed"))
         XCTAssertTrue(markdown.contains("No transcript was available."))
+    }
+
+    private static func transcriptView(turns: [TranscriptConsumptionTurn], language: String = "en-US") -> TranscriptConsumptionView {
+        TranscriptConsumptionView(
+            meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            language: language,
+            provider: CaptionProviderInfo(id: "test", locale: language),
+            finalTurns: turns,
+            quality: TranscriptConsumptionQuality(finalTurnCount: turns.count)
+        )
+    }
+
+    private static func turn(
+        id: String,
+        speakerLabel: String = "Alex",
+        text: String,
+        startTimeSeconds: Double? = nil,
+        endTimeSeconds: Double? = nil,
+        sourceIDs: [String]
+    ) -> TranscriptConsumptionTurn {
+        TranscriptConsumptionTurn(
+            turnID: id,
+            speakerID: speakerLabel.lowercased(),
+            speakerLabel: speakerLabel,
+            sections: [
+                TranscriptConsumptionSection(
+                    id: "\(id)-section",
+                    text: text,
+                    startTimeSeconds: startTimeSeconds,
+                    endTimeSeconds: endTimeSeconds,
+                    sourceIDs: sourceIDs
+                )
+            ],
+            startTimeSeconds: startTimeSeconds,
+            endTimeSeconds: endTimeSeconds,
+            sourceIDs: sourceIDs
+        )
     }
 }
 

@@ -604,7 +604,8 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw ProbeError.invalidArguments("Meeting has no summary output URL")
         }
 
-        let transcript = try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        let transcript = try MeetingTranscriptStore.readDocument(from: transcriptJSONURL)
+        let consumptionView = TranscriptConsumptionView.project(meetingID: meeting.id, document: transcript)
         let progress = progressState(for: meeting)
         let provider = summaryProviderFactory(speechConfiguration)
         let summary = try await provider.generateSummary(
@@ -615,7 +616,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 language: speechLocaleIdentifier,
                 targetLanguage: speechConfiguration.localeIdentifier,
                 meetingGoal: summaryGoalContext(for: progress),
-                segments: transcript.segments.filter(\.isFinal),
+                transcript: consumptionView,
                 generatedAt: generatedAt
             )
         )

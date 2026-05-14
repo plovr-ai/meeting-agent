@@ -166,7 +166,35 @@ enum MeetingSummaryTitleGenerator {
         overview: String,
         segments: [TranscriptSegment]
     ) -> String? {
-        let candidates = [overview] + segments.map(\.text) + keyTopics
+        title(
+            meetingName: meetingName,
+            keyTopics: keyTopics,
+            overview: overview,
+            transcriptTexts: segments.map(\.text)
+        )
+    }
+
+    static func title(
+        meetingName: String,
+        keyTopics: [String],
+        overview: String,
+        transcriptTurns: [TranscriptConsumptionTurn]
+    ) -> String? {
+        title(
+            meetingName: meetingName,
+            keyTopics: keyTopics,
+            overview: overview,
+            transcriptTexts: transcriptTurns.map(\.text)
+        )
+    }
+
+    private static func title(
+        meetingName: String,
+        keyTopics: [String],
+        overview: String,
+        transcriptTexts: [String]
+    ) -> String? {
+        let candidates = [overview] + transcriptTexts + keyTopics
         for candidate in candidates {
             guard let normalized = normalizedTitle(candidate),
                   !isGenericMeetingName(normalized),
@@ -266,7 +294,7 @@ public struct MeetingSummaryInput: Equatable {
     public let language: String?
     public let targetLanguage: String?
     public let meetingGoal: String?
-    public let segments: [TranscriptSegment]
+    public let transcript: TranscriptConsumptionView
     public let generatedAt: Date
 
     public init(
@@ -276,7 +304,7 @@ public struct MeetingSummaryInput: Equatable {
         language: String?,
         targetLanguage: String? = nil,
         meetingGoal: String?,
-        segments: [TranscriptSegment],
+        transcript: TranscriptConsumptionView,
         generatedAt: Date = Date()
     ) {
         self.meetingName = meetingName
@@ -285,7 +313,7 @@ public struct MeetingSummaryInput: Equatable {
         self.language = language
         self.targetLanguage = targetLanguage
         self.meetingGoal = meetingGoal
-        self.segments = segments
+        self.transcript = transcript
         self.generatedAt = generatedAt
     }
 }

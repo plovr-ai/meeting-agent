@@ -319,10 +319,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
         stored.meetingGoal = goal
         try store.save(stored)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "Alex is the launch owner.", language: "en-US")
-        ])
+        ]), for: stored)
         let progress = MeetingProgressState(
             meetingID: stored.id,
             goal: goal,
@@ -2211,12 +2210,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
         stored.record.endedAt = Date(timeIntervalSince1970: 1_777_000_600)
         try store.save(stored.record)
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
             TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(
             store: store,
             speechLocaleIdentifier: "en-US",
@@ -2245,11 +2242,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             name: "Google Chrome",
             startedAt: Date(timeIntervalSince1970: 1_777_000_000)
         )
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We agreed to update renewal pricing next week.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(
             store: store,
             speechLocaleIdentifier: "en-US",
@@ -2277,11 +2272,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             name: "Quarterly Launch Review",
             startedAt: Date(timeIntervalSince1970: 1_777_000_000)
         )
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We agreed to update renewal pricing next week.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(
             store: store,
             speechLocaleIdentifier: "en-US",
@@ -2310,11 +2303,20 @@ final class MeetingAgentViewModelTests: XCTestCase {
             name: "Summary interim filtering",
             startedAt: Date(timeIntervalSince1970: 100)
         )
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
-        try writer.replace(with: [
-            TranscriptSegment(id: "draft", text: "draft should not summarize", isFinal: false),
-            TranscriptSegment(id: "final", text: "final should summarize", isFinal: true, speechFinal: true)
-        ])
+        try FileTranscriptRepository().saveCaptionDocument(CaptionDocument(turns: [
+            CaptionTurn(
+                id: "draft",
+                sections: [CaptionSection(text: "draft should not summarize")],
+                state: .draft,
+                source: CaptionTurnSource(providerID: "test")
+            ),
+            CaptionTurn(
+                id: "final",
+                sections: [CaptionSection(text: "final should summarize", utteranceIDs: ["final"])],
+                state: .final,
+                source: CaptionTurnSource(providerID: "test", utteranceIDs: ["final"])
+            )
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(
             store: store,
             speechLocaleIdentifier: "en-US",
@@ -2324,7 +2326,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         try await viewModel.generateSummary(for: stored.record.id)
 
-        XCTAssertEqual(provider.receivedInputs.last?.segments.map(\.id), ["final"])
+        XCTAssertEqual(provider.receivedInputs.last?.transcript.finalTurns.map(\.turnID), ["final"])
     }
 
     func testGenerateSummaryUsesConfiguredSummaryModelIndependentlyFromTranslationModel() async throws {
@@ -2335,11 +2337,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             name: "Launch Review",
             startedAt: Date(timeIntervalSince1970: 1_777_000_000)
         )
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored.record)
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
@@ -2379,11 +2379,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             name: "Launch Review",
             startedAt: Date(timeIntervalSince1970: 1_777_000_000)
         )
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored.record)
         let provider = CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini")
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
@@ -2481,9 +2479,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Empty Review", startedAt: Date(timeIntervalSince1970: 100))
-        let transcriptWriter = try TranscriptFileWriter(url: stored.record.transcriptURL!)
-        try transcriptWriter.replace(with: [TranscriptSegment(id: "blank", text: "   ")])
-        try transcriptWriter.close()
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(id: "blank", text: "   ")
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(store: store, speechLocaleIdentifier: "en-US", processTargetsProvider: { [] })
         try viewModel.loadMeetings()
 
@@ -2517,11 +2515,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         var stored = try store.createMeeting(name: "Legacy Meeting", startedAt: Date(timeIntervalSince1970: 100)).record
         stored.summaryJSONURL = nil
         try store.save(stored)
-        let transcriptWriter = try TranscriptFileWriter(url: stored.transcriptURL!, structuredURL: stored.transcriptJSONURL!)
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "We decided to launch.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored)
         let viewModel = MeetingAgentViewModel(
             store: store,
             summaryProviderFactory: { _ in CapturingSummaryProvider(providerName: "openrouter:openai/gpt-4.1-mini") },
@@ -2975,6 +2971,39 @@ private final class ViewModelFakeCaptureSession: AudioCaptureSessionManaging {
     }
 }
 
+private func summaryCaptionDocument(_ segments: [TranscriptSegment]) -> CaptionDocument {
+    CaptionDocument(
+        turns: segments.map { segment in
+            CaptionTurn(
+                id: segment.id,
+                speakerID: segment.speakerID,
+                speakerLabel: segment.speakerLabel,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                sections: [
+                    CaptionSection(
+                        id: "\(segment.id)-section",
+                        text: segment.text,
+                        utteranceIDs: [segment.id],
+                        startTimeSeconds: segment.startTimeSeconds,
+                        endTimeSeconds: segment.endTimeSeconds
+                    )
+                ],
+                state: segment.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: segment.sourceProvider,
+                    utteranceIDs: [segment.id]
+                ),
+                createdAt: segment.createdAt,
+                updatedAt: segment.createdAt
+            )
+        },
+        provider: segments.compactMap(\.language).first.map {
+            CaptionProviderInfo(id: "test", locale: $0)
+        }
+    )
+}
+
 private final class ViewModelFakeAudioFrameWriter: AudioFrameWriting {
     func append(_ frame: AudioFrame) throws {}
     func close() throws {}
@@ -3162,37 +3191,37 @@ private final class CapturingSummaryProvider: MeetingSummaryProvider {
 
     func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
         receivedInputs.append(input)
-        let usableSegments = input.segments.filter {
+        let usableTurns = input.transcript.finalTurns.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        let decisions = usableSegments
+        let decisions = usableTurns
             .filter { $0.text.lowercased().contains("decided") || $0.text.lowercased().contains("agreed") }
             .map {
                 MeetingDecision(
                     description: $0.text,
                     participants: [],
-                    sourceSegmentIDs: [$0.id],
+                    sourceSegmentIDs: $0.sourceIDs.isEmpty ? [$0.turnID] : $0.sourceIDs,
                     confidence: 0.8
                 )
             }
-        let actionItems = usableSegments
+        let actionItems = usableTurns
             .filter { $0.text.lowercased().contains("follow up") || $0.text.lowercased().contains("will") }
             .map {
                 MeetingActionItem(
                     description: $0.text,
                     owner: nil,
                     dueDate: nil,
-                    sourceSegmentIDs: [$0.id],
+                    sourceSegmentIDs: $0.sourceIDs.isEmpty ? [$0.turnID] : $0.sourceIDs,
                     confidence: 0.8
                 )
             }
-        let overview = usableSegments.map(\.text).joined(separator: " ")
+        let overview = usableTurns.map(\.text).joined(separator: " ")
         return MeetingSummary(
             autoGeneratedTitle: MeetingSummaryTitleGenerator.title(
                 meetingName: input.meetingName,
                 keyTopics: [],
                 overview: overview,
-                segments: input.segments
+                transcriptTurns: input.transcript.finalTurns
             ),
             overview: overview,
             keyTopics: [],
@@ -3202,7 +3231,7 @@ private final class CapturingSummaryProvider: MeetingSummaryProvider {
             risks: [],
             followUps: actionItems.map(\.description),
             language: input.language,
-            sourceSegmentIDs: usableSegments.map(\.id),
+            sourceSegmentIDs: usableTurns.flatMap { $0.sourceIDs.isEmpty ? [$0.turnID] : $0.sourceIDs },
             generatedAt: input.generatedAt,
             provider: providerName,
             status: .succeeded,
