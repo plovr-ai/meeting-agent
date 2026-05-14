@@ -31,10 +31,10 @@ public struct CaptionSpeaker: Codable, Equatable, Identifiable, Sendable {
 
 public struct CaptionSection: Codable, Equatable, Identifiable, Sendable {
     public let id: String
-    public let text: String
-    public let utteranceIDs: [String]
+    public var text: String
+    public var utteranceIDs: [String]
     public let startTimeSeconds: Double?
-    public let endTimeSeconds: Double?
+    public var endTimeSeconds: Double?
 
     public init(
         id: String = UUID().uuidString,
@@ -83,7 +83,7 @@ public struct CaptionTurn: Codable, Equatable, Identifiable, Sendable {
     public let speakerID: String?
     public let speakerLabel: String?
     public let startTimeSeconds: Double?
-    public let endTimeSeconds: Double?
+    public var endTimeSeconds: Double?
     public var sections: [CaptionSection]
     public var state: CaptionTurnState
     public var source: CaptionTurnSource
