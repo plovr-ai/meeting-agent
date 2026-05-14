@@ -35,6 +35,20 @@ struct TranscriptSegment: Codable {
     var speechFinal: Bool?
 }
 
+struct CaptionDocument: Codable {
+    var turns: [CaptionTurn]
+}
+
+struct CaptionTurn: Codable {
+    var id: String
+    var sections: [CaptionSection]
+    var state: String
+}
+
+struct CaptionSection: Codable {
+    var text: String
+}
+
 struct TranslationRecord: Codable {
     var sourceSegmentIDs: [String]
     var sourceText: String
@@ -117,6 +131,27 @@ func decoder() -> JSONDecoder {
 
 func decodeJSON<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
     try decoder().decode(type, from: Data(contentsOf: url))
+}
+
+func loadTranscript(from url: URL) throws -> TranscriptDocument {
+    let data = try Data(contentsOf: url)
+    do {
+        return try decoder().decode(TranscriptDocument.self, from: data)
+    } catch {
+        let captionDocument = try decoder().decode(CaptionDocument.self, from: data)
+        return TranscriptDocument(segments: captionDocument.turns.map { turn in
+            TranscriptSegment(
+                id: turn.id,
+                text: turn.sections
+                    .map(\.text)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n"),
+                isFinal: turn.state == "final",
+                speechFinal: turn.state == "final"
+            )
+        })
+    }
 }
 
 func decodeJSONLLines<T: Decodable>(_ type: T.Type, from url: URL) throws -> [T] {
@@ -202,7 +237,7 @@ do {
     }
 
     let metadata = try decodeJSON(Metadata.self, from: destination.appendingPathComponent("metadata.json"))
-    let transcript = try decodeJSON(TranscriptDocument.self, from: destination.appendingPathComponent("transcript.json"))
+    let transcript = try loadTranscript(from: destination.appendingPathComponent("transcript.json"))
     let translations = try decodeJSONLLines(TranslationRecord.self, from: destination.appendingPathComponent("translation-results.jsonl"))
     try writeJSON(expectedUI(transcript: transcript, translations: translations), to: destination.appendingPathComponent("expected-ui.json"))
 

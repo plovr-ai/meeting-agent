@@ -158,10 +158,7 @@ extension RegressionFixtureFiles {
     }
 
     static func loadTranscript(in fixtureURL: URL) throws -> TranscriptDocument {
-        try JSONDecoder.meetingAgent.decode(
-            TranscriptDocument.self,
-            from: Data(contentsOf: fixtureURL.appendingPathComponent("transcript.json"))
-        )
+        try TranscriptFileWriter.readDocument(from: fixtureURL.appendingPathComponent("transcript.json"))
     }
 
     static func loadTranslationRecords(in fixtureURL: URL) throws -> [TranslationResultPersistenceRecord] {
