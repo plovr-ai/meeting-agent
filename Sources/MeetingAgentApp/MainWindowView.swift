@@ -83,9 +83,6 @@ struct MainWindowView: View {
                     activeMeetingID: viewModel.activeMeetingID,
                     pendingCandidate: viewModel.pendingCandidate,
                     isRecording: viewModel.isRecording,
-                    selectMeeting: { meeting in
-                        viewModel.selectMeeting(meeting.id)
-                    },
                     openWorkspace: { meeting in
                         openWorkspace(from: destination, selecting: meeting)
                     },
@@ -117,12 +114,8 @@ struct MainWindowView: View {
                             }
                         }
                     },
-                    saveAgenda: { meetingID, update in
-                        try viewModel.saveAgenda(for: meetingID, update: update)
-                    },
                     createMeeting: destination == .today ? {
-                        let created = try viewModel.createAgendaMeeting()
-                        viewModel.selectMeeting(created.id)
+                        try viewModel.createAgendaMeeting()
                     } : nil
                 )
             case .workspace:

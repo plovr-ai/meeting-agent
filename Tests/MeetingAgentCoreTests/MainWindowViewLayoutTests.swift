@@ -86,7 +86,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("return viewModel.meetings.filter { isCompleted($0) }"))
     }
 
-    func testTodayAgendaViewDefinesAgendaRowsAndExplicitEditorSaveCancel() throws {
+    func testTodayAgendaViewDefinesAgendaRowsAndDetailOnlyEditor() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
         XCTAssertTrue(source.contains("struct TodayAgendaView"))
@@ -100,6 +100,17 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Button(\"Save\")"))
         XCTAssertTrue(source.contains("Button(\"Cancel\")"))
         XCTAssertTrue(source.contains("Save / Discard / Cancel"))
+
+        guard let agendaRange = source.range(of: "struct TodayAgendaView") else {
+            return XCTFail("TodayAgendaView is missing")
+        }
+        guard let nextViewRange = source.range(of: "private struct AgendaFeedSection", range: agendaRange.upperBound..<source.endIndex) else {
+            return XCTFail("TodayAgendaView boundary is missing")
+        }
+        let agendaSource = source[agendaRange.lowerBound..<nextViewRange.lowerBound]
+        XCTAssertFalse(agendaSource.contains("AgendaEditorView("))
+        XCTAssertFalse(agendaSource.contains("showsAgendaEditor"))
+        XCTAssertFalse(agendaSource.contains("saveSelectedAgenda"))
     }
 
     func testTodayAgendaViewDefinesGoalListEditor() throws {
@@ -124,24 +135,52 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("mode == .today"))
         XCTAssertTrue(source.contains("mode == .library"))
         XCTAssertTrue(source.contains("artifactList"))
-        XCTAssertTrue(source.contains("if showsAgendaEditor"))
+        XCTAssertFalse(source.contains("if showsAgendaEditor"))
         XCTAssertFalse(source.contains("recentGroups"))
         XCTAssertFalse(source.contains("recentHistoryDays"))
         XCTAssertFalse(source.contains("RecentAgendaMeetingCard"))
         XCTAssertTrue(source.contains("Meeting schedule and metadata"))
-        XCTAssertTrue(source.contains("let selected = editableMeetings.first(where: { $0.id == selectedMeetingID })"))
         XCTAssertTrue(source.contains("Summary ready"))
         XCTAssertTrue(source.contains("Transcript ready"))
         XCTAssertTrue(source.contains("Artifacts pending"))
     }
 
-    func testTodayAgendaRefreshesCleanDraftWhenSelectedMeetingRecordChanges() throws {
+    func testAgendaMetadataEditingIsOnlyRenderedInMeetingDetail() throws {
         let source = try appSource(named: "TodayAgendaView.swift")
 
-        XCTAssertTrue(source.contains("@State private var recordBackedDraft = AgendaDraft()"))
-        XCTAssertTrue(source.contains("draft == recordBackedDraft"))
-        XCTAssertTrue(source.contains("recordBackedDraft = draft"))
-        XCTAssertTrue(source.contains("resetDraftFromSelection()"))
+        guard let agendaRange = source.range(of: "struct TodayAgendaView") else {
+            return XCTFail("TodayAgendaView is missing")
+        }
+        guard let editorRange = source.range(of: "struct AgendaEditorView", range: agendaRange.upperBound..<source.endIndex) else {
+            return XCTFail("AgendaEditorView is missing")
+        }
+        let agendaSource = source[agendaRange.lowerBound..<editorRange.lowerBound]
+        XCTAssertFalse(agendaSource.contains("@State private var draft"))
+        XCTAssertFalse(agendaSource.contains("@State private var recordBackedDraft"))
+        XCTAssertFalse(agendaSource.contains("saveAgenda"))
+
+        let mainSource = try appSource(named: "MainWindowView.swift")
+        guard let detailRange = mainSource.range(of: "private struct MeetingCommandCenterView") else {
+            return XCTFail("MeetingCommandCenterView is missing")
+        }
+        guard let transcriptRange = mainSource.range(of: "private struct TranscriptPaneView", range: detailRange.upperBound..<mainSource.endIndex) else {
+            return XCTFail("MeetingCommandCenterView boundary is missing")
+        }
+        let detailSource = mainSource[detailRange.lowerBound..<transcriptRange.lowerBound]
+        XCTAssertTrue(detailSource.contains("@State private var editAgendaTarget"))
+        XCTAssertTrue(detailSource.contains("AgendaEditorView("))
+    }
+
+    func testAgendaRowsAndManualCreateOpenMeetingDetail() throws {
+        let source = try appSource(named: "TodayAgendaView.swift")
+
+        XCTAssertTrue(source.contains("select: {\n                                openWorkspace(meeting)\n                            }"))
+        XCTAssertTrue(source.contains("let meeting = try createMeeting()"))
+        XCTAssertTrue(source.contains("openWorkspace(meeting)"))
+        XCTAssertFalse(source.contains("let selectMeeting"))
+        let mainSource = try appSource(named: "MainWindowView.swift")
+        XCTAssertTrue(mainSource.contains("try viewModel.createAgendaMeeting()"))
+        XCTAssertFalse(mainSource.contains("viewModel.selectMeeting(created.id)"))
     }
 
     func testLiveWorkspaceKeepsAgendaContextInTopRow() throws {
