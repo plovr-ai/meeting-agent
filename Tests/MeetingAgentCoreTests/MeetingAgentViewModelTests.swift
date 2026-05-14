@@ -156,6 +156,27 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(fixture.session.startedSources, [.microphone(displayName: "Computer Microphone")])
     }
 
+    func testStartOfflineMicrophoneRecordingUsesConfiguredSpeechLocale() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "zh-CN",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            processTargetsProvider: { [] }
+        )
+
+        try await viewModel.startOfflineMicrophoneRecording(startedAt: Date(timeIntervalSince1970: 100))
+
+        XCTAssertEqual(viewModel.selectedMeeting?.speechLocaleIdentifier, "zh-CN")
+        XCTAssertEqual(fixture.transcriberFactory.requests.first?.localeIdentifier, "zh-CN")
+    }
+
     func testSpeakerIdentityResolutionUpdatesLiveCaptionDisplayLabelWithoutChangingSpeakerID() async throws {
         let viewModel = MeetingAgentViewModel()
         let segment = TranscriptSegment(

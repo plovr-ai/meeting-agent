@@ -8,6 +8,7 @@ final class SettingsViewLayoutTests: XCTestCase {
 
         XCTAssertFalse(source.contains("Picker(\"Source Locale\""))
         XCTAssertTrue(source.contains("Picker(\"Main Language\""))
+        XCTAssertTrue(source.contains("Picker(\"Main Language\", selection: $draft.localeIdentifier)"))
         XCTAssertFalse(source.contains("Picker(\"Target Locale\""))
         XCTAssertTrue(source.contains("Picker(\"Transcription Mode\""))
         XCTAssertTrue(source.contains("Picker(\"Local Transcription Provider\""))
