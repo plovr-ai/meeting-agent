@@ -121,6 +121,7 @@ struct MainWindowView: View {
             case .workspace:
                 MeetingDetailView(
                     meeting: viewModel.selectedMeeting,
+                    artifactSnapshot: viewModel.selectedMeetingArtifactSnapshot,
                     speechConfiguration: viewModel.speechConfiguration,
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
                     statusText: viewModel.statusText,
@@ -389,6 +390,7 @@ private struct SidebarNavigationButtonStyle: ButtonStyle {
 
 private struct MeetingDetailView: View {
     let meeting: MeetingRecord?
+    let artifactSnapshot: MeetingArtifactSnapshot?
     let speechConfiguration: SpeechTranscriptionConfiguration
     let primaryChainPreflightResult: PrimaryChainPreflightResult
     let statusText: String
@@ -419,15 +421,17 @@ private struct MeetingDetailView: View {
                     transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
                     preflightText: preflightText,
-                    actualTranscriptionSourceText: actualTranscriptionSourceText(for: meeting),
+                    actualTranscriptionSourceText: artifactSnapshot?.actualTranscriptionSourceText ?? meeting.transcriptionProviderID,
                     statusText: statusText,
                     isRecording: isRecording,
                     sourceLocale: speechConfiguration.localeIdentifier,
                     targetLocale: speechConfiguration.localeIdentifier,
                     liveCaptionTurns: liveCaptionTurns,
-                    transcriptText: transcriptText(for: meeting),
+                    transcriptText: artifactSnapshot?.transcriptText ?? "Transcript will appear here while recording.",
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
-                    summary: summary(for: meeting),
+                    summary: artifactSnapshot?.summary,
+                    transcriptSegments: artifactSnapshot?.transcriptSegments ?? [],
+                    transcriptLatencyText: artifactSnapshot?.transcriptLatencyText ?? "unavailable",
                     recommendedQuestions: recommendedQuestions,
                     meetingProgressState: meetingProgressState,
                     saveAgenda: saveAgenda,
@@ -498,16 +502,6 @@ private struct MeetingDetailView: View {
         }
     }
 
-    private func actualTranscriptionSourceText(for meeting: MeetingRecord) -> String {
-        guard let transcriptJSONURL = meeting.transcriptJSONURL,
-              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        else {
-            return meeting.transcriptionProviderID
-        }
-        let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
-        return providers.isEmpty ? meeting.transcriptionProviderID : providers.joined(separator: ", ")
-    }
-
     private func modeDisplayName(_ mode: ProviderExecutionMode) -> String {
         switch mode {
         case .local:
@@ -536,16 +530,6 @@ private struct MeetingDetailView: View {
         }
     }
 
-    private func transcriptText(for meeting: MeetingRecord) -> String {
-        guard let text = TranscriptFileWriter.renderedTranscript(
-            textURL: meeting.transcriptURL,
-            structuredURL: meeting.transcriptJSONURL
-        ) else {
-            return "Transcript will appear here while recording."
-        }
-        return text
-    }
-
     private func transcriptionStatusText(for meeting: MeetingRecord) -> String {
         switch meeting.transcriptionStatus {
         case .notStarted:
@@ -561,10 +545,6 @@ private struct MeetingDetailView: View {
         }
     }
 
-    private func summary(for meeting: MeetingRecord) -> MeetingSummary? {
-        guard let summaryJSONURL = meeting.summaryJSONURL else { return nil }
-        return try? MeetingSummaryWriter.read(from: summaryJSONURL)
-    }
 }
 
 private struct MeetingCommandCenterView: View {
@@ -583,6 +563,8 @@ private struct MeetingCommandCenterView: View {
     let transcriptText: String
     let transcriptionStatusText: String
     let summary: MeetingSummary?
+    let transcriptSegments: [TranscriptSegment]
+    let transcriptLatencyText: String
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let meetingProgressState: MeetingProgressState?
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
@@ -628,6 +610,7 @@ private struct MeetingCommandCenterView: View {
                         liveCaptionTurns: liveCaptionTurns,
                         transcriptText: transcriptText,
                         transcriptionStatusText: transcriptionStatusText,
+                        transcriptLatencyText: transcriptLatencyText,
                         updateSpeakerLabel: updateSpeakerLabel
                     )
                     .frame(minWidth: 520)
@@ -639,6 +622,7 @@ private struct MeetingCommandCenterView: View {
                         meeting: meeting,
                         isRecording: isRecording,
                         summary: summary,
+                        transcriptSegments: transcriptSegments,
                         recommendedQuestions: recommendedQuestions,
                         meetingProgressState: meetingProgressState,
                         exportKnowledgePackage: exportKnowledgePackage
@@ -827,6 +811,7 @@ private struct TranscriptPaneView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
+    let transcriptLatencyText: String
     let updateSpeakerLabel: (String, String) -> Void
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
@@ -989,61 +974,13 @@ private struct TranscriptPaneView: View {
         ].joined(separator: "\n")
     }
 
-    private var transcriptLatencyText: String {
-        PipelineLatencySummary(meeting: meeting).transcriptLatencyText
-    }
-}
-
-private struct PipelineLatencySummary {
-    let meeting: MeetingRecord
-
-    var transcriptLatencyText: String {
-        guard let event = latestTranscriptEvent,
-              let latency = latencySeconds(for: event) else {
-            return "unavailable"
-        }
-        return format(seconds: latency)
-    }
-
-    private var latestTranscriptEvent: PerformanceEvent? {
-        performanceEvents.last(where: { $0.event == "transcript_segment_written" && $0.audioTimeSeconds != nil })
-            ?? performanceEvents.last(where: { $0.event == "stt_segment_received" && $0.audioTimeSeconds != nil })
-    }
-
-    private var performanceEvents: [PerformanceEvent] {
-        guard let url = meeting.performanceEventsURL,
-              let content = try? String(contentsOf: url, encoding: .utf8) else {
-            return []
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return content
-            .split(whereSeparator: \.isNewline)
-            .compactMap { line in
-                try? decoder.decode(PerformanceEvent.self, from: Data(line.utf8))
-            }
-    }
-
-    private func latencySeconds(for event: PerformanceEvent) -> TimeInterval? {
-        guard let audioTimeSeconds = event.audioTimeSeconds else {
-            return nil
-        }
-        let expectedWallTime = meeting.startedAt.addingTimeInterval(audioTimeSeconds)
-        return max(0, event.wallTime.timeIntervalSince(expectedWallTime))
-    }
-
-    private func format(seconds: TimeInterval) -> String {
-        if seconds < 1 {
-            return "\(Int((seconds * 1_000).rounded())) ms"
-        }
-        return String(format: "%.1f s", seconds)
-    }
 }
 
 private struct InsightPaneView: View {
     let meeting: MeetingRecord
     let isRecording: Bool
     let summary: MeetingSummary?
+    let transcriptSegments: [TranscriptSegment]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let meetingProgressState: MeetingProgressState?
     let exportKnowledgePackage: () -> Void
@@ -1123,15 +1060,6 @@ private struct InsightPaneView: View {
                 }
             }
         }
-    }
-
-    private var transcriptSegments: [TranscriptSegment] {
-        guard let transcriptJSONURL = meeting.transcriptJSONURL,
-              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        else {
-            return []
-        }
-        return document.segments
     }
 
     private var phaseSummary: some View {

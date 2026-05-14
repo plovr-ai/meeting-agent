@@ -12,6 +12,17 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains(".defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)"))
     }
 
+    func testMainWindowDoesNotSynchronouslyReadMeetingArtifactsInViewBody() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("artifactSnapshot: viewModel.selectedMeetingArtifactSnapshot"))
+        XCTAssertFalse(source.contains("String(contentsOf:"))
+        XCTAssertFalse(source.contains("Data(contentsOf:"))
+        XCTAssertFalse(source.contains("TranscriptFileWriter.readDocument"))
+        XCTAssertFalse(source.contains("MeetingSummaryWriter.read"))
+        XCTAssertFalse(source.contains("PipelineLatencySummary"))
+    }
+
     func testAgendaSidebarUsesWiderDefaultWidth() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
@@ -243,8 +254,8 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Preflight:"))
         XCTAssertTrue(source.contains("\"Pipeline: \\(pipelineDisplayName)\""))
         XCTAssertTrue(source.contains("\"Transcript Latency: \\(transcriptLatencyText)\""))
-        XCTAssertTrue(source.contains("meeting.performanceEventsURL"))
-        XCTAssertTrue(source.contains("PerformanceEvent.self"))
+        XCTAssertFalse(source.contains("meeting.performanceEventsURL"))
+        XCTAssertFalse(source.contains("PerformanceEvent.self"))
         XCTAssertFalse(source.contains("\"Translation Latency:"))
         XCTAssertFalse(source.contains("translationLatencyText"))
     }
@@ -486,7 +497,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Translation Link"))
         XCTAssertFalse(source.contains("Translation Model"))
         XCTAssertTrue(source.contains("Actual STT Source"))
-        XCTAssertTrue(source.contains("actualTranscriptionSourceText(for: meeting)"))
+        XCTAssertTrue(source.contains("artifactSnapshot?.actualTranscriptionSourceText ?? meeting.transcriptionProviderID"))
     }
 
     func testMeetingDetailAllowsEditingAgendaGoalThroughSaveAgenda() throws {

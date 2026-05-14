@@ -16,6 +16,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     @Published public private(set) var meetings: [MeetingRecord] = []
     @Published public private(set) var selectedMeetingID: UUID?
+    @Published public private(set) var selectedMeetingArtifactSnapshot: MeetingArtifactSnapshot?
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
     @Published public private(set) var statusText: String = "Idle"
     @Published public private(set) var speechConfiguration: SpeechTranscriptionConfiguration
@@ -162,6 +163,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func loadMeetings() throws {
         meetings = try store.loadMeetings()
         selectedMeetingID = meetings.first?.id
+        refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
         restoreMeetingProgressStateForSelectedMeeting()
@@ -191,6 +193,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
         pendingCandidate = nil
@@ -258,6 +261,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         try await startRecordingPreparedRecord(
             record,
@@ -277,6 +281,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         let record = try recorder.prepareRecord(meetings[index], for: candidate)
         selectedMeetingID = record.id
+        refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = record.meetingGoal
         try await startRecordingPreparedRecord(record, target: candidate, localeIdentifier: localeIdentifier)
     }
@@ -324,6 +329,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
         activeSource = source
@@ -359,6 +365,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         else { return }
 
         meetings[index] = refreshed
+        if selectedMeetingID == id {
+            refreshSelectedMeetingArtifactSnapshot()
+        }
     }
 
     public func setRecordingStartError(_ error: Error) {
@@ -393,6 +402,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         try store.save(record)
         meetings[index] = record
         if selectedMeetingID == meetingID {
+            refreshSelectedMeetingArtifactSnapshot()
             meetingGoal = record.meetingGoal
             resetMeetingProgressState()
             restoreMeetingProgressStateForSelectedMeeting()
@@ -417,6 +427,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         try store.save(record)
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = record.meetingGoal
         resetMeetingProgressState()
         configureMeetingProgressCoordinator()
@@ -473,6 +484,9 @@ public final class MeetingAgentViewModel: ObservableObject {
                let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
                 meetings[index] = stopped
                 recentlyStoppedLiveMeetingID = stopped.id
+                if selectedMeetingID == stopped.id {
+                    refreshSelectedMeetingArtifactSnapshot()
+                }
             }
         }
         objectWillChange.send()
@@ -525,6 +539,9 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
             recentlyStoppedLiveMeetingID = stopped.id
+            if selectedMeetingID == stopped.id {
+                refreshSelectedMeetingArtifactSnapshot()
+            }
         }
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         flushLiveCaptionPipeline(reason: .manualStop)
@@ -545,6 +562,9 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = stopped
             stoppedID = stopped.id
             recentlyStoppedLiveMeetingID = stopped.id
+            if selectedMeetingID == stopped.id {
+                refreshSelectedMeetingArtifactSnapshot()
+            }
         } else {
             stoppedID = nil
         }
@@ -593,6 +613,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
         try MeetingSummaryWriter.write(summary, jsonURL: summaryJSONURL, markdownURL: summaryMarkdownURL)
         try applyGeneratedTitleIfNeeded(summary: summary, meetingID: meetingID)
+        if selectedMeetingID == meetingID {
+            refreshSelectedMeetingArtifactSnapshot()
+        }
         statusText = summary.status == .succeeded ? "Summary generated" : "Summary failed"
         objectWillChange.send()
     }
@@ -634,6 +657,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.name = generatedTitle
         try store.save(record)
         meetings[index] = record
+        if selectedMeetingID == meetingID {
+            refreshSelectedMeetingArtifactSnapshot()
+        }
     }
 
     public func selectMeeting(_ id: UUID?) {
@@ -642,6 +668,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             recentlyStoppedLiveMeetingID = nil
         }
         selectedMeetingID = effectiveMeetingID
+        refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
         restoreMeetingProgressStateForSelectedMeeting()
@@ -771,6 +798,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.speechLocaleIdentifier = retryLocaleIdentifier
         meetings[index] = record
         try? store.save(record)
+        if selectedMeetingID == meetingID {
+            refreshSelectedMeetingArtifactSnapshot()
+        }
 
         record.transcriptionStatus = .transcribing
         meetings[index] = record
@@ -892,6 +922,9 @@ public final class MeetingAgentViewModel: ObservableObject {
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
             recentlyStoppedLiveMeetingID = stopped.id
+            if selectedMeetingID == stopped.id {
+                refreshSelectedMeetingArtifactSnapshot()
+            }
         }
         flushLiveCaptionPipeline(reason: .manualStop)
         statusText = "Target process ended: \(activeTarget.displayName)"
@@ -907,6 +940,14 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public var selectedMeeting: MeetingRecord? {
         meetings.first { $0.id == selectedMeetingID }
+    }
+
+    private func refreshSelectedMeetingArtifactSnapshot() {
+        guard let selectedMeeting else {
+            selectedMeetingArtifactSnapshot = nil
+            return
+        }
+        selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.load(for: selectedMeeting)
     }
 
     public var speechLocaleIdentifier: String {
