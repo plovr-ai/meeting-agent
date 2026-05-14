@@ -236,6 +236,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.drainRecordingFrames(endedAt: Date(timeIntervalSince1970: 200))
 
         XCTAssertTrue(viewModel.isRecording)
+        try await waitFor { viewModel.statusText == "Recording Computer Microphone" }
         XCTAssertEqual(viewModel.statusText, "Recording Computer Microphone")
     }
 
@@ -460,6 +461,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
             viewModel.drainRecordingFrames()
 
+            try await waitFor { viewModel.statusText == expectedText }
             XCTAssertEqual(viewModel.statusText, expectedText)
         }
     }

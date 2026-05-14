@@ -28,8 +28,7 @@ struct MeetingAgentApp: App {
                             lastProcessPoll = Date()
                             appDelegate.notifyMeetingDetected(candidate)
                         }
-                        viewModel.drainRecordingFrames()
-                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }
                 }
         }

@@ -69,6 +69,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let processTargetsProvider: () -> [AudioCaptureTarget]
     private let processMonitor = MeetingProcessMonitor()
     private var activeSource: AudioCaptureSource?
+    private var recorderEventTask: Task<Void, Never>?
 
     private var activeTarget: AudioCaptureTarget? {
         activeSource?.processTarget
@@ -151,6 +152,11 @@ public final class MeetingAgentViewModel: ObservableObject {
             )
         )
         refreshPrimaryChainPreflightResult()
+        startRecorderEventListener()
+    }
+
+    deinit {
+        recorderEventTask?.cancel()
     }
 
     public func loadMeetings() throws {
@@ -430,13 +436,47 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func drainRecordingFrames(endedAt: Date = Date()) {
-        try? recorder.drainFrames()
         if stopRecordingIfTargetProcessEnded(at: endedAt) {
             objectWillChange.send()
             return
         }
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
+        handleTranscriptResults(transcriptResults)
+        objectWillChange.send()
+    }
+
+    private func startRecorderEventListener() {
+        recorderEventTask?.cancel()
+        recorderEventTask = Task { [weak self, recorder] in
+            for await event in recorder.events {
+                self?.handleRecorderEvent(event)
+            }
+        }
+    }
+
+    private func handleRecorderEvent(_ event: MeetingRecorderEvent) {
+        switch event {
+        case .statusChanged(let snapshot):
+            updateRecordingStatus(snapshot: snapshot)
+        case .transcriptUpdates(let results):
+            handleTranscriptResults(results)
+        case .failed(let failure):
+            statusText = "Recording failed: \(failure.message)"
+        case .stopped(let stopped):
+            if let stopped,
+               let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
+                meetings[index] = stopped
+                recentlyStoppedLiveMeetingID = stopped.id
+            }
+        }
+        objectWillChange.send()
+    }
+
+    private func handleTranscriptResults(_ transcriptResults: [TranscriptSegmentAccumulationResult]) {
+        if !transcriptResults.isEmpty && activeMeetingID == nil {
+            return
+        }
         if transcriptResults.isEmpty {
             if !isRecording && activeMeetingID == nil && !shouldKeepRecentlyStoppedLiveCaptions() {
                 refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
@@ -463,7 +503,6 @@ public final class MeetingAgentViewModel: ObservableObject {
                 }
             }
         }
-        objectWillChange.send()
     }
 
     private func shouldKeepRecentlyStoppedLiveCaptions() -> Bool {
@@ -811,7 +850,15 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func updateRecordingStatus() {
         guard let activeSource, let status = recorder.currentCaptureStatus else { return }
-        let displayName = activeSource.displayName
+        updateRecordingStatus(status: status, displayName: activeSource.displayName)
+    }
+
+    private func updateRecordingStatus(snapshot: MeetingRecorderStatusSnapshot) {
+        guard let activeSource, let status = snapshot.captureStatus else { return }
+        updateRecordingStatus(status: status, displayName: activeSource.displayName)
+    }
+
+    private func updateRecordingStatus(status: CaptureStatus, displayName: String) {
         switch status {
         case .preparingCapture:
             statusText = "Preparing capture for \(displayName)"

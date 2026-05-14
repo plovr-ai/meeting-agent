@@ -367,12 +367,12 @@ public final class MeetingRecorder {
                 ]
             )
         }
-        emitStatus(bufferBacklog: bufferBacklog, droppedFrameCount: droppedFrameCount)
         diagnosticsTracker?.record(
             frames: frames,
             bufferBacklog: bufferBacklog,
             droppedFrameCount: droppedFrameCount
         )
+        emitStatus(bufferBacklog: bufferBacklog, droppedFrameCount: droppedFrameCount)
         speakerAudioEvidenceStore.append(frames)
         for frame in frames {
             try writer?.append(frame)
