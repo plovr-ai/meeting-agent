@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SpeechRecognitionEvent: Equatable, Sendable {
+public enum SpeechRecognitionEvent: Codable, Equatable, Sendable {
     case hypothesis(SpeechUtterancePayload)
     case final(SpeechUtterancePayload)
     case providerStatus(ProviderStatus)
@@ -24,7 +24,7 @@ public enum SpeechRecognitionEvent: Equatable, Sendable {
     }
 }
 
-public struct ProviderStatus: Equatable, Sendable {
+public struct ProviderStatus: Codable, Equatable, Sendable {
     public let providerID: String
     public let message: String
 
@@ -35,7 +35,7 @@ public struct ProviderStatus: Equatable, Sendable {
     }
 }
 
-public struct SpeechBoundary: Equatable, Sendable {
+public struct SpeechBoundary: Codable, Equatable, Sendable {
     public let speechFinal: Bool
     public let punctuationFinal: Bool
     public let pauseDurationSeconds: Double?
@@ -62,7 +62,7 @@ public struct SpeechBoundary: Equatable, Sendable {
     }
 }
 
-public struct SpeechUtteranceKey: Hashable, Equatable, Sendable {
+public struct SpeechUtteranceKey: Codable, Hashable, Equatable, Sendable {
     public let providerID: String
     public let speakerID: String?
     public let startTimeSeconds: Double?
@@ -75,7 +75,7 @@ public struct SpeechUtteranceKey: Hashable, Equatable, Sendable {
     }
 }
 
-public struct SpeechUtterancePayload: Equatable, Sendable {
+public struct SpeechUtterancePayload: Codable, Equatable, Sendable {
     public let providerID: String
     public let providerResultID: String?
     public let providerUtteranceID: String?
