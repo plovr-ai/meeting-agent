@@ -712,6 +712,34 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("draftGoal: meetingGoal"))
     }
 
+    func testMeetingAudioReplayControllerIsAppLayerAVAudioPlayerWrapper() throws {
+        let source = try appSource(named: "MeetingAudioReplayController.swift")
+
+        XCTAssertTrue(source.contains("import AVFoundation"))
+        XCTAssertTrue(source.contains("final class MeetingAudioReplayController"))
+        XCTAssertTrue(source.contains("ObservableObject"))
+        XCTAssertTrue(source.contains("AVAudioPlayerDelegate"))
+        XCTAssertTrue(source.contains("enum State: Equatable"))
+        XCTAssertTrue(source.contains("case idle"))
+        XCTAssertTrue(source.contains("case playing(UUID)"))
+        XCTAssertTrue(source.contains("case paused(UUID)"))
+        XCTAssertTrue(source.contains("@Published private(set) var state: State = .idle"))
+        XCTAssertTrue(source.contains("func toggleReplay(for meetingID: UUID, audioURL: URL) throws"))
+        XCTAssertTrue(source.contains("func stop()"))
+        XCTAssertTrue(source.contains("AVAudioPlayer(contentsOf: audioURL)"))
+        XCTAssertTrue(source.contains("audioPlayerDidFinishPlaying"))
+        XCTAssertTrue(source.contains("audioPlayerDecodeErrorDidOccur"))
+    }
+
+    func testMeetingAudioReplayControllerStaysOutOfCoreLayer() throws {
+        let packageSource = try String(contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Package.swift"))
+
+        XCTAssertTrue(packageSource.contains(".executableTarget("))
+        XCTAssertTrue(packageSource.contains("name: \"MeetingAgentApp\""))
+        XCTAssertFalse(packageSource.contains("MeetingAudioReplayController"))
+    }
+
     private func appSource(named fileName: String) throws -> String {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp")
