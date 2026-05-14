@@ -21,7 +21,6 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "zh-CN",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "local-whisper-hosted-translation",
             whisperBinaryPath: nil,
             whisperModelPath: nil,

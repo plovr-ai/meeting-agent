@@ -473,7 +473,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             speechConfiguration: SpeechTranscriptionConfiguration(
                 provider: .local,
                 localeIdentifier: "en-US",
-                targetLocaleIdentifier: "zh-CN",
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
@@ -1494,7 +1493,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             speechConfiguration: SpeechTranscriptionConfiguration(
                 provider: .local,
                 localeIdentifier: "en-US",
-                targetLocaleIdentifier: "zh-CN",
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
@@ -1538,7 +1536,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             speechConfiguration: SpeechTranscriptionConfiguration(
                 provider: .local,
                 localeIdentifier: "en-US",
-                targetLocaleIdentifier: "zh-CN",
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
@@ -1633,7 +1630,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             speechConfiguration: SpeechTranscriptionConfiguration(
                 provider: .local,
                 localeIdentifier: "en-US",
-                targetLocaleIdentifier: "zh-CN",
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
@@ -1676,7 +1672,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             speechConfiguration: SpeechTranscriptionConfiguration(
                 provider: .local,
                 localeIdentifier: "en-US",
-                targetLocaleIdentifier: "zh-CN",
                 whisperBinaryPath: nil,
                 whisperModelPath: nil
             ),
@@ -2364,7 +2359,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            targetLocaleIdentifier: "zh-CN",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             hostedSummaryModelID: "openai/gpt-4.1-mini",
@@ -2381,7 +2375,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         try await viewModel.generateSummary(for: stored.record.id)
 
         XCTAssertEqual(provider.receivedInputs.first?.language, "en-US")
-        XCTAssertEqual(provider.receivedInputs.first?.targetLanguage, "zh-CN")
+        XCTAssertEqual(provider.receivedInputs.first?.targetLanguage, "en-US")
     }
 
     func testDefaultSummaryProviderUsesSettingsBackedOpenRouterModel() {
@@ -2525,7 +2519,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: "ja-JP",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "local-whisper-local-translation",
             whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
             whisperModelPath: "/Users/allan/models/ggml-medium.bin",
@@ -2593,7 +2586,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let staleProfileConfiguration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "local-whisper-local-translation",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
@@ -2620,7 +2612,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.saveSpeechConfiguration(SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: " ",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "stale",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
@@ -2633,7 +2624,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.saveSpeechConfiguration(SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: "en-US",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "stale",
             whisperBinaryPath: nil,
             whisperModelPath: nil,

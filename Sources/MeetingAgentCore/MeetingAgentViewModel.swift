@@ -95,7 +95,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         var meetingID: UUID
         var captionDocumentSignature: String
         var sourceLocaleIdentifier: String
-        var targetLocaleIdentifier: String
     }
 
     private struct SelectedMeetingTranscriptFileSignature: Equatable {
@@ -219,7 +218,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration = SpeechTranscriptionConfiguration(
             provider: configuration.provider,
             localeIdentifier: configuration.localeIdentifier,
-            targetLocaleIdentifier: configuration.targetLocaleIdentifier,
             bilingualPipelineProfileID: Self.derivedBilingualPipelineProfileID(
                 transcriptionExecutionMode: configuration.transcriptionExecutionMode,
                 translationExecutionMode: configuration.translationExecutionMode
@@ -234,6 +232,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             hostedTranslationProviderID: configuration.hostedTranslationProviderID,
             hostedTranscriptionModelID: configuration.hostedTranscriptionModelID,
             hostedTranslationModelID: configuration.hostedTranslationModelID,
+            hostedSummaryModelID: configuration.hostedSummaryModelID,
             openRouterAPIKey: configuration.openRouterAPIKey,
             openAIRealtimeAPIKey: configuration.openAIRealtimeAPIKey,
             deepgramAPIKey: configuration.deepgramAPIKey,
@@ -542,7 +541,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 startedAt: meeting.startedAt,
                 endedAt: meeting.endedAt,
                 language: speechLocaleIdentifier,
-                targetLanguage: speechConfiguration.targetLocaleIdentifier,
+                targetLanguage: speechConfiguration.localeIdentifier,
                 meetingGoal: summaryGoalContext(for: progress),
                 segments: transcript.segments.filter(\.isFinal),
                 generatedAt: generatedAt
@@ -965,7 +964,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) -> LiveCaptionPipeline {
         LiveCaptionPipeline(
             sourceLocale: configuration.localeIdentifier,
-            targetLocale: configuration.targetLocaleIdentifier,
+            targetLocale: configuration.localeIdentifier,
             translationProvider: nil,
             performanceEventLogger: performanceEventLogger
         )
@@ -1092,8 +1091,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         let replaySignature = SelectedMeetingReplaySignature(
             meetingID: selectedMeetingID,
             captionDocumentSignature: Self.captionDocumentSignature(document),
-            sourceLocaleIdentifier: speechConfiguration.localeIdentifier,
-            targetLocaleIdentifier: speechConfiguration.targetLocaleIdentifier
+            sourceLocaleIdentifier: speechConfiguration.localeIdentifier
         )
         guard selectedMeetingReplaySignature != replaySignature else {
             selectedMeetingReplayFileSignature = fileSignature

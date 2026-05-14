@@ -430,7 +430,7 @@ private struct MeetingDetailView: View {
                     statusText: statusText,
                     isRecording: isRecording,
                     sourceLocale: speechConfiguration.localeIdentifier,
-                    targetLocale: speechConfiguration.targetLocaleIdentifier,
+                    targetLocale: speechConfiguration.localeIdentifier,
                     liveCaptionTurns: liveCaptionTurns,
                     transcriptText: transcriptText(for: meeting),
                     transcriptionStatusText: transcriptionStatusText(for: meeting),

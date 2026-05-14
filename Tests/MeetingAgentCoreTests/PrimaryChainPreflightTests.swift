@@ -20,7 +20,6 @@ final class PrimaryChainPreflightTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            targetLocaleIdentifier: "zh-CN",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             transcriptionExecutionMode: .hosted,

@@ -21,7 +21,6 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public var provider: SpeechProvider
     public var localeIdentifier: String
-    public var targetLocaleIdentifier: String
     public var bilingualPipelineProfileID: String
     public var whisperBinaryPath: String?
     public var whisperModelPath: String?
@@ -42,7 +41,6 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
         localeIdentifier: "en-US",
-        targetLocaleIdentifier: "zh-CN",
         bilingualPipelineProfileID: defaultBilingualPipelineProfileID,
         whisperBinaryPath: nil,
         whisperModelPath: nil,
@@ -64,7 +62,6 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public init(
         provider: SpeechProvider,
         localeIdentifier: String,
-        targetLocaleIdentifier: String = "zh-CN",
         bilingualPipelineProfileID: String = defaultBilingualPipelineProfileID,
         whisperBinaryPath: String?,
         whisperModelPath: String?,
@@ -84,7 +81,6 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
-        self.targetLocaleIdentifier = Self.normalized(targetLocaleIdentifier, fallback: "zh-CN") ?? "zh-CN"
         self.bilingualPipelineProfileID = Self.normalized(
             bilingualPipelineProfileID,
             fallback: Self.defaultBilingualPipelineProfileID
@@ -131,6 +127,7 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case provider
         case localeIdentifier
+        // Legacy key used when translation had a separate target language setting.
         case targetLocaleIdentifier
         case bilingualPipelineProfileID
         case whisperBinaryPath
@@ -152,10 +149,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let storedLocaleIdentifier = try container.decode(String.self, forKey: .localeIdentifier)
+        let legacyTargetLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .targetLocaleIdentifier)
+        let localeIdentifier = Self.normalized(legacyTargetLocaleIdentifier) ?? storedLocaleIdentifier
         self.init(
             provider: try container.decode(SpeechProvider.self, forKey: .provider),
-            localeIdentifier: try container.decode(String.self, forKey: .localeIdentifier),
-            targetLocaleIdentifier: try container.decodeIfPresent(String.self, forKey: .targetLocaleIdentifier) ?? "zh-CN",
+            localeIdentifier: localeIdentifier,
             bilingualPipelineProfileID: try container.decodeIfPresent(String.self, forKey: .bilingualPipelineProfileID) ?? Self.defaultBilingualPipelineProfileID,
             whisperBinaryPath: try container.decodeIfPresent(String.self, forKey: .whisperBinaryPath),
             whisperModelPath: try container.decodeIfPresent(String.self, forKey: .whisperModelPath),
@@ -173,6 +172,28 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             deepgramAPIKey: try container.decodeIfPresent(String.self, forKey: .deepgramAPIKey),
             deepgramModelID: try container.decodeIfPresent(String.self, forKey: .deepgramModelID) ?? Self.defaultDeepgramModelID
         )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(localeIdentifier, forKey: .localeIdentifier)
+        try container.encode(bilingualPipelineProfileID, forKey: .bilingualPipelineProfileID)
+        try container.encodeIfPresent(whisperBinaryPath, forKey: .whisperBinaryPath)
+        try container.encodeIfPresent(whisperModelPath, forKey: .whisperModelPath)
+        try container.encode(transcriptionExecutionMode, forKey: .transcriptionExecutionMode)
+        try container.encode(translationExecutionMode, forKey: .translationExecutionMode)
+        try container.encode(localTranscriptionProviderID, forKey: .localTranscriptionProviderID)
+        try container.encode(localTranslationProviderID, forKey: .localTranslationProviderID)
+        try container.encode(hostedTranscriptionProviderID, forKey: .hostedTranscriptionProviderID)
+        try container.encode(hostedTranslationProviderID, forKey: .hostedTranslationProviderID)
+        try container.encode(hostedTranscriptionModelID, forKey: .hostedTranscriptionModelID)
+        try container.encode(hostedTranslationModelID, forKey: .hostedTranslationModelID)
+        try container.encode(hostedSummaryModelID, forKey: .hostedSummaryModelID)
+        try container.encodeIfPresent(openRouterAPIKey, forKey: .openRouterAPIKey)
+        try container.encodeIfPresent(openAIRealtimeAPIKey, forKey: .openAIRealtimeAPIKey)
+        try container.encodeIfPresent(deepgramAPIKey, forKey: .deepgramAPIKey)
+        try container.encode(deepgramModelID, forKey: .deepgramModelID)
     }
 
     public func validationStatus(

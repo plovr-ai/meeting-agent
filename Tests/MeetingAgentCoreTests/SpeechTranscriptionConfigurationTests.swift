@@ -246,7 +246,6 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "hosted-transcribe-hosted-translation",
             whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
             whisperModelPath: "/Users/allan/models/ggml-small.bin",
@@ -267,11 +266,48 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
 
         try store.save(configuration)
 
+        let persistedData = try XCTUnwrap(userDefaults.data(forKey: "SpeechTranscriptionConfiguration"))
+        let persistedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        XCTAssertNil(persistedObject["targetLocaleIdentifier"])
+
         var expected = configuration
         expected.openAIRealtimeAPIKey = "realtime-key"
         expected.deepgramAPIKey = "deepgram-key"
         expected.deepgramModelID = "nova-2"
         XCTAssertEqual(try store.load(), expected)
+    }
+
+    func testConfigurationStoreMergesLegacyTargetLocaleIntoLocaleIdentifier() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let legacyConfiguration = """
+        {
+          "provider": "whisper",
+          "localeIdentifier": "en-US",
+          "targetLocaleIdentifier": "zh-CN",
+          "bilingualPipelineProfileID": "local-whisper-hosted-translation",
+          "whisperBinaryPath": "/opt/homebrew/bin/whisper-cli",
+          "whisperModelPath": "/Users/allan/models/ggml-medium.bin",
+          "transcriptionExecutionMode": "local",
+          "translationExecutionMode": "hosted"
+        }
+        """
+        userDefaults.set(Data(legacyConfiguration.utf8), forKey: "SpeechTranscriptionConfiguration")
+
+        let loaded = try store.load()
+
+        XCTAssertEqual(loaded.localeIdentifier, "zh-CN")
+        try store.save(loaded)
+        let persistedData = try XCTUnwrap(userDefaults.data(forKey: "SpeechTranscriptionConfiguration"))
+        let persistedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        XCTAssertEqual(persistedObject["localeIdentifier"] as? String, "zh-CN")
+        XCTAssertNil(persistedObject["targetLocaleIdentifier"])
     }
 
     func testConfigurationStorePersistsAPIKeys() throws {
