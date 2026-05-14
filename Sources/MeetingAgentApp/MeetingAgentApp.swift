@@ -23,10 +23,14 @@ struct MeetingAgentApp: App {
                     try? viewModel.loadMeetings()
                     var lastProcessPoll = Date.distantPast
                     while !Task.isCancelled {
-                        if Date().timeIntervalSince(lastProcessPoll) >= 3,
-                           let candidate = viewModel.pollForMeetingCandidates() {
+                        if Date().timeIntervalSince(lastProcessPoll) >= 3 {
                             lastProcessPoll = Date()
-                            appDelegate.notifyMeetingDetected(candidate)
+                            if viewModel.pollActiveRecordingProcess() {
+                                continue
+                            }
+                            if let candidate = viewModel.pollForMeetingCandidates() {
+                                appDelegate.notifyMeetingDetected(candidate)
+                            }
                         }
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }

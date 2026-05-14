@@ -233,7 +233,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             timestampNanos: 1
         ))
         targets = []
-        viewModel.drainRecordingFrames(endedAt: Date(timeIntervalSince1970: 200))
+        viewModel.pollActiveRecordingProcess(endedAt: Date(timeIntervalSince1970: 200))
 
         XCTAssertTrue(viewModel.isRecording)
         try await waitFor { viewModel.statusText == "Recording Computer Microphone" }
@@ -1850,7 +1850,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Idle")
     }
 
-    func testDrainRecordingFramesStopsWhenTargetProcessEnds() throws {
+    func testPollActiveRecordingProcessStopsWhenTargetProcessEnds() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -1865,7 +1865,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.setPendingCandidate(target)
         try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
 
-        viewModel.drainRecordingFrames(endedAt: endedAt)
+        viewModel.pollActiveRecordingProcess(endedAt: endedAt)
 
         XCTAssertEqual(viewModel.meetings.first?.endedAt, endedAt)
         XCTAssertEqual(viewModel.statusText, "Target process ended: zoom.us")

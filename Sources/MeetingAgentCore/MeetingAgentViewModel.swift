@@ -436,14 +436,19 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func drainRecordingFrames(endedAt: Date = Date()) {
-        if stopRecordingIfTargetProcessEnded(at: endedAt) {
-            objectWillChange.send()
-            return
-        }
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
         handleTranscriptResults(transcriptResults)
         objectWillChange.send()
+    }
+
+    @discardableResult
+    public func pollActiveRecordingProcess(endedAt: Date = Date()) -> Bool {
+        let didStop = stopRecordingIfTargetProcessEnded(at: endedAt)
+        if didStop {
+            objectWillChange.send()
+        }
+        return didStop
     }
 
     private func startRecorderEventListener() {
