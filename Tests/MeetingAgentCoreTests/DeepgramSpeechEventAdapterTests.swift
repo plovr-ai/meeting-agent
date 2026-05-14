@@ -93,8 +93,7 @@ final class DeepgramSpeechEventAdapterTests: XCTestCase {
 
         XCTAssertEqual(document.turns.count, 1)
         XCTAssertEqual(document.turns[0].sections.map(\.text), [
-            "yeah so my credit card number is two two",
-            "two two three three three three"
+            "yeah so my credit card number is two two three three three three"
         ])
         XCTAssertEqual(document.turns[0].state, .final)
     }

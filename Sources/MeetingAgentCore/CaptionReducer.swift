@@ -5,6 +5,7 @@ public struct CaptionReducer {
 
     private var finalizedUtteranceKeys = Set<String>()
     private var utteranceLocations: [String: Location] = [:]
+    private var sectionContinuationPrefixesByUtteranceKey: [String: String] = [:]
     private var sectionClosedByTurnID: [String: Bool] = [:]
     private var nextTurnIndex = 0
     private var nextSectionIndex = 0
@@ -50,6 +51,11 @@ public struct CaptionReducer {
             utteranceLocations[key] = location
             return
         }
+        if let location = continuationLocation(in: turnIndex, for: payload) {
+            startSectionContinuation(at: location, for: payload, key: key, state: .draft)
+            utteranceLocations[key] = location
+            return
+        }
 
         let section = makeSection(for: payload)
         document.turns[turnIndex].sections.append(section)
@@ -67,6 +73,14 @@ public struct CaptionReducer {
         guard !finalizedUtteranceKeys.contains(key) else { return }
 
         if let location = utteranceLocations[key], document.turns.indices.contains(location.turnIndex) {
+            if sectionContinuationPrefixesByUtteranceKey[key] != nil {
+                updateSection(at: location, with: payload, state: .final)
+                finalizedUtteranceKeys.insert(key)
+                if payload.boundary.endsTurn {
+                    sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
+                }
+                return
+            }
             if shouldMergeFinalWithoutReplacingVisibleDraft(payload, at: location) {
                 mergeCoveredFinal(payload, intoSectionAt: location)
                 finalizedUtteranceKeys.insert(key)
@@ -93,6 +107,15 @@ public struct CaptionReducer {
                 sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
                 document.turns[location.turnIndex].state = .final
             }
+            return
+        }
+
+        if let location = continuationLocation(in: turnIndex, for: payload) {
+            startSectionContinuation(at: location, for: payload, key: key, state: .final)
+            utteranceLocations[key] = location
+            finalizedUtteranceKeys.insert(key)
+            document.turns[turnIndex].state = .final
+            sectionClosedByTurnID[document.turns[turnIndex].id] = payload.boundary.endsTurn
             return
         }
 
@@ -171,6 +194,23 @@ public struct CaptionReducer {
         return Location(turnIndex: turnIndex, sectionIndex: sectionIndex)
     }
 
+    private func continuationLocation(in turnIndex: Int, for payload: SpeechUtterancePayload) -> Location? {
+        guard !payload.boundary.endsTurn,
+              document.turns.indices.contains(turnIndex),
+              let sectionIndex = document.turns[turnIndex].sections.indices.last,
+              sectionClosedByTurnID[document.turns[turnIndex].id] != true
+        else {
+            return nil
+        }
+        let section = document.turns[turnIndex].sections[sectionIndex]
+        guard sectionIsFullyFinalized(section, providerID: payload.providerID),
+              timingsAreNear(section, payload: payload)
+        else {
+            return nil
+        }
+        return Location(turnIndex: turnIndex, sectionIndex: sectionIndex)
+    }
+
     private func openDraftCoveredFinalLocation(in turnIndex: Int, for payload: SpeechUtterancePayload) -> Location? {
         guard document.turns.indices.contains(turnIndex),
               let sectionIndex = document.turns[turnIndex].sections.indices.last,
@@ -237,7 +277,12 @@ public struct CaptionReducer {
               document.turns[location.turnIndex].sections.indices.contains(location.sectionIndex) else {
             return
         }
-        document.turns[location.turnIndex].sections[location.sectionIndex].text = payload.text
+        let key = utteranceKey(for: payload)
+        if let prefix = sectionContinuationPrefixesByUtteranceKey[key] {
+            document.turns[location.turnIndex].sections[location.sectionIndex].text = joinedSectionText(prefix, payload.text)
+        } else {
+            document.turns[location.turnIndex].sections[location.sectionIndex].text = payload.text
+        }
         document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs = mergedIDs(
             document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs,
             payload.providerUtteranceID
@@ -248,6 +293,20 @@ public struct CaptionReducer {
         document.turns[location.turnIndex].endTimeSeconds = payload.endTimeSeconds
         document.turns[location.turnIndex].updatedAt = Date()
         rememberSpeaker(from: payload)
+    }
+
+    private mutating func startSectionContinuation(
+        at location: Location,
+        for payload: SpeechUtterancePayload,
+        key: String,
+        state: CaptionTurnState
+    ) {
+        guard document.turns.indices.contains(location.turnIndex),
+              document.turns[location.turnIndex].sections.indices.contains(location.sectionIndex) else {
+            return
+        }
+        sectionContinuationPrefixesByUtteranceKey[key] = document.turns[location.turnIndex].sections[location.sectionIndex].text
+        updateSection(at: location, with: payload, state: state)
     }
 
     private mutating func mergeCoveredFinal(_ payload: SpeechUtterancePayload, intoSectionAt location: Location) {
@@ -283,10 +342,7 @@ public struct CaptionReducer {
 
     private mutating func append(_ payload: SpeechUtterancePayload, toSectionAt location: Location) {
         let existingText = document.turns[location.turnIndex].sections[location.sectionIndex].text
-        document.turns[location.turnIndex].sections[location.sectionIndex].text = [existingText, payload.text]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        document.turns[location.turnIndex].sections[location.sectionIndex].text = joinedSectionText(existingText, payload.text)
         document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs = mergedIDs(
             document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs,
             payload.providerUtteranceID
@@ -302,6 +358,97 @@ public struct CaptionReducer {
             startTimeSeconds: payload.startTimeSeconds,
             endTimeSeconds: payload.endTimeSeconds
         )
+    }
+
+    private func joinedSectionText(_ first: String, _ second: String) -> String {
+        let first = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        let second = second.trimmingCharacters(in: .whitespacesAndNewlines)
+        if first.isEmpty { return second }
+        if second.isEmpty { return first }
+        let overlap = suffixPrefixOverlapCount(first, second)
+        if overlap > 0 {
+            let remainder = droppingFirstTokens(overlap, from: second)
+            if remainder.isEmpty {
+                return first
+            }
+            return joinedSectionText(first, remainder)
+        }
+        if shouldJoinWithoutSpace(first, second) {
+            return "\(first)\(second)"
+        }
+        return "\(first) \(second)"
+    }
+
+    private func suffixPrefixOverlapCount(_ first: String, _ second: String) -> Int {
+        let firstTokens = normalizedTokens(first)
+        let secondTokens = normalizedTokens(second)
+        let maxOverlap = min(firstTokens.count, secondTokens.count)
+        guard maxOverlap > 0 else { return 0 }
+        for candidate in stride(from: maxOverlap, through: 1, by: -1) {
+            if Array(firstTokens.suffix(candidate)) == Array(secondTokens.prefix(candidate)) {
+                return candidate
+            }
+        }
+        return 0
+    }
+
+    private func normalizedTokens(_ text: String) -> [String] {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private func droppingFirstTokens(_ count: Int, from text: String) -> String {
+        guard count > 0 else { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var remaining = count
+        var index = text.startIndex
+        var insideToken = false
+        while index < text.endIndex {
+            let scalar = text[index].unicodeScalars.first
+            let isToken = scalar.map { CharacterSet.alphanumerics.contains($0) } ?? false
+            if isToken {
+                insideToken = true
+            } else if insideToken {
+                remaining -= 1
+                insideToken = false
+                if remaining == 0 {
+                    return trimmingLeadingBoundary(from: String(text[index...]))
+                }
+            }
+            index = text.index(after: index)
+        }
+        if remaining <= 1, insideToken {
+            return ""
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func trimmingLeadingBoundary(from text: String) -> String {
+        let boundary = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",.;:!?"))
+        var start = text.startIndex
+        while start < text.endIndex {
+            let scalar = text[start].unicodeScalars.first
+            guard scalar.map({ boundary.contains($0) }) == true else { break }
+            start = text.index(after: start)
+        }
+        return String(text[start...])
+    }
+
+    private func shouldJoinWithoutSpace(_ first: String, _ second: String) -> Bool {
+        guard let lhs = first.last?.unicodeScalars.first,
+              let rhs = second.first?.unicodeScalars.first
+        else {
+            return false
+        }
+        return isCJK(lhs) && isCJK(rhs)
+    }
+
+    private func isCJK(_ scalar: UnicodeScalar) -> Bool {
+        let value = Int(scalar.value)
+        return (0x4E00...0x9FFF).contains(value)
+            || (0x3040...0x30FF).contains(value)
+            || (0xAC00...0xD7AF).contains(value)
     }
 
     private func mergedSource(_ source: CaptionTurnSource, payload: SpeechUtterancePayload) -> CaptionTurnSource {

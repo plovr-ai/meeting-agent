@@ -118,7 +118,62 @@ final class CaptionReducerTests: XCTestCase {
 
         XCTAssertEqual(document.turns.count, 1)
         XCTAssertEqual(document.turns[0].sections.count, 1)
-        XCTAssertEqual(document.turns[0].text, "我们确认 负责人")
+        XCTAssertEqual(document.turns[0].text, "我们确认负责人")
+    }
+
+    func testConsecutiveCJKFinalsWithoutBoundariesStayInOneReadableSection() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-1",
+            text: "只能通过折磨来思考",
+            speakerID: "speaker-0",
+            start: 0,
+            end: 2.41
+        )))
+        _ = reducer.apply(.final(payload(
+            id: "utt-1",
+            text: "只能通过折磨来思考来安慰自己屈辱丈夫的最大手段",
+            speakerID: "speaker-0",
+            start: 0,
+            end: 4.73
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-2",
+            text: "长年累月的言语",
+            speakerID: "speaker-0",
+            start: 4.73,
+            end: 6.21
+        )))
+        _ = reducer.apply(.final(payload(
+            id: "utt-2",
+            text: "长年累月的言语暴力真的是一把毒包",
+            speakerID: "speaker-0",
+            start: 4.73,
+            end: 7.93
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-3",
+            text: "在这个瞬间彻底对话",
+            speakerID: "speaker-0",
+            start: 7.93,
+            end: 10.19
+        )))
+        let document = reducer.apply(.final(payload(
+            id: "utt-3",
+            text: "在这个瞬间彻底对话他站在阴暗处隐喻着",
+            speakerID: "speaker-0",
+            start: 7.93,
+            end: 12.15
+        )))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 1)
+        XCTAssertEqual(
+            document.turns[0].text,
+            "只能通过折磨来思考来安慰自己屈辱丈夫的最大手段长年累月的言语暴力真的是一把毒包在这个瞬间彻底对话他站在阴暗处隐喻着"
+        )
+        XCTAssertEqual(document.turns[0].source.utteranceIDs, ["utt-1", "utt-2", "utt-3"])
     }
 
     func testPauseBoundaryCreatesReadableSectionButKeepsSameSpeakerTurn() {
