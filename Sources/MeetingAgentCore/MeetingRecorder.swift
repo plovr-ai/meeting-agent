@@ -6,6 +6,40 @@ public enum MeetingRecorderState: Equatable {
     case recording(UUID)
 }
 
+public struct MeetingRecorderStatusSnapshot: Equatable {
+    public let state: MeetingRecorderState
+    public let captureStatus: CaptureStatus?
+    public let bufferBacklog: Int
+    public let droppedFrameCount: Int
+
+    public init(
+        state: MeetingRecorderState,
+        captureStatus: CaptureStatus?,
+        bufferBacklog: Int,
+        droppedFrameCount: Int
+    ) {
+        self.state = state
+        self.captureStatus = captureStatus
+        self.bufferBacklog = bufferBacklog
+        self.droppedFrameCount = droppedFrameCount
+    }
+}
+
+public struct MeetingRecorderFailure: Equatable {
+    public let message: String
+
+    public init(message: String) {
+        self.message = message
+    }
+}
+
+public enum MeetingRecorderEvent: Equatable {
+    case statusChanged(MeetingRecorderStatusSnapshot)
+    case transcriptUpdates([TranscriptSegmentAccumulationResult])
+    case failed(MeetingRecorderFailure)
+    case stopped(MeetingRecord?)
+}
+
 public final class MeetingRecorder {
     private let store: MeetingStore
     private var activeRecord: MeetingRecord?
@@ -22,11 +56,28 @@ public final class MeetingRecorder {
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
     private var isStartingTranscriber = false
+    private var processingTask: Task<Void, Never>?
+    private let processingLock = NSLock()
+    private let eventLock = NSLock()
+    private var eventContinuations: [UUID: AsyncStream<MeetingRecorderEvent>.Continuation] = [:]
     private let speakerAudioEvidenceStore = SpeakerAudioEvidenceStore()
     // Keep roughly 30 seconds of common 10 ms Core Audio callbacks while hosted STT connects.
     private let pendingTranscriptionFrameLimit = 3_000
 
     public private(set) var state: MeetingRecorderState = .idle
+
+    public var events: AsyncStream<MeetingRecorderEvent> {
+        AsyncStream { continuation in
+            let id = UUID()
+            eventLock.lock()
+            eventContinuations[id] = continuation
+            eventLock.unlock()
+
+            continuation.onTermination = { [weak self] _ in
+                self?.removeEventContinuation(id)
+            }
+        }
+    }
 
     public convenience init(store: MeetingStore = MeetingStore()) {
         self.init(
@@ -221,6 +272,7 @@ public final class MeetingRecorder {
                 isStartingTranscriber = true
             }
             captureSession = session
+            startAudioProcessing(session: session)
         } catch {
             session.stop()
             diagnosticsTracker?.finish(endedReason: .captureFailed)
@@ -232,7 +284,10 @@ public final class MeetingRecorder {
             do {
                 let updateSink = try RecordingTranscriptUpdateSink(
                     transcriptURL: transcriptURL,
-                    performanceEventLogger: performanceEventLogger
+                    performanceEventLogger: performanceEventLogger,
+                    onResults: { [weak self] results in
+                        self?.emit(.transcriptUpdates(results))
+                    }
                 )
                 transcriptUpdateSink = updateSink
                 let startedTranscriber = try await transcriberFactory(
@@ -284,6 +339,21 @@ public final class MeetingRecorder {
         let bufferBacklog = session.frameBuffer.count
         let droppedFrameCount = session.frameBuffer.droppedFrameCount
         let frames = session.frameBuffer.drain()
+        try processFrames(
+            frames,
+            bufferBacklog: bufferBacklog,
+            droppedFrameCount: droppedFrameCount
+        )
+    }
+
+    private func processFrames(
+        _ frames: [AudioFrame],
+        bufferBacklog: Int,
+        droppedFrameCount: Int
+    ) throws {
+        processingLock.lock()
+        defer { processingLock.unlock() }
+
         if let first = frames.first, let last = frames.last {
             performanceEventLogger?.log(
                 "audio_frames_drained",
@@ -297,6 +367,7 @@ public final class MeetingRecorder {
                 ]
             )
         }
+        emitStatus(bufferBacklog: bufferBacklog, droppedFrameCount: droppedFrameCount)
         diagnosticsTracker?.record(
             frames: frames,
             bufferBacklog: bufferBacklog,
@@ -333,6 +404,10 @@ public final class MeetingRecorder {
         at endedAt: Date = Date(),
         endedReason: CaptureEndedReason = .saved
     ) throws -> MeetingRecord? {
+        processingTask?.cancel()
+        processingTask = nil
+        captureSession?.frameBuffer.finish()
+        try drainFrames()
         try writer?.close()
         let activeTranscriber = transcriber
         activeTranscriber?.finish()
@@ -350,7 +425,9 @@ public final class MeetingRecorder {
         transcriptUpdateSink?.close()
         transcriptUpdateSink = nil
         captureSession = nil
-        return try markStopped(at: endedAt, endedReason: endedReason)
+        let stopped = try markStopped(at: endedAt, endedReason: endedReason)
+        emit(.stopped(stopped))
+        return stopped
     }
 
     public func markStopped(
@@ -383,6 +460,7 @@ public final class MeetingRecorder {
         activeRecord = nil
         speakerAudioEvidenceStore.reset()
         state = .idle
+        emitStatus(bufferBacklog: 0, droppedFrameCount: 0)
         return record
     }
 
@@ -390,11 +468,62 @@ public final class MeetingRecorder {
         diagnosticsTracker?.liveStatus
     }
 
+    private func startAudioProcessing(session: AudioCaptureSessionManaging) {
+        processingTask?.cancel()
+        processingTask = Task { [weak self, weak session] in
+            guard let session else { return }
+            for await frames in session.frameBuffer.batches {
+                if Task.isCancelled { break }
+                guard let self else { break }
+                let bufferBacklog = session.frameBuffer.count
+                let droppedFrameCount = session.frameBuffer.droppedFrameCount
+                do {
+                    try self.processFrames(
+                        frames,
+                        bufferBacklog: bufferBacklog,
+                        droppedFrameCount: droppedFrameCount
+                    )
+                } catch {
+                    self.emit(.failed(MeetingRecorderFailure(message: String(describing: error))))
+                }
+            }
+        }
+    }
+
+    private func emitStatus(bufferBacklog: Int, droppedFrameCount: Int) {
+        emit(.statusChanged(MeetingRecorderStatusSnapshot(
+            state: state,
+            captureStatus: diagnosticsTracker?.liveStatus,
+            bufferBacklog: bufferBacklog,
+            droppedFrameCount: droppedFrameCount
+        )))
+    }
+
+    private func emit(_ event: MeetingRecorderEvent) {
+        let continuations: [AsyncStream<MeetingRecorderEvent>.Continuation]
+        eventLock.lock()
+        continuations = Array(eventContinuations.values)
+        eventLock.unlock()
+
+        for continuation in continuations {
+            continuation.yield(event)
+        }
+    }
+
+    private func removeEventContinuation(_ id: UUID) {
+        eventLock.lock()
+        eventContinuations.removeValue(forKey: id)
+        eventLock.unlock()
+    }
+
     private func persistTranscriptionFailure(_ message: String) throws {
         try markTranscriptionFailed(message)
     }
 
     private func flushPendingTranscriptionFrames() throws {
+        processingLock.lock()
+        defer { processingLock.unlock() }
+
         let frames = pendingTranscriptionFrames
         pendingTranscriptionFrames = []
         diagnosticsTracker?.recordStartupReplay(frames: frames)
@@ -437,34 +566,44 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
     private let transcriptDirectoryURL: URL
     private var captionStore: MeetingTranscriptStore?
     private let performanceEventLogger: PerformanceEventLogger?
+    private let onResults: ([TranscriptSegmentAccumulationResult]) -> Void
     private var realtimeAccumulator = TranscriptSegmentAccumulator()
     private var pendingResults: [TranscriptSegmentAccumulationResult] = []
     private let lock = NSLock()
 
-    init(transcriptURL: URL, performanceEventLogger: PerformanceEventLogger?) throws {
+    init(
+        transcriptURL: URL,
+        performanceEventLogger: PerformanceEventLogger?,
+        onResults: @escaping ([TranscriptSegmentAccumulationResult]) -> Void = { _ in }
+    ) throws {
         self.store = try RecordingTranscriptPersistenceStore(transcriptURL: transcriptURL)
         self.transcriptDirectoryURL = transcriptURL.deletingLastPathComponent()
         self.performanceEventLogger = performanceEventLogger
+        self.onResults = onResults
     }
 
     func receive(_ update: TranscriptSegmentUpdate) {
         lock.lock()
-        defer { lock.unlock() }
         logEmitted(update)
-        persist(update)
+        let results = persist(update)
+        lock.unlock()
+        publish(results)
     }
 
     func receiveRealtime(_ update: TranscriptSegmentUpdate) {
         lock.lock()
-        defer { lock.unlock() }
         logEmitted(update)
         let result = realtimeAccumulator.apply(update)
-        pendingResults.append(TranscriptSegmentAccumulationResult(
+        let emitted = TranscriptSegmentAccumulationResult(
             document: result.document,
             changedSegmentIDs: result.changedSegmentIDs,
             plainTextReplacement: result.plainTextReplacement,
             source: .realtime
-        ))
+        )
+        pendingResults.append(emitted)
+        let results = [emitted]
+        lock.unlock()
+        publish(results)
     }
 
     func receiveFinal(_ update: TranscriptSegmentUpdate) {
@@ -473,17 +612,19 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
 
     func receive(_ event: SpeechRecognitionEvent) {
         lock.lock()
-        defer { lock.unlock() }
+        var results: [TranscriptSegmentAccumulationResult] = []
         do {
             let store = try speechEventStore()
             let document = try store.apply(event)
             let legacyDocument = document.transcriptDocument
-            pendingResults.append(TranscriptSegmentAccumulationResult(
+            let result = TranscriptSegmentAccumulationResult(
                 document: legacyDocument,
                 changedSegmentIDs: legacyDocument.segments.map(\.id),
                 plainTextReplacement: nil,
                 source: event.isFinal ? .final : .realtime
-            ))
+            )
+            pendingResults.append(result)
+            results = [result]
             logSpeechEvent(event, document: document)
         } catch {
             performanceEventLogger?.log(
@@ -491,6 +632,8 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
                 metadata: ["error": String(describing: error)]
             )
         }
+        lock.unlock()
+        publish(results)
     }
 
     func drainResults() -> [TranscriptSegmentAccumulationResult] {
@@ -511,14 +654,20 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
         }
     }
 
-    private func persist(_ update: TranscriptSegmentUpdate) {
+    private func persist(_ update: TranscriptSegmentUpdate) -> [TranscriptSegmentAccumulationResult] {
         do {
             let result = try store.apply(update)
             pendingResults.append(result)
             logPersisted(result)
+            return [result]
         } catch {
-            return
+            return []
         }
+    }
+
+    private func publish(_ results: [TranscriptSegmentAccumulationResult]) {
+        guard !results.isEmpty else { return }
+        onResults(results)
     }
 
     private func logPersisted(_ result: TranscriptSegmentAccumulationResult) {

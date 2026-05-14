@@ -80,6 +80,76 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertTrue(performanceEvents.contains("recording_stopped"))
     }
 
+    func testStartRecordingProcessesPushedFramesWithoutExternalDrain() async throws {
+        let fixture = try RecorderFixture()
+        let frame = AudioFrame(pcm: Data([64, 0, 65, 0]), sampleRate: 16_000, channelCount: 1, timestampNanos: 9)
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+
+        try await fixture.recorder.startRecording(
+            target: fixture.target,
+            record: record,
+            speechProvider: .local,
+            localeIdentifier: "zh-CN"
+        )
+        fixture.session.frameBuffer.push(frame)
+
+        try await waitFor {
+            fixture.writer.writtenFrames == [frame]
+                && fixture.transcriber.appendedFrames == [frame]
+        }
+    }
+
+    func testRecorderEmitsTranscriptUpdateEvents() async throws {
+        let fixture = try RecorderFixture()
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        let eventTask = Task {
+            await firstRecorderEvent(from: fixture.recorder.events) { event in
+                if case .transcriptUpdates = event {
+                    return true
+                }
+                return false
+            }
+        }
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "segment-1",
+            text: "hello live",
+            language: "en-US",
+            sourceProvider: "fake",
+            isFinal: true
+        )))
+
+        let event = try await waitForValue(from: eventTask)
+        guard case .transcriptUpdates(let updates)? = event else {
+            return XCTFail("Expected transcript update event")
+        }
+        XCTAssertEqual(updates.flatMap { $0.document.segments.map(\.text) }, ["hello live"])
+    }
+
+    func testStopRecordingEmitsStoppedEventOnce() async throws {
+        let fixture = try RecorderFixture()
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+        let eventTask = Task {
+            await firstRecorderEvent(from: fixture.recorder.events) { event in
+                if case .stopped = event {
+                    return true
+                }
+                return false
+            }
+        }
+
+        try await fixture.recorder.startRecording(target: fixture.target, record: record)
+        _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        let event = try await waitForValue(from: eventTask)
+        guard case .stopped(let stopped)? = event else {
+            return XCTFail("Expected stopped event")
+        }
+        XCTAssertEqual(stopped?.id, record.id)
+        XCTAssertEqual(stopped?.endedAt, Date(timeIntervalSince1970: 200))
+    }
+
     func testStartMicrophoneRecordingUsesMicrophoneCaptureSource() async throws {
         let fixture = try RecorderFixture()
         let source = AudioCaptureSource.microphone(displayName: "Computer Microphone")
@@ -218,6 +288,7 @@ final class MeetingRecorderTests: XCTestCase {
         fixture.session.frameBuffer.push(frame)
 
         try fixture.recorder.drainFrames()
+        try await waitFor { fixture.writer.writtenFrames == [frame] }
         XCTAssertEqual(fixture.writer.writtenFrames, [frame])
         XCTAssertEqual(fixture.transcriber.appendedFrames, [])
 
@@ -264,6 +335,7 @@ final class MeetingRecorderTests: XCTestCase {
             fixture.session.frameBuffer.push(frame)
             try fixture.recorder.drainFrames()
         }
+        try await waitFor { fixture.writer.writtenFrames.count == 3_008 }
 
         fixture.transcriberFactory.resume()
         try await startTask.value
@@ -618,6 +690,39 @@ private func waitFor(
     }
     XCTAssertTrue(condition(), "Timed out waiting for condition")
 }
+
+private func firstRecorderEvent(
+    from events: AsyncStream<MeetingRecorderEvent>,
+    matching predicate: (MeetingRecorderEvent) -> Bool
+) async -> MeetingRecorderEvent? {
+    for await event in events where predicate(event) {
+        return event
+    }
+    return nil
+}
+
+private func waitForValue<T>(
+    from task: Task<T, Never>,
+    timeoutNanoseconds: UInt64 = 1_000_000_000
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            await task.value
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            task.cancel()
+            throw RecorderTestTimeout()
+        }
+        guard let value = try await group.next() else {
+            throw RecorderTestTimeout()
+        }
+        group.cancelAll()
+        return value
+    }
+}
+
+private struct RecorderTestTimeout: Error {}
 
 private func performanceEventNames(at url: URL) throws -> [String] {
     try String(contentsOf: url, encoding: .utf8)
