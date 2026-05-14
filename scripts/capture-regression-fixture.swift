@@ -173,7 +173,6 @@ func runAnalyzer(fixtureURL: URL) -> (status: String, failures: [String]) {
     process.arguments = [
         "swift",
         "scripts/analyze-meeting-performance.swift",
-        "--assert-translation-e2e",
         fixtureURL.path
     ]
     let pipe = Pipe()

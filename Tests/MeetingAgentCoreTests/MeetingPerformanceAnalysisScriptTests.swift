@@ -330,6 +330,31 @@ final class MeetingPerformanceAnalysisScriptTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Failure: unit translations were scheduled but no provider call was observed"))
     }
 
+    func testAnalyzeMeetingPerformanceScriptSkipsTranslationE2EWhenTranslationIsInactive() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("meeting-performance-e2e-translation-inactive-\(UUID().uuidString)", isDirectory: true)
+        let meetingDirectory = root.appendingPathComponent("meeting", isDirectory: true)
+        let eventsURL = meetingDirectory.appendingPathComponent("performance-events.jsonl")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
+        try [
+            event("recording_started", wallTime: "2026-05-06T00:00:00Z"),
+            event("deepgram_audio_frame_sent", wallTime: "2026-05-06T00:00:00Z", audio: 0),
+            event("caption_turn_visible", wallTime: "2026-05-06T00:00:01Z", audio: 1, segmentID: "segment-1", isFinal: false, textLength: 48, metadata: [
+                "path": "realtime",
+                "turnID": "turn-1"
+            ]),
+            event("recording_stopped", wallTime: "2026-05-06T00:00:03Z")
+        ].joined(separator: "\n").appending("\n").write(to: eventsURL, atomically: true, encoding: .utf8)
+
+        let result = try runScript(arguments: ["--assert-translation-e2e", meetingDirectory.path])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("E2E Translation Status: SKIPPED"))
+        XCTAssertTrue(result.stdout.contains("Reason: no translation activity observed"))
+        XCTAssertFalse(result.stdout.contains("Failure: captions were visible but no translation became visible or persisted"))
+    }
+
     func testAnalyzeMeetingPerformanceScriptPassesE2EValidationWhenProviderOverlayAndStoreSucceed() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-performance-e2e-pass-\(UUID().uuidString)", isDirectory: true)
