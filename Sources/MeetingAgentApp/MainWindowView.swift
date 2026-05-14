@@ -647,7 +647,8 @@ private struct MeetingCommandCenterView: View {
                         isRecording: isRecording,
                         summary: summary,
                         recommendedQuestions: recommendedQuestions,
-                        meetingProgressState: meetingProgressState
+                        meetingProgressState: meetingProgressState,
+                        exportKnowledgePackage: exportKnowledgePackage
                     )
                     .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
                 }
@@ -1100,25 +1101,92 @@ private struct InsightPaneView: View {
     let summary: MeetingSummary?
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let meetingProgressState: MeetingProgressState?
+    let exportKnowledgePackage: () -> Void
+    @State private var selectedTab: MeetingInsightTab = .overview
 
     var body: some View {
         VStack(spacing: 0) {
             CommandCenterScrollView(background: CommandCenterPalette.surface, content: {
                 VStack(alignment: .leading, spacing: 16) {
-                    GoalTrackerPanel(
-                        meeting: meeting,
-                        meetingProgressState: meetingProgressState
-                    )
-                    if !recommendedQuestions.isEmpty {
-                        RecommendedQuestionsPanel(questions: recommendedQuestions)
+                    insightPicker
+                    switch selectedTab {
+                    case .overview:
+                        overviewContent
+                    case .knowledge:
+                        knowledgeContent
                     }
-                    phaseSummary
-                    summaryPanel
                 }
                 .padding(22)
             })
         }
         .background(CommandCenterPalette.surface)
+    }
+
+    private var insightPicker: some View {
+        Picker("Insight view", selection: $selectedTab) {
+            Text("Overview").tag(MeetingInsightTab.overview)
+            Text("Knowledge").tag(MeetingInsightTab.knowledge)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    private var overviewContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GoalTrackerPanel(
+                meeting: meeting,
+                meetingProgressState: meetingProgressState
+            )
+            if !recommendedQuestions.isEmpty {
+                RecommendedQuestionsPanel(questions: recommendedQuestions)
+            }
+            phaseSummary
+            summaryPanel
+        }
+    }
+
+    private var knowledgeContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CommandCenterPanel {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Knowledge Deltas").commandCenterEyebrow()
+                    Text("Proposed knowledge updates are generated from the meeting summary and transcript evidence.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                        .textSelection(.enabled)
+                    Button {
+                        exportKnowledgePackage()
+                    } label: {
+                        Label("Export Knowledge Package", systemImage: "brain")
+                    }
+                    .buttonStyle(CommandCenterActionButtonStyle())
+                    .disabled(isRecording || meeting.transcriptJSONURL == nil)
+                }
+            }
+
+            if let summary {
+                let knowledge = MeetingKnowledgeExtractor.fromSummary(summary, segments: transcriptSegments)
+                KnowledgeSectionView(title: "Facts", items: knowledge.facts, mode: .statement)
+                KnowledgeSectionView(title: "Judgments", items: knowledge.judgments, mode: .statement)
+                KnowledgeSectionView(title: "Decisions", items: knowledge.decisions, mode: .statement)
+                KnowledgeSectionView(title: "Actions", items: knowledge.actions, mode: .statement)
+                KnowledgeSectionView(title: "Open Questions", items: knowledge.openQuestions, mode: .question)
+                KnowledgeSectionView(title: "Entity Updates", items: knowledge.entityUpdates, mode: .statement)
+            } else {
+                CommandCenterPanel {
+                    Text("Generate a summary before reviewing proposed knowledge updates.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var transcriptSegments: [TranscriptSegment] {
+        guard let transcriptJSONURL = meeting.transcriptJSONURL,
+              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        else {
+            return []
+        }
+        return document.segments
     }
 
     private var phaseSummary: some View {
@@ -1170,6 +1238,92 @@ private struct InsightPaneView: View {
 
     private func isBlank(_ text: String) -> Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private enum MeetingInsightTab {
+    case overview
+    case knowledge
+}
+
+private enum KnowledgeItemDisplayMode {
+    case statement
+    case question
+}
+
+private struct KnowledgeSectionView: View {
+    let title: String
+    let items: [MeetingKnowledgeItem]
+    let mode: KnowledgeItemDisplayMode
+
+    var body: some View {
+        CommandCenterPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).commandCenterEyebrow()
+                if items.isEmpty {
+                    Text("No proposed items.")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
+                } else {
+                    ForEach(items, id: \.id) { item in
+                        KnowledgeItemRow(item: item, mode: mode)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct KnowledgeItemRow: View {
+    let item: MeetingKnowledgeItem
+    let mode: KnowledgeItemDisplayMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: iconName)
+                    .font(CommandCenterTypography.caption)
+                    .foregroundStyle(CommandCenterPalette.primary)
+                    .frame(width: 16)
+                Text(primaryText)
+                    .font(CommandCenterTypography.secondaryBody)
+                    .foregroundStyle(CommandCenterPalette.text)
+                    .textSelection(.enabled)
+            }
+            metadataRow
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
+    }
+
+    private var metadataRow: some View {
+        HStack(spacing: 8) {
+            if let confidence = item.confidence {
+                CommandCenterChip(title: confidence.rawValue, tint: CommandCenterPalette.primary, filled: false)
+            }
+            CommandCenterChip(title: item.status, tint: CommandCenterPalette.secondaryText, filled: false)
+            if !item.evidence.isEmpty {
+                CommandCenterChip(title: "\(item.evidence.count) evidence", tint: CommandCenterPalette.cyan, filled: false)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var primaryText: String {
+        switch mode {
+        case .statement:
+            return item.statement ?? item.question ?? "Untitled knowledge item"
+        case .question:
+            return item.question ?? item.statement ?? "Untitled question"
+        }
+    }
+
+    private var iconName: String {
+        switch mode {
+        case .statement:
+            return "smallcircle.filled.circle"
+        case .question:
+            return "questionmark.circle"
+        }
     }
 }
 

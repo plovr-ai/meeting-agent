@@ -589,6 +589,38 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("Readiness Report"))
     }
 
+    func testInsightPaneDefinesOverviewAndKnowledgeWorkspaceTabs() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("private enum MeetingInsightTab"))
+        XCTAssertTrue(source.contains("@State private var selectedTab: MeetingInsightTab = .overview"))
+        XCTAssertTrue(source.contains("Picker(\"Insight view\", selection: $selectedTab)"))
+        XCTAssertTrue(source.contains("Text(\"Overview\").tag(MeetingInsightTab.overview)"))
+        XCTAssertTrue(source.contains("Text(\"Knowledge\").tag(MeetingInsightTab.knowledge)"))
+        XCTAssertTrue(source.contains(".pickerStyle(.segmented)"))
+        XCTAssertTrue(source.contains("overviewContent"))
+        XCTAssertTrue(source.contains("knowledgeContent"))
+    }
+
+    func testKnowledgeWorkspaceRendersKnowledgeDeltaSectionsAndExportAction() throws {
+        let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertTrue(source.contains("MeetingKnowledgeExtractor.fromSummary(summary, segments: transcriptSegments)"))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Facts\""))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Judgments\""))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Decisions\""))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Actions\""))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Open Questions\""))
+        XCTAssertTrue(source.contains("KnowledgeSectionView(title: \"Entity Updates\""))
+        XCTAssertTrue(source.contains("KnowledgeItemRow(item: item, mode: mode)"))
+        XCTAssertTrue(source.contains("Label(\"Export Knowledge Package\", systemImage: \"brain\")"))
+        XCTAssertTrue(source.contains("Proposed knowledge updates are generated from the meeting summary and transcript evidence."))
+    }
+
     func testLiveCaptionsHideCaptionCorrectionWhileKeepingSpeakerEdit() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")
