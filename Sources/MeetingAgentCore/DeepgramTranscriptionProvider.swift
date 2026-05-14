@@ -484,7 +484,7 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
             channelCount: context.channelCount,
             performanceEventLogger: context.performanceEventLogger
         )
-        let writer = try TranscriptFileWriter(url: context.transcriptURL)
+        let writer = context.speechEventSink == nil ? try TranscriptFileWriter(url: context.transcriptURL) : nil
         return DeepgramStreamingTranscriber(
             session: session,
             writer: writer,
@@ -497,7 +497,7 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
 
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
-    private let writer: TranscriptFileWriter
+    private let writer: TranscriptFileWriter?
     private let transcriptUpdateSink: TranscriptUpdateSink?
     private let speechEventSink: SpeechRecognitionEventSink?
     private let performanceEventLogger: PerformanceEventLogger?
@@ -517,7 +517,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     init(
         session: DeepgramStreamingTranscriptionSession,
-        writer: TranscriptFileWriter,
+        writer: TranscriptFileWriter?,
         transcriptUpdateSink: TranscriptUpdateSink? = nil,
         speechEventSink: SpeechRecognitionEventSink? = nil,
         performanceEventLogger: PerformanceEventLogger? = nil
@@ -545,7 +545,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
                 try? self?.write(segment)
             }
             if self?.speechEventSink == nil {
-                try? self?.writer.close()
+                try? self?.writer?.close()
             }
         }
         self.eventReceiveTask = Task { [weak self, session] in
@@ -568,6 +568,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
+        guard let writer else { return }
         let output = reconciler.apply(segment)
 
         for result in output.realtimeUpdates {

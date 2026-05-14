@@ -317,6 +317,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         }
         XCTAssertEqual(payload.text, "你好")
         XCTAssertEqual(payload.speaker?.identifier, "deepgram-speaker-0")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
     }
 
     func testStreamingProviderPublishesAssignedSpeakerLabelsToLiveUpdateSink() async throws {
