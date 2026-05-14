@@ -14,6 +14,43 @@ final class CaptionReducerTests: XCTestCase {
         XCTAssertEqual(document.turns[0].sections.count, 1)
     }
 
+    func testIncrementalInterimHypothesesWithNewUtteranceIDsReplaceOpenDraftSection() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(id: "utt-1", text: "英国", speakerID: "speaker-0", start: 7.6, end: 8.0)))
+        _ = reducer.apply(.hypothesis(payload(id: "utt-2", text: "英国、法国、德国", speakerID: "speaker-0", start: 7.7, end: 8.1)))
+        let document = reducer.apply(.hypothesis(payload(id: "utt-3", text: "英国、法国、德国这些在近代", speakerID: "speaker-0", start: 7.7, end: 9.2)))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 1)
+        XCTAssertEqual(document.turns[0].text, "英国、法国、德国这些在近代")
+        XCTAssertEqual(document.turns[0].source.utteranceIDs, ["utt-1", "utt-2", "utt-3"])
+    }
+
+    func testUnrelatedInterimHypothesisWithNewUtteranceIDStartsReadableSection() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(id: "utt-1", text: "第一件事", speakerID: "speaker-0", start: 1.0, end: 1.5)))
+        let document = reducer.apply(.hypothesis(payload(id: "utt-2", text: "第二件事", speakerID: "speaker-0", start: 4.0, end: 4.5)))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 2)
+        XCTAssertEqual(document.turns[0].text, "第一件事\n第二件事")
+    }
+
+    func testCoveredFinalAfterLongerDraftDoesNotAppendDuplicateText() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.hypothesis(payload(id: "draft-1", text: "英国、法国、德国这些在近代", speakerID: "speaker-0", start: 7.7, end: 9.2)))
+        let document = reducer.apply(.final(payload(id: "final-1", text: "英国法国德国", speakerID: "speaker-0", start: 7.6, end: 8.1)))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 1)
+        XCTAssertEqual(document.turns[0].text, "英国、法国、德国这些在近代")
+        XCTAssertEqual(document.turns[0].state, .draft)
+        XCTAssertEqual(document.turns[0].source.utteranceIDs, ["draft-1", "final-1"])
+    }
+
     func testFinalPromotesDraftWithoutDuplicatingTurn() {
         var reducer = CaptionReducer()
 
@@ -106,15 +143,17 @@ final class CaptionReducerTests: XCTestCase {
         text: String,
         speakerID: String?,
         speechFinal: Bool = false,
-        pause: Double? = nil
+        pause: Double? = nil,
+        start: Double? = nil,
+        end: Double? = nil
     ) -> SpeechUtterancePayload {
         SpeechUtterancePayload(
             providerID: "deepgram",
             providerResultID: resultID,
             providerUtteranceID: id,
             speaker: speakerID.map { TranscriptSpeaker(identifier: $0) },
-            startTimeSeconds: nil,
-            endTimeSeconds: nil,
+            startTimeSeconds: start,
+            endTimeSeconds: end,
             text: text,
             language: "zh-CN",
             confidence: 0.9,

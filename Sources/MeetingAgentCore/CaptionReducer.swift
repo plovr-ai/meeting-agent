@@ -45,6 +45,12 @@ public struct CaptionReducer {
         }
 
         let turnIndex = targetTurnIndex(for: payload, state: .draft)
+        if let location = openDraftReplacementLocation(in: turnIndex, for: payload) {
+            updateSection(at: location, with: payload, state: .draft)
+            utteranceLocations[key] = location
+            return
+        }
+
         let section = makeSection(for: payload)
         document.turns[turnIndex].sections.append(section)
         document.turns[turnIndex].state = .draft
@@ -70,6 +76,17 @@ public struct CaptionReducer {
         }
 
         let turnIndex = targetTurnIndex(for: payload, state: .final)
+        if let location = openDraftCoveredFinalLocation(in: turnIndex, for: payload) {
+            mergeCoveredFinal(payload, intoSectionAt: location)
+            utteranceLocations[key] = location
+            finalizedUtteranceKeys.insert(key)
+            if payload.boundary.endsTurn {
+                sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
+                document.turns[location.turnIndex].state = .final
+            }
+            return
+        }
+
         if shouldAppendToExistingSection(turnIndex: turnIndex, payload: payload),
            let sectionIndex = document.turns[turnIndex].sections.indices.last {
             append(payload, toSectionAt: Location(turnIndex: turnIndex, sectionIndex: sectionIndex))
@@ -128,6 +145,84 @@ public struct CaptionReducer {
         return sectionClosedByTurnID[document.turns[turnIndex].id] != true
     }
 
+    private func openDraftReplacementLocation(in turnIndex: Int, for payload: SpeechUtterancePayload) -> Location? {
+        guard document.turns.indices.contains(turnIndex),
+              let sectionIndex = document.turns[turnIndex].sections.indices.last,
+              sectionClosedByTurnID[document.turns[turnIndex].id] != true
+        else {
+            return nil
+        }
+        let section = document.turns[turnIndex].sections[sectionIndex]
+        guard !sectionIsFullyFinalized(section, providerID: payload.providerID) else {
+            return nil
+        }
+        guard shouldReplaceOpenDraftSection(section, with: payload) else {
+            return nil
+        }
+        return Location(turnIndex: turnIndex, sectionIndex: sectionIndex)
+    }
+
+    private func openDraftCoveredFinalLocation(in turnIndex: Int, for payload: SpeechUtterancePayload) -> Location? {
+        guard document.turns.indices.contains(turnIndex),
+              let sectionIndex = document.turns[turnIndex].sections.indices.last,
+              sectionClosedByTurnID[document.turns[turnIndex].id] != true
+        else {
+            return nil
+        }
+        let section = document.turns[turnIndex].sections[sectionIndex]
+        guard !sectionIsFullyFinalized(section, providerID: payload.providerID),
+              finalPayloadIsCoveredByOpenDraft(payload, section: section)
+        else {
+            return nil
+        }
+        return Location(turnIndex: turnIndex, sectionIndex: sectionIndex)
+    }
+
+    private func sectionIsFullyFinalized(_ section: CaptionSection, providerID: String) -> Bool {
+        !section.utteranceIDs.isEmpty
+            && section.utteranceIDs.allSatisfy { finalizedUtteranceKeys.contains("\(providerID):utterance:\($0)") }
+    }
+
+    private func finalPayloadIsCoveredByOpenDraft(_ payload: SpeechUtterancePayload, section: CaptionSection) -> Bool {
+        let existingText = normalizedText(section.text)
+        let incomingText = normalizedText(payload.text)
+        guard !existingText.isEmpty,
+              !incomingText.isEmpty,
+              existingText != incomingText,
+              existingText.contains(incomingText)
+        else {
+            return false
+        }
+        return timingsOverlap(section, payload: payload) || payload.startTimeSeconds == nil || section.startTimeSeconds == nil
+    }
+
+    private func shouldReplaceOpenDraftSection(_ section: CaptionSection, with payload: SpeechUtterancePayload) -> Bool {
+        let existingText = section.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingText = payload.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !existingText.isEmpty, !incomingText.isEmpty else { return false }
+        if normalizedText(incomingText).hasPrefix(normalizedText(existingText)) {
+            return true
+        }
+        return timingsOverlap(section, payload: payload)
+            && normalizedText(incomingText).contains(normalizedText(existingText))
+    }
+
+    private func normalizedText(_ text: String) -> String {
+        text.filter { !$0.isWhitespace && !$0.isPunctuation }
+    }
+
+    private func timingsOverlap(_ section: CaptionSection, payload: SpeechUtterancePayload) -> Bool {
+        guard let sectionStart = section.startTimeSeconds,
+              let sectionEnd = section.endTimeSeconds,
+              let payloadStart = payload.startTimeSeconds,
+              let payloadEnd = payload.endTimeSeconds
+        else {
+            return false
+        }
+        let tolerance = 0.25
+        return sectionStart <= payloadEnd + tolerance && payloadStart <= sectionEnd + tolerance
+    }
+
     private mutating func updateSection(at location: Location, with payload: SpeechUtterancePayload, state: CaptionTurnState) {
         guard document.turns.indices.contains(location.turnIndex),
               document.turns[location.turnIndex].sections.indices.contains(location.sectionIndex) else {
@@ -142,6 +237,37 @@ public struct CaptionReducer {
         document.turns[location.turnIndex].state = state
         document.turns[location.turnIndex].source = mergedSource(document.turns[location.turnIndex].source, payload: payload)
         document.turns[location.turnIndex].endTimeSeconds = payload.endTimeSeconds
+        document.turns[location.turnIndex].updatedAt = Date()
+        rememberSpeaker(from: payload)
+    }
+
+    private mutating func mergeCoveredFinal(_ payload: SpeechUtterancePayload, intoSectionAt location: Location) {
+        guard document.turns.indices.contains(location.turnIndex),
+              document.turns[location.turnIndex].sections.indices.contains(location.sectionIndex) else {
+            return
+        }
+        document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs = mergedIDs(
+            document.turns[location.turnIndex].sections[location.sectionIndex].utteranceIDs,
+            payload.providerUtteranceID
+        )
+        if let payloadEndTimeSeconds = payload.endTimeSeconds {
+            if let sectionEndTimeSeconds = document.turns[location.turnIndex].sections[location.sectionIndex].endTimeSeconds {
+                document.turns[location.turnIndex].sections[location.sectionIndex].endTimeSeconds = max(
+                    sectionEndTimeSeconds,
+                    payloadEndTimeSeconds
+                )
+            } else {
+                document.turns[location.turnIndex].sections[location.sectionIndex].endTimeSeconds = payloadEndTimeSeconds
+            }
+        }
+        document.turns[location.turnIndex].source = mergedSource(document.turns[location.turnIndex].source, payload: payload)
+        if let payloadEndTimeSeconds = payload.endTimeSeconds {
+            if let turnEndTimeSeconds = document.turns[location.turnIndex].endTimeSeconds {
+                document.turns[location.turnIndex].endTimeSeconds = max(turnEndTimeSeconds, payloadEndTimeSeconds)
+            } else {
+                document.turns[location.turnIndex].endTimeSeconds = payloadEndTimeSeconds
+            }
+        }
         document.turns[location.turnIndex].updatedAt = Date()
         rememberSpeaker(from: payload)
     }
