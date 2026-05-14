@@ -43,6 +43,28 @@ public struct MeetingArtifactSnapshot: Equatable {
         )
     }
 
+    public static func make(meeting: MeetingRecord, session: MeetingSessionState) -> MeetingArtifactSnapshot {
+        let document = session.transcript.captionDocument.transcriptDocument
+        let transcriptText = renderedTranscript(from: document)
+            ?? "Transcript will appear here while recording."
+        let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
+
+        return MeetingArtifactSnapshot(
+            meetingID: meeting.id,
+            transcriptText: transcriptText,
+            transcriptSegments: document.segments,
+            summary: session.summary.summary,
+            actualTranscriptionSourceText: providers.isEmpty ? meeting.transcriptionProviderID : providers.joined(separator: ", "),
+            transcriptLatencyText: Self.transcriptLatencyText(for: meeting)
+        )
+    }
+
+    private static func renderedTranscript(from document: TranscriptDocument) -> String? {
+        let rendered = TranscriptFormatter.render(document.segments)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return rendered.isEmpty ? nil : rendered
+    }
+
     private static func transcriptLatencyText(for meeting: MeetingRecord) -> String {
         guard let event = latestTranscriptEvent(for: meeting),
               let audioTimeSeconds = event.audioTimeSeconds

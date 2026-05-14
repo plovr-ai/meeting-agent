@@ -1032,7 +1032,15 @@ public final class MeetingAgentViewModel: ObservableObject {
             selectedMeetingArtifactSnapshot = nil
             return
         }
-        selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.load(for: selectedMeeting)
+        if let selectedMeetingSessionState,
+           selectedMeetingSessionState.meetingID == selectedMeeting.id {
+            selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.make(
+                meeting: selectedMeeting,
+                session: selectedMeetingSessionState
+            )
+        } else {
+            selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.load(for: selectedMeeting)
+        }
     }
 
     public var speechLocaleIdentifier: String {
