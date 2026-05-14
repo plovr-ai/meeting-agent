@@ -132,7 +132,9 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsReadinessMarkdownReport() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try "Plain transcript text for validation.".write(to: fixture.record.transcriptURL!, atomically: true, encoding: .utf8)
+        try fixture.writeStructuredTranscript([
+            TranscriptSegment(text: "Structured transcript text for validation.")
+        ])
         try CaptureDiagnostics(
             framesCaptured: 44_100,
             durationSeconds: 1,
@@ -157,7 +159,7 @@ final class MeetingExportServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("# Meeting Readiness Report"))
         XCTAssertTrue(markdown.contains("Google Meet"))
         XCTAssertTrue(markdown.contains("Transcribed"))
-        XCTAssertTrue(markdown.contains("Plain transcript text for validation."))
+        XCTAssertTrue(markdown.contains("Structured transcript text for validation."))
         XCTAssertTrue(markdown.contains("recordingSaved"))
         XCTAssertTrue(markdown.contains("Startup replay frames: 0"))
     }
@@ -287,7 +289,38 @@ private struct MeetingExportFixture {
     }
 
     func writeStructuredTranscript(_ segments: [TranscriptSegment]) throws {
-        let data = try JSONEncoder.meetingAgent.encode(TranscriptDocument(segments: segments))
+        let turns = segments.map { segment in
+            CaptionTurn(
+                id: segment.id,
+                speakerID: segment.speakerID,
+                speakerLabel: segment.speakerLabel,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                sections: [
+                    CaptionSection(
+                        id: "\(segment.id)-section",
+                        text: segment.text,
+                        utteranceIDs: [segment.id],
+                        startTimeSeconds: segment.startTimeSeconds,
+                        endTimeSeconds: segment.endTimeSeconds
+                    )
+                ],
+                state: segment.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: segment.sourceProvider,
+                    utteranceIDs: [segment.id]
+                ),
+                createdAt: segment.createdAt,
+                updatedAt: segment.createdAt
+            )
+        }
+        let data = try JSONEncoder.meetingAgent.encode(CaptionDocument(
+            turns: turns,
+            provider: CaptionProviderInfo(
+                id: segments.first?.sourceProvider ?? "test",
+                locale: segments.compactMap(\.language).first
+            )
+        ))
         try data.write(to: record.transcriptJSONURL!, options: .atomic)
     }
 }

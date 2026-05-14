@@ -24,10 +24,9 @@ public struct MeetingExportService {
     }
 
     public func exportTranscript(for record: MeetingRecord, to destinationURL: URL) throws {
-        guard let transcript = TranscriptFileWriter.renderedTranscript(
-            textURL: record.transcriptURL,
-            structuredURL: record.transcriptJSONURL
-        ) else {
+        let document = try transcriptDocument(for: record)
+        let transcript = TranscriptFormatter.render(document.segments)
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MeetingExportError.missingArtifact("transcript")
         }
         try write(transcript, to: destinationURL)
@@ -174,10 +173,8 @@ public struct MeetingExportService {
     }
 
     private func readinessReport(for record: MeetingRecord) -> String {
-        let transcript = TranscriptFileWriter.renderedTranscript(
-            textURL: record.transcriptURL,
-            structuredURL: record.transcriptJSONURL
-        )
+        let transcript = (try? transcriptDocument(for: record))
+            .map { TranscriptFormatter.render($0.segments) }
         let diagnostics = diagnostics(for: record)
         let summaryAvailable = record.summaryURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
 
@@ -317,7 +314,7 @@ public struct MeetingExportService {
         else {
             throw MeetingExportError.missingArtifact("structured transcript")
         }
-        return try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+        return try MeetingTranscriptStore.readDocument(from: transcriptJSONURL).transcriptDocument
     }
 
     private func transcriptDocument(for session: MeetingSessionState) -> TranscriptDocument {

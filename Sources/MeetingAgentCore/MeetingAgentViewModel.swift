@@ -842,7 +842,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             if let session = selectedSession(for: record.id) {
                 try exportService.exportKnowledgePackage(for: record, session: session, to: destinationURL)
             } else {
-                let summary = record.summaryJSONURL.flatMap { try? MeetingSummaryWriter.read(from: $0) }
+                let summary = try? summaryRepository.loadSummary(for: record)
                 try exportService.exportKnowledgePackage(for: record, summary: summary, to: destinationURL)
             }
         }

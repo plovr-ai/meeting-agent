@@ -25,12 +25,11 @@ public struct MeetingArtifactSnapshot: Equatable {
     }
 
     public static func load(for meeting: MeetingRecord) -> MeetingArtifactSnapshot {
-        let document = meeting.transcriptJSONURL.flatMap { try? TranscriptFileWriter.readDocument(from: $0) }
-        let transcriptText = TranscriptFileWriter.renderedTranscript(
-            textURL: meeting.transcriptURL,
-            structuredURL: meeting.transcriptJSONURL
-        ) ?? "Transcript will appear here while recording."
-        let summary = meeting.summaryJSONURL.flatMap { try? MeetingSummaryWriter.read(from: $0) }
+        let captionDocument = try? FileTranscriptRepository().loadCaptionDocument(for: meeting)
+        let document = captionDocument?.transcriptDocument
+        let transcriptText = document.flatMap(renderedTranscript(from:))
+            ?? "Transcript will appear here while recording."
+        let summary = try? FileSummaryRepository().loadSummary(for: meeting)
         let providers = Array(Set(document?.segments.map(\.sourceProvider) ?? [])).sorted()
 
         return MeetingArtifactSnapshot(
