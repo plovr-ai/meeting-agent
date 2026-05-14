@@ -18,9 +18,14 @@ public enum SubtitleExportFormat: Equatable {
 
 public struct MeetingExportService {
     private let fileManager: FileManager
+    private let transcriptRepository: any TranscriptRepository
 
-    public init(fileManager: FileManager = .default) {
+    public init(
+        fileManager: FileManager = .default,
+        transcriptRepository: any TranscriptRepository = FileTranscriptRepository()
+    ) {
         self.fileManager = fileManager
+        self.transcriptRepository = transcriptRepository
     }
 
     public func exportTranscript(for record: MeetingRecord, to destinationURL: URL) throws {
@@ -314,7 +319,7 @@ public struct MeetingExportService {
         else {
             throw MeetingExportError.missingArtifact("structured transcript")
         }
-        return try MeetingTranscriptStore.readDocument(from: transcriptJSONURL).transcriptDocument
+        return try transcriptRepository.loadCaptionDocument(for: record).transcriptDocument
     }
 
     private func transcriptDocument(for session: MeetingSessionState) -> TranscriptDocument {

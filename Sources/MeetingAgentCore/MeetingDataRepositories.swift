@@ -17,7 +17,14 @@ public struct FileTranscriptRepository: TranscriptRepository {
         guard let url = meeting.transcriptJSONURL else {
             return CaptionDocument()
         }
-        return try MeetingTranscriptStore.readDocument(from: url)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return CaptionDocument()
+        }
+        let data = try Data(contentsOf: url)
+        guard !data.isEmpty else {
+            return CaptionDocument()
+        }
+        return try JSONDecoder.meetingAgent.decode(CaptionDocument.self, from: data)
     }
 
     public func saveCaptionDocument(_ document: CaptionDocument, for meeting: MeetingRecord) throws {

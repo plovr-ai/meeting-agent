@@ -305,11 +305,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Recorded Meeting", startedAt: Date(timeIntervalSince1970: 100)).record
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "This meeting has already stopped.", language: "en-US")
-        ])
-        try transcriptWriter.close()
+        ]), for: stored)
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
         try viewModel.loadMeetings()
 
@@ -664,8 +662,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Replay Meeting", startedAt: Date(timeIntervalSince1970: 0))
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
@@ -673,7 +670,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 isFinal: true,
                 speechFinal: true
             )
-        ])
+        ]), for: stored.record)
 
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
         try viewModel.loadMeetings()
@@ -689,8 +686,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Replay Meeting", startedAt: Date(timeIntervalSince1970: 0))
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
@@ -702,7 +698,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 translationTargetLocale: "zh-CN",
                 translationIsFinal: true
             )
-        ])
+        ]), for: stored.record)
 
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
         try viewModel.loadMeetings()
@@ -1207,13 +1203,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
-        let writer = try TranscriptFileWriter(
-            url: XCTUnwrap(record.transcriptURL),
-            structuredURL: XCTUnwrap(record.transcriptJSONURL)
-        )
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "replay-draft", text: "historical draft", language: "en-US", isFinal: false)
-        ])
+        ]), for: record)
         let viewModel = MeetingAgentViewModel(
             store: store,
             draftCaptionInputThrottleNanoseconds: 1_000_000_000,
@@ -1481,8 +1473,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let record = try store.createMeeting(name: "Meet", startedAt: Date()).record
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL), structuredURL: XCTUnwrap(record.transcriptJSONURL))
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1"),
@@ -1491,7 +1482,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 isFinal: true,
                 speechFinal: true
             )
-        ])
+        ]), for: record)
         let viewModel = MeetingAgentViewModel(store: store)
         try viewModel.loadMeetings()
         viewModel.selectMeeting(record.id)
@@ -1995,14 +1986,16 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
-        try "Transcript text".write(to: XCTUnwrap(stored.record.transcriptURL), atomically: true, encoding: .utf8)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(text: "Transcript text", language: "en-US")
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(store: store)
         try viewModel.loadMeetings()
         let destination = root.appendingPathComponent("exported-transcript.txt")
 
         try viewModel.exportTranscript(for: stored.record.id, to: destination)
 
-        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "Transcript text")
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "User A:\nTranscript text")
         XCTAssertEqual(viewModel.statusText, "Transcript exported")
     }
 
@@ -2011,15 +2004,14 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
                 text: "Hello",
                 language: "en-US"
             )
-        ])
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
         try viewModel.loadMeetings()
         viewModel.selectMeeting(stored.record.id)
@@ -2053,15 +2045,14 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
         stored.meetingGoal = goal
         try store.save(stored)
-        let writer = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
-        try writer.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
                 text: "Old text",
                 language: "en-US"
             )
-        ])
+        ]), for: stored)
         let summary = MeetingSummary(
             overview: "Old summary",
             keyTopics: [],
@@ -2140,6 +2131,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             failureReason: nil
         )
         try MeetingSummaryWriter.write(summary, jsonURL: stored.record.summaryJSONURL!, markdownURL: stored.record.summaryMarkdownURL!)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(startTimeSeconds: 0, endTimeSeconds: 2, text: "Hello", language: "en-US")
+        ]), for: stored.record)
         let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
         try viewModel.loadMeetings()
 
@@ -2148,10 +2142,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let srtDestination = root.appendingPathComponent("captions.srt")
         let vttDestination = root.appendingPathComponent("captions.vtt")
         let readinessDestination = root.appendingPathComponent("readiness.json")
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(startTimeSeconds: 0, endTimeSeconds: 2, text: "Hello", language: "en-US")
-        ])
         try viewModel.exportSummary(for: stored.record.id, to: summaryDestination)
         XCTAssertEqual(viewModel.statusText, "Summary exported")
         try viewModel.exportMeetingData(for: stored.record.id, to: dataDestination)

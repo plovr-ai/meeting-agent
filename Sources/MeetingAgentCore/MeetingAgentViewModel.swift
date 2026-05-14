@@ -175,6 +175,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func loadMeetings() throws {
         meetings = try store.loadMeetings()
         selectedMeetingID = meetings.first?.id
+        hydrateSelectedMeetingSessionState()
         refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
@@ -898,12 +899,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard let record = meetings.first(where: { $0.id == meetingID }) else {
             throw MeetingExportError.missingArtifact("meeting")
         }
-        try TranscriptFileWriter.updateSpeakerLabel(
-            speakerID: speakerID,
-            label: label,
-            textURL: record.transcriptURL,
-            structuredURL: record.transcriptJSONURL
-        )
+        try updateCaptionSpeakerLabel(for: record, speakerID: speakerID, label: label)
+        hydrateSelectedMeetingSessionState()
         resetLiveCaptionPipeline()
         await refreshLiveCaptionTurnsFromSelectedMeetingAsync()
         statusText = "Speaker label updated"
@@ -918,13 +915,9 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard let record = meetings.first(where: { $0.id == meetingID }) else {
             throw MeetingExportError.missingArtifact("meeting")
         }
-        try TranscriptFileWriter.updateSegmentText(
-            segmentID: segmentID,
-            text: text,
-            textURL: record.transcriptURL,
-            structuredURL: record.transcriptJSONURL
-        )
+        try updateCaptionSegmentText(for: record, segmentID: segmentID, text: text)
         await invalidateDownstreamArtifactsAfterTranscriptChange(for: meetingID)
+        hydrateSelectedMeetingSessionState()
         resetLiveCaptionPipeline()
         await refreshLiveCaptionTurnsFromSelectedMeetingAsync()
         statusText = "Transcript corrected; summary needs regeneration"
@@ -1425,6 +1418,102 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         let document = captionDocument.transcriptDocument
         return document.segments.isEmpty ? nil : document
+    }
+
+    private func updateCaptionSpeakerLabel(
+        for record: MeetingRecord,
+        speakerID: String,
+        label: String
+    ) throws {
+        let normalizedSpeakerID = speakerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSpeakerID.isEmpty, !normalizedLabel.isEmpty else {
+            throw ProbeError.invalidArguments("Speaker ID and label are required")
+        }
+        var document = try transcriptRepository.loadCaptionDocument(for: record)
+        document.turns = document.turns.map { turn in
+            guard turn.speakerID == normalizedSpeakerID else { return turn }
+            return CaptionTurn(
+                id: turn.id,
+                speakerID: normalizedSpeakerID,
+                speakerLabel: normalizedLabel,
+                startTimeSeconds: turn.startTimeSeconds,
+                endTimeSeconds: turn.endTimeSeconds,
+                sections: turn.sections,
+                state: turn.state,
+                source: turn.source,
+                createdAt: turn.createdAt,
+                updatedAt: Date()
+            )
+        }
+        document.speakers = document.speakers.map { speaker in
+            guard speaker.id == normalizedSpeakerID else { return speaker }
+            return CaptionSpeaker(
+                id: speaker.id,
+                label: normalizedLabel,
+                providerSpeakerID: speaker.providerSpeakerID
+            )
+        }
+        document.updatedAt = Date()
+        try saveCaptionDocumentAndRenderedText(document, for: record)
+    }
+
+    private func updateCaptionSegmentText(
+        for record: MeetingRecord,
+        segmentID: String,
+        text: String
+    ) throws {
+        let normalizedSegmentID = segmentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSegmentID.isEmpty, !normalizedText.isEmpty else {
+            throw ProbeError.invalidArguments("Segment ID and text are required")
+        }
+        var document = try transcriptRepository.loadCaptionDocument(for: record)
+        var didUpdateSegment = false
+        document.turns = document.turns.map { turn in
+            guard turn.id == normalizedSegmentID || turn.source.utteranceIDs.contains(normalizedSegmentID) else {
+                return turn
+            }
+            didUpdateSegment = true
+            var updatedTurn = turn
+            if updatedTurn.sections.isEmpty {
+                updatedTurn.sections = [
+                    CaptionSection(
+                        id: "\(turn.id)-section",
+                        text: normalizedText,
+                        utteranceIDs: turn.source.utteranceIDs,
+                        startTimeSeconds: turn.startTimeSeconds,
+                        endTimeSeconds: turn.endTimeSeconds
+                    )
+                ]
+            } else {
+                updatedTurn.sections = updatedTurn.sections.enumerated().map { index, section in
+                    guard index == 0 else {
+                        var clearedSection = section
+                        clearedSection.text = ""
+                        return clearedSection
+                    }
+                    var updatedSection = section
+                    updatedSection.text = normalizedText
+                    return updatedSection
+                }
+            }
+            updatedTurn.updatedAt = Date()
+            return updatedTurn
+        }
+        guard didUpdateSegment else {
+            throw ProbeError.invalidArguments("Transcript segment not found")
+        }
+        document.updatedAt = Date()
+        try saveCaptionDocumentAndRenderedText(document, for: record)
+    }
+
+    private func saveCaptionDocumentAndRenderedText(_ document: CaptionDocument, for record: MeetingRecord) throws {
+        try transcriptRepository.saveCaptionDocument(document, for: record)
+        if let transcriptURL = record.transcriptURL {
+            let transcript = TranscriptFormatter.render(document.transcriptDocument.segments)
+            try (transcript + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+        }
     }
 
     private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {
