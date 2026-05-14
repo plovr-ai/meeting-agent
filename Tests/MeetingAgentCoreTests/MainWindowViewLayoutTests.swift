@@ -204,12 +204,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(metadataSource.contains("CommandCenterChip(title: \"Preflight:"))
         XCTAssertTrue(source.contains("\"Pipeline: \\(pipelineDisplayName)\""))
         XCTAssertTrue(source.contains("\"Transcript Latency: \\(transcriptLatencyText)\""))
-        XCTAssertTrue(source.contains("\"Translation Latency: \\(translationLatencyText)\""))
         XCTAssertTrue(source.contains("meeting.performanceEventsURL"))
         XCTAssertTrue(source.contains("PerformanceEvent.self"))
-        XCTAssertTrue(source.contains("translationRequestID"))
-        XCTAssertTrue(source.contains("caption_translation_scheduled"))
-        XCTAssertTrue(source.contains("caption_translation_attached"))
+        XCTAssertFalse(source.contains("\"Translation Latency:"))
+        XCTAssertFalse(source.contains("translationLatencyText"))
     }
 
     func testMeetingWorkspaceConsolidatesActionsIntoTopRow() throws {
@@ -489,9 +487,9 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("UnifiedTranscriptView("))
         XCTAssertTrue(source.contains("BilingualTranscriptBlock("))
-        XCTAssertTrue(source.contains("LiveCaptionDisplayState("))
         XCTAssertTrue(source.contains("ScrollViewReader"))
         XCTAssertTrue(source.contains("LazyVStack"))
+        XCTAssertTrue(source.contains("Text(turn.originalText)"))
         XCTAssertFalse(source.contains("Text(\"Live Captions\")"))
         XCTAssertFalse(source.contains("ForEach(liveCaptionTurns.suffix(8))"))
         XCTAssertFalse(source.contains("Text(turn.isFinal ? \"final\" : \"partial\")"))
@@ -514,10 +512,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("transcriptText.isEmpty"))
         XCTAssertTrue(source.contains("returnToLatest"))
-        XCTAssertTrue(source.contains("translation unavailable"))
-        XCTAssertTrue(source.contains("Translating"))
         XCTAssertTrue(source.contains("Button(\"Edit name\")"))
         XCTAssertFalse(source.contains("Image(systemName: \"pencil\")"))
+        XCTAssertFalse(source.contains("translation unavailable"))
+        XCTAssertFalse(source.contains("Translating"))
     }
 
     func testUnifiedTranscriptRendersSpeakerGroupsInsteadOfOneLabelPerBlock() throws {
@@ -528,40 +526,19 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("BilingualTranscriptBlock"))
     }
 
-    func testTranslatedTranscriptBlocksRenderSourceBeforeTranslation() throws {
+    func testTranscriptBlocksRenderOriginalTextOnly() throws {
         let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
 
-        guard let translatedCaseRange = source.range(of: "case .translated(let primaryText, let sourceText):") else {
-            return XCTFail("Translated transcript branch is missing")
+        guard let blockRange = source.range(of: "private struct BilingualTranscriptBlock") else {
+            return XCTFail("BilingualTranscriptBlock is missing")
         }
-        guard let originalOnlyRange = source.range(of: "case .originalOnly", range: translatedCaseRange.upperBound..<source.endIndex) else {
-            return XCTFail("Translated transcript branch end is missing")
-        }
+        let blockSource = source[blockRange.lowerBound..<source.endIndex]
 
-        let translatedBranch = source[translatedCaseRange.lowerBound..<originalOnlyRange.lowerBound]
-        guard let sourceTextRange = translatedBranch.range(of: "Text(sourceText)") else {
-            return XCTFail("Translated transcript branch does not render sourceText")
-        }
-        guard let primaryTextRange = translatedBranch.range(of: "Text(primaryText)") else {
-            return XCTFail("Translated transcript branch does not render primaryText")
-        }
-
-        XCTAssertLessThan(sourceTextRange.lowerBound, primaryTextRange.lowerBound)
-    }
-
-    func testTranscriptBlocksKeepSourceTextWhiteWhileTranslationIsPending() throws {
-        let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
-
-        guard let pendingCaseRange = source.range(of: "case .pending(let sourceText):") else {
-            return XCTFail("Pending transcript branch is missing")
-        }
-        guard let failedCaseRange = source.range(of: "case .failed", range: pendingCaseRange.upperBound..<source.endIndex) else {
-            return XCTFail("Pending transcript branch end is missing")
-        }
-
-        let pendingBranch = source[pendingCaseRange.lowerBound..<failedCaseRange.lowerBound]
-        XCTAssertTrue(pendingBranch.contains("Text(sourceText)"))
-        XCTAssertTrue(pendingBranch.contains(".foregroundStyle(CommandCenterPalette.text)"))
+        XCTAssertTrue(blockSource.contains("Text(turn.originalText)"))
+        XCTAssertFalse(blockSource.contains("LiveCaptionDisplayState(turn: turn"))
+        XCTAssertFalse(blockSource.contains("case .translated"))
+        XCTAssertFalse(blockSource.contains("case .pending"))
+        XCTAssertFalse(blockSource.contains("case .failed"))
     }
 
     func testUnifiedTranscriptUsesStableSpeakerGroupIDsAndTurnScrollAnchors() throws {
@@ -659,18 +636,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("Text(speakerStartTimeText)"))
     }
 
-    func testTranscriptPaneDefinesDisplayModePicker() throws {
+    func testTranscriptPaneDoesNotExposeTranslationDisplayModePicker() throws {
         let source = try appSource(named: "MainWindowView.swift")
 
-        XCTAssertTrue(source.contains("@State private var transcriptDisplayMode: LiveCaptionDisplayMode = .both"))
-        XCTAssertTrue(source.contains("Picker(\"Transcript display\", selection: $transcriptDisplayMode)"))
-        XCTAssertTrue(source.contains("Text(\"Both\").tag(LiveCaptionDisplayMode.both)"))
-        XCTAssertTrue(source.contains("Text(\"Original\").tag(LiveCaptionDisplayMode.originalOnly)"))
-        XCTAssertTrue(source.contains("Text(\"Translation\").tag(LiveCaptionDisplayMode.translationOnly)"))
-        XCTAssertTrue(source.contains(".pickerStyle(.segmented)"))
-        XCTAssertTrue(source.contains("displayMode: transcriptDisplayMode"))
-        XCTAssertTrue(source.contains("displayMode: displayMode"))
-        XCTAssertTrue(source.contains("LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled, displayMode: displayMode)"))
+        XCTAssertFalse(source.contains("@State private var transcriptDisplayMode"))
+        XCTAssertFalse(source.contains("Picker(\"Transcript display\""))
+        XCTAssertFalse(source.contains("Text(\"Translation\").tag(LiveCaptionDisplayMode.translationOnly)"))
+        XCTAssertFalse(source.contains("displayMode: transcriptDisplayMode"))
+        XCTAssertFalse(source.contains("LiveCaptionDisplayState(turn: turn"))
     }
 
     func testMainWindowRemovesUnimplementedMeetingGoalComposer() throws {

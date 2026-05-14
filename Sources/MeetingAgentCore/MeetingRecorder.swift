@@ -329,23 +329,6 @@ public final class MeetingRecorder {
         )
     }
 
-    @discardableResult
-    public func updateActiveTranscriptTranslation(
-        segmentID: String,
-        text: String,
-        targetLocale: String,
-        isFinal: Bool
-    ) throws -> Bool {
-        guard let transcriptUpdateSink else { return false }
-        try transcriptUpdateSink.updateSegmentTranslation(
-            segmentID: segmentID,
-            text: text,
-            targetLocale: targetLocale,
-            isFinal: isFinal
-        )
-        return true
-    }
-
     public func stopRecording(
         at endedAt: Date = Date(),
         endedReason: CaptureEndedReason = .saved
@@ -521,27 +504,11 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
     func close() {
         lock.lock()
         defer { lock.unlock() }
-        try? store.close()
-    }
-
-    func updateSegmentTranslation(
-        segmentID: String,
-        text: String,
-        targetLocale: String,
-        isFinal: Bool
-    ) throws {
-        let update = TranscriptSegmentUpdate.translationPatch(
-            segmentID: segmentID,
-            text: text,
-            targetLocale: targetLocale,
-            isFinal: isFinal
-        )
-        lock.lock()
-        defer { lock.unlock() }
-        logEmitted(update)
-        let result = try store.apply(update)
-        pendingResults.append(result)
-        logPersisted(result)
+        if let captionStore {
+            try? captionStore.flushSnapshot()
+        } else {
+            try? store.close()
+        }
     }
 
     private func persist(_ update: TranscriptSegmentUpdate) {

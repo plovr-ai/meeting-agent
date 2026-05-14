@@ -838,7 +838,6 @@ private struct TranscriptPaneView: View {
     @State private var speakerEditTarget: LiveCaptionTurn?
     @State private var speakerLabelDraft = ""
     @State private var autoFollowsLatest = true
-    @State private var transcriptDisplayMode: LiveCaptionDisplayMode = .both
 
     var body: some View {
         VStack(spacing: 0) {
@@ -848,14 +847,10 @@ private struct TranscriptPaneView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         metadata
                         failureReason
-                        transcriptDisplayModePicker
                         UnifiedTranscriptView(
                             turns: liveCaptionTurns,
                             transcriptText: transcriptText,
                             isRecording: isRecording,
-                            sourceLocale: sourceLocale,
-                            targetLocale: targetLocale,
-                            displayMode: transcriptDisplayMode,
                             autoFollowsLatest: autoFollowsLatest,
                             returnToLatest: {
                                 returnToLatest(proxy: proxy)
@@ -903,16 +898,6 @@ private struct TranscriptPaneView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(latestID, anchor: .bottom)
         }
-    }
-
-    private var transcriptDisplayModePicker: some View {
-        Picker("Transcript display", selection: $transcriptDisplayMode) {
-            Text("Both").tag(LiveCaptionDisplayMode.both)
-            Text("Original").tag(LiveCaptionDisplayMode.originalOnly)
-            Text("Translation").tag(LiveCaptionDisplayMode.translationOnly)
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 260)
     }
 
     private var header: some View {
@@ -1007,17 +992,12 @@ private struct TranscriptPaneView: View {
             "Transcription Link: \(transcriptionLinkText)",
             "Transcription Model: \(transcriptionModelText)",
             "Preflight: \(preflightText)",
-            "Transcript Latency: \(transcriptLatencyText)",
-            "Translation Latency: \(translationLatencyText)"
+            "Transcript Latency: \(transcriptLatencyText)"
         ].joined(separator: "\n")
     }
 
     private var transcriptLatencyText: String {
         PipelineLatencySummary(meeting: meeting).transcriptLatencyText
-    }
-
-    private var translationLatencyText: String {
-        PipelineLatencySummary(meeting: meeting).translationLatencyText
     }
 }
 
@@ -1030,18 +1010,6 @@ private struct PipelineLatencySummary {
             return "unavailable"
         }
         return format(seconds: latency)
-    }
-
-    var translationLatencyText: String {
-        let events = performanceEvents
-        if let attached = events.last(where: { $0.event == "caption_translation_attached" }),
-           let latency = translationLatencySeconds(for: attached, in: events) {
-            return format(seconds: latency)
-        }
-        if events.contains(where: { $0.event.hasPrefix("caption_translation_") }) {
-            return "attach latency unavailable"
-        }
-        return "unavailable"
     }
 
     private var latestTranscriptEvent: PerformanceEvent? {
@@ -1069,22 +1037,6 @@ private struct PipelineLatencySummary {
         }
         let expectedWallTime = meeting.startedAt.addingTimeInterval(audioTimeSeconds)
         return max(0, event.wallTime.timeIntervalSince(expectedWallTime))
-    }
-
-    private func translationLatencySeconds(for attached: PerformanceEvent, in events: [PerformanceEvent]) -> TimeInterval? {
-        let matchingEvents = translationRequestEvents(matching: attached, in: events)
-        guard let start = matchingEvents.last(where: { $0.event == "caption_translation_scheduled" })
-                ?? matchingEvents.last(where: { $0.event == "caption_translation_started" }) else {
-            return nil
-        }
-        return max(0, attached.wallTime.timeIntervalSince(start.wallTime))
-    }
-
-    private func translationRequestEvents(matching attached: PerformanceEvent, in events: [PerformanceEvent]) -> [PerformanceEvent] {
-        guard let requestID = attached.metadata["translationRequestID"] else {
-            return events.filter { $0.wallTime <= attached.wallTime }
-        }
-        return events.filter { $0.metadata["translationRequestID"] == requestID }
     }
 
     private func format(seconds: TimeInterval) -> String {
@@ -1431,9 +1383,6 @@ private struct UnifiedTranscriptView: View {
     let turns: [LiveCaptionTurn]
     let transcriptText: String
     let isRecording: Bool
-    let sourceLocale: String
-    let targetLocale: String
-    let displayMode: LiveCaptionDisplayMode
     let autoFollowsLatest: Bool
     let returnToLatest: () -> Void
     let pauseFollowing: () -> Void
@@ -1460,9 +1409,6 @@ private struct UnifiedTranscriptView: View {
                     ForEach(groups) { group in
                         BilingualTranscriptGroup(
                             group: group,
-                            sourceLocale: sourceLocale,
-                            targetLocale: targetLocale,
-                            displayMode: displayMode,
                             editSpeaker: group.speaker.identifier == nil ? nil : {
                                 if let firstTurn = group.turns.first {
                                     editSpeaker(firstTurn)
@@ -1504,9 +1450,6 @@ private struct UnifiedTranscriptView: View {
 
 private struct BilingualTranscriptGroup: View {
     let group: LiveCaptionSpeakerGroup
-    let sourceLocale: String
-    let targetLocale: String
-    let displayMode: LiveCaptionDisplayMode
     var editSpeaker: (() -> Void)? = nil
 
     var body: some View {
@@ -1514,22 +1457,12 @@ private struct BilingualTranscriptGroup: View {
             speakerLabel
             ForEach(group.turns) { turn in
                 BilingualTranscriptBlock(
-                    turn: turn,
-                    secondLanguageEnabled: secondLanguageEnabled(for: turn),
-                    displayMode: displayMode
+                    turn: turn
                 )
                 .id(turn.id)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func secondLanguageEnabled(for turn: LiveCaptionTurn) -> Bool {
-        LiveCaptionDisplayState.isSecondLanguageEnabled(
-            sourceLocale: turn.sourceLocale.isEmpty ? sourceLocale : turn.sourceLocale,
-            targetLocale: turn.targetLocale.isEmpty ? targetLocale : turn.targetLocale,
-            hasTranslatedText: !(turn.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        )
     }
 
     private var speakerDisplayName: String {
@@ -1578,8 +1511,6 @@ private struct BilingualTranscriptGroup: View {
 
 private struct BilingualTranscriptBlock: View {
     let turn: LiveCaptionTurn
-    let secondLanguageEnabled: Bool
-    let displayMode: LiveCaptionDisplayMode
 
     var body: some View {
         transcriptText
@@ -1588,44 +1519,11 @@ private struct BilingualTranscriptBlock: View {
 
     @ViewBuilder
     private var transcriptText: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            switch LiveCaptionDisplayState(turn: turn, secondLanguageEnabled: secondLanguageEnabled, displayMode: displayMode) {
-            case .translated(let primaryText, let sourceText):
-                Text(sourceText)
-                    .font(CommandCenterTypography.transcript)
-                    .lineSpacing(5)
-                    .foregroundStyle(CommandCenterPalette.text)
-                    .textSelection(.enabled)
-                Text(primaryText)
-                    .font(CommandCenterTypography.secondaryBody)
-                    .lineSpacing(4)
-                    .foregroundStyle(CommandCenterPalette.secondaryText)
-                    .textSelection(.enabled)
-            case .originalOnly(let text):
-                Text(text)
-                    .font(CommandCenterTypography.transcript)
-                    .lineSpacing(5)
-                    .foregroundStyle(CommandCenterPalette.text)
-                    .textSelection(.enabled)
-            case .pending(let sourceText):
-                Text(sourceText)
-                    .font(CommandCenterTypography.transcript)
-                    .lineSpacing(5)
-                    .foregroundStyle(CommandCenterPalette.text)
-                    .textSelection(.enabled)
-                Text("Translating...")
-                    .commandCenterMono()
-            case .failed(let sourceText, _):
-                Text(sourceText)
-                    .font(CommandCenterTypography.transcript)
-                    .lineSpacing(5)
-                    .foregroundStyle(CommandCenterPalette.text)
-                    .textSelection(.enabled)
-                Text("translation unavailable")
-                    .commandCenterMono()
-                    .foregroundStyle(CommandCenterPalette.warning)
-            }
-        }
+        Text(turn.originalText)
+            .font(CommandCenterTypography.transcript)
+            .lineSpacing(5)
+            .foregroundStyle(CommandCenterPalette.text)
+            .textSelection(.enabled)
     }
 }
 

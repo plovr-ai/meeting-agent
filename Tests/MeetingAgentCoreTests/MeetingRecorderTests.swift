@@ -370,41 +370,32 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(try transcriptEventLogLineCount(for: record), 1)
     }
 
-    func testRecorderPatchesActiveFinalTranscriptTranslationWithImmediateArtifactRewrite() async throws {
+    func testRecorderStopPreservesSpeechEventCaptionDocument() async throws {
         let fixture = try RecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
         try await fixture.recorder.startRecording(target: fixture.target, record: record)
-        fixture.transcriber.emit(.upsert(TranscriptSegment(
-            id: "segment-1",
-            text: "Confirm owner.",
-            language: "en-US",
-            sourceProvider: "fake",
-            isFinal: true
+
+        fixture.transcriber.emitSpeechEvent(.final(SpeechUtterancePayload(
+            providerID: "deepgram-transcribe",
+            providerResultID: "result-1",
+            providerUtteranceID: "utt-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-0"),
+            startTimeSeconds: 1,
+            endTimeSeconds: 2,
+            text: "我们确认负责人。",
+            language: "zh-CN",
+            confidence: 0.9,
+            boundary: SpeechBoundary(speechFinal: true)
         )))
-
-        let didPatch = try fixture.recorder.updateActiveTranscriptTranslation(
-            segmentID: "segment-1",
-            text: "确认负责人。",
-            targetLocale: "zh-CN",
-            isFinal: true
-        )
-        let updates = fixture.recorder.drainTranscriptUpdates()
-
-        XCTAssertTrue(didPatch)
-        XCTAssertEqual(updates.last?.document.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "User A:\nConfirm owner.\n")
-        XCTAssertEqual(
-            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments.first?.translatedText,
-            "确认负责人。"
-        )
+        _ = fixture.recorder.drainTranscriptUpdates()
 
         _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
-        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
-        XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(document.segments.first?.translationTargetLocale, "zh-CN")
-        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
-        XCTAssertEqual(try transcriptEventLogLineCount(for: record), 2)
+
+        let data = try Data(contentsOf: XCTUnwrap(record.transcriptJSONURL))
+        let captionDocument = try JSONDecoder.meetingAgent.decode(CaptionDocument.self, from: data)
+        XCTAssertEqual(captionDocument.version, 2)
+        XCTAssertEqual(captionDocument.turns.map(\.text), ["我们确认负责人。"])
     }
 
     func testTranscriptUpdatePipelineLogsEmittedAndPersistedEvents() async throws {
@@ -557,6 +548,10 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
 
     func emitRealtime(_ update: TranscriptSegmentUpdate) {
         transcriptUpdateSink?.receiveRealtime(update)
+    }
+
+    func emitSpeechEvent(_ event: SpeechRecognitionEvent) {
+        (transcriptUpdateSink as? SpeechRecognitionEventSink)?.receive(event)
     }
 }
 

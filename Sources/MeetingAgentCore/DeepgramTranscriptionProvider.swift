@@ -1,20 +1,25 @@
 import Foundation
 
 public enum DeepgramTranscriptionConfiguration: Equatable {
-    case available(apiKey: String, model: String)
+    case available(apiKey: String, model: String, language: String)
     case unavailable(String)
 
     public var apiKey: String {
-        if case .available(let apiKey, _) = self { return apiKey }
+        if case .available(let apiKey, _, _) = self { return apiKey }
         return ""
     }
 
     public var model: String {
-        if case .available(_, let model) = self { return model }
+        if case .available(_, let model, _) = self { return model }
         return ""
     }
 
-    public init(apiKey: String?, model: String?) {
+    public var language: String {
+        if case .available(_, _, let language) = self { return language }
+        return ""
+    }
+
+    public init(apiKey: String?, model: String?, language: String? = "multi") {
         guard let apiKey = SpeechTranscriptionConfiguration.normalized(apiKey) else {
             self = .unavailable("Deepgram API key is not configured")
             return
@@ -23,7 +28,11 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
             self = .unavailable("Deepgram model is not configured")
             return
         }
-        self = .available(apiKey: apiKey, model: model)
+        self = .available(
+            apiKey: apiKey,
+            model: model,
+            language: SpeechTranscriptionConfiguration.normalized(language, fallback: deepgramLanguage) ?? deepgramLanguage
+        )
     }
 
     public static func app(
@@ -32,7 +41,8 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
     ) -> Self {
         DeepgramTranscriptionConfiguration(
             apiKey: configuration.deepgramAPIKey ?? environment["MEETING_AGENT_DEEPGRAM_API_KEY"],
-            model: configuration.deepgramModelID
+            model: configuration.deepgramModelID,
+            language: configuration.localeIdentifier
         )
     }
 }
@@ -131,13 +141,13 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
         configuration: DeepgramTranscriptionConfiguration,
         wavURL: URL
     ) async throws -> Data {
-        guard case .available(let apiKey, let model) = configuration else {
+        guard case .available(let apiKey, let model, let language) = configuration else {
             throw DeepgramTranscriptionError.unavailable("Deepgram configuration is unavailable")
         }
         var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "model", value: model),
-            URLQueryItem(name: "language", value: deepgramLanguage),
+            URLQueryItem(name: "language", value: language),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "diarize", value: "true"),
@@ -191,7 +201,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         channelCount: Int,
         performanceEventLogger: PerformanceEventLogger? = nil
     ) async throws -> DeepgramStreamingTranscriptionSession {
-        guard case .available(let apiKey, let model) = configuration else {
+        guard case .available(let apiKey, let model, let language) = configuration else {
             throw DeepgramTranscriptionError.unavailable("Deepgram configuration is unavailable")
         }
         guard var components = URLComponents(string: "wss://api.deepgram.com/v1/listen") else {
@@ -199,7 +209,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         }
         components.queryItems = [
             URLQueryItem(name: "model", value: model),
-            URLQueryItem(name: "language", value: deepgramLanguage),
+            URLQueryItem(name: "language", value: language),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate.rounded()))),
             URLQueryItem(name: "channels", value: String(max(1, channelCount))),
@@ -227,7 +237,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
             metadata: [
                 "providerID": "deepgram-transcribe",
                 "model": model,
-                "language": deepgramLanguage,
+                "language": language,
                 "sampleRate": Self.metricString(sampleRate.rounded()),
                 "channelCount": String(max(1, channelCount)),
                 "encoding": "linear16",

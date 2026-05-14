@@ -20,7 +20,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
     func testConfigurationFallsBackToEnvironmentAPIKey() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
-            localeIdentifier: "en-US",
+            localeIdentifier: "zh-CN",
             targetLocaleIdentifier: "zh-CN",
             bilingualPipelineProfileID: "local-whisper-hosted-translation",
             whisperBinaryPath: nil,
@@ -46,6 +46,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
 
         XCTAssertEqual(output.apiKey, "env-key")
         XCTAssertEqual(output.model, "nova-3")
+        XCTAssertEqual(output.language, "zh-CN")
     }
 
     func testURLSessionClientBuildsRequestAndReturnsData() async throws {
@@ -56,7 +57,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "audio/wav")
             XCTAssertEqual(request.httpBodyStreamData(), Data([0, 1, 2]))
             XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
-            XCTAssertEqual(request.url?.query?.contains("language=multi"), true)
+            XCTAssertEqual(request.url?.query?.contains("language=zh-CN"), true)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -71,14 +72,14 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         )
 
         let data = try await client.transcribe(
-            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3", language: "zh-CN"),
             wavURL: wavURL
         )
 
         XCTAssertEqual(String(data: data, encoding: .utf8), #"{"ok":true}"#)
     }
 
-    func testStreamingClientBuildsMultilingualRequestAndLogsConnection() async throws {
+    func testStreamingClientBuildsConfiguredLanguageRequestAndLogsConnection() async throws {
         var capturedRequest: URLRequest?
         let eventsURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-streaming-\(UUID().uuidString)")
@@ -95,7 +96,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         )
 
         _ = try await client.connect(
-            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3", language: "zh-CN"),
             sampleRate: 48_000,
             channelCount: 1,
             performanceEventLogger: logger
@@ -104,11 +105,11 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Token key")
         XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
-        XCTAssertEqual(request.url?.query?.contains("language=multi"), true)
+        XCTAssertEqual(request.url?.query?.contains("language=zh-CN"), true)
         XCTAssertEqual(request.url?.query?.contains("sample_rate=48000"), true)
         let events = try String(contentsOf: eventsURL, encoding: .utf8)
         XCTAssertTrue(events.contains(#""event":"deepgram_ws_connected""#))
-        XCTAssertTrue(events.contains(#""language":"multi""#))
+        XCTAssertTrue(events.contains(#""language":"zh-CN""#))
     }
 
     func testURLSessionClientRejectsUnavailableConfiguration() async {
