@@ -205,6 +205,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        selectedMeetingSessionState = activeSessionState(for: record, document: CaptionDocument())
         refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
@@ -273,6 +274,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        selectedMeetingSessionState = activeSessionState(for: record, document: CaptionDocument())
         refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         try await startRecordingPreparedRecord(
@@ -293,6 +295,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         let record = try recorder.prepareRecord(meetings[index], for: candidate)
         selectedMeetingID = record.id
+        selectedMeetingSessionState = activeSessionState(for: record, document: CaptionDocument())
         refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = record.meetingGoal
         try await startRecordingPreparedRecord(record, target: candidate, localeIdentifier: localeIdentifier)
@@ -341,6 +344,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         record.meetingGoal = meetingGoal
         meetings.insert(record, at: 0)
         selectedMeetingID = record.id
+        selectedMeetingSessionState = activeSessionState(for: record, document: CaptionDocument())
         refreshSelectedMeetingArtifactSnapshot()
         persistMeetingGoalForSelectedMeeting()
         resetLiveCaptionStore()
@@ -555,16 +559,21 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     public func stopRecording(at endedAt: Date = Date()) {
+        let stoppedID: UUID?
         if let stopped = try? recorder.stopRecording(at: endedAt),
            let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
             meetings[index] = stopped
+            stoppedID = stopped.id
             recentlyStoppedLiveMeetingID = stopped.id
             if selectedMeetingID == stopped.id {
                 refreshSelectedMeetingArtifactSnapshot()
             }
+        } else {
+            stoppedID = nil
         }
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         flushLiveCaptionPipeline(reason: .manualStop)
+        persistSelectedSessionTranscriptIfNeeded(for: stoppedID)
         stopRealtimeSpeakerIdentificationRuntime()
         allowActiveTargetReprompt()
         activeSource = nil
@@ -590,6 +599,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
         flushLiveCaptionPipeline(reason: .manualStop)
+        persistSelectedSessionTranscriptIfNeeded(for: stoppedID)
         stopRealtimeSpeakerIdentificationRuntime()
         allowActiveTargetReprompt()
         activeSource = nil
@@ -616,7 +626,8 @@ public final class MeetingAgentViewModel: ObservableObject {
 
         let consumptionView: TranscriptConsumptionView
         if let selectedMeetingSessionState,
-           selectedMeetingSessionState.meetingID == meetingID {
+           selectedMeetingSessionState.meetingID == meetingID,
+           !selectedMeetingSessionState.transcript.consumptionView.finalTurns.isEmpty {
             consumptionView = selectedMeetingSessionState.transcript.consumptionView
         } else {
             let transcript = try transcriptRepository.loadCaptionDocument(for: meeting)
@@ -766,6 +777,16 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    private func persistSelectedSessionTranscriptIfNeeded(for meetingID: UUID?) {
+        guard let meetingID,
+              let session = selectedSession(for: meetingID),
+              let record = meetings.first(where: { $0.id == meetingID })
+        else {
+            return
+        }
+        try? transcriptRepository.saveCaptionDocument(session.transcript.captionDocument, for: record)
+    }
+
     public func exportTranscript(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Transcript", for: meetingID) { record in
             if let session = selectedSession(for: record.id) {
@@ -855,6 +876,18 @@ public final class MeetingAgentViewModel: ObservableObject {
             return nil
         }
         return selectedMeetingSessionState
+    }
+
+    private func activeSessionState(for record: MeetingRecord, document: CaptionDocument) -> MeetingSessionState {
+        MeetingSessionState(
+            meetingID: record.id,
+            transcript: TranscriptState(
+                meetingID: record.id,
+                captionDocument: document,
+                source: .activeRecording
+            ),
+            summary: .missing
+        )
     }
 
     public func updateSpeakerLabel(
@@ -1754,6 +1787,65 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionTurns = applyingSpeakerIdentityLabels(to: snapshot.turns)
         meetingProgressHealth.caption = snapshot.captionHealth
         meetingProgressHealth.translation = snapshot.translationHealth
+        updateActiveTranscriptStateFromLiveCaptions(liveCaptionTurns)
+    }
+
+    private func updateActiveTranscriptStateFromLiveCaptions(_ turns: [LiveCaptionTurn]) {
+        guard let activeMeetingID,
+              selectedMeetingID == activeMeetingID,
+              let record = meetings.first(where: { $0.id == activeMeetingID })
+        else {
+            return
+        }
+
+        let document = captionDocument(from: turns, for: record)
+        selectedMeetingSessionState = activeSessionState(for: record, document: document)
+        refreshSelectedMeetingArtifactSnapshot()
+    }
+
+    private func captionDocument(from turns: [LiveCaptionTurn], for record: MeetingRecord) -> CaptionDocument {
+        let providerID = record.transcriptionProviderID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? speechConfiguration.provider.rawValue
+            : record.transcriptionProviderID
+        let speakers = Dictionary(grouping: turns, by: { $0.speaker.identifier ?? $0.speaker.label ?? "unknown" })
+            .map { key, turns in
+                CaptionSpeaker(
+                    id: key,
+                    label: turns.compactMap(\.speaker.label).first,
+                    providerSpeakerID: turns.compactMap(\.speaker.identifier).first
+                )
+            }
+            .sorted { $0.id < $1.id }
+        let captionTurns = turns.map { turn in
+            CaptionTurn(
+                id: turn.id,
+                speakerID: turn.speaker.identifier,
+                speakerLabel: turn.speaker.label,
+                sections: [
+                    CaptionSection(
+                        id: "\(turn.id)-section",
+                        text: turn.originalText,
+                        utteranceIDs: turn.sourceSegmentIDs
+                    )
+                ],
+                state: turn.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: providerID,
+                    utteranceIDs: turn.sourceSegmentIDs
+                ),
+                createdAt: turn.createdAt,
+                updatedAt: Date()
+            )
+        }
+        return CaptionDocument(
+            speakers: speakers,
+            turns: captionTurns,
+            provider: CaptionProviderInfo(
+                id: providerID,
+                model: speechConfiguration.hostedTranscriptionModelID,
+                locale: speechConfiguration.localeIdentifier
+            )
+        )
     }
 
     private func startRealtimeSpeakerIdentificationRuntime() {

@@ -241,7 +241,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Recording Computer Microphone")
     }
 
-    func testStopRecordingAndGenerateSummaryWritesArtifacts() async throws {
+    func testStopRecordingGeneratesSummaryFromLiveMemoryTranscript() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
@@ -255,12 +255,29 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.setPendingCandidate(target)
         try viewModel.acceptPendingCandidate(startedAt: Date(timeIntervalSince1970: 100))
         let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
-            TranscriptSegment(id: "segment-1", text: "We decided to launch on May 1.", language: "en-US"),
-            TranscriptSegment(id: "segment-2", text: "Alex will follow up with legal.", language: "en-US")
+        let liveTranscript = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
+                text: "We decided to launch on May 1.",
+                language: "en-US",
+                isFinal: true
+            ),
+            TranscriptSegment(
+                id: "segment-2",
+                speaker: TranscriptSpeaker(identifier: "speaker-2", label: "User B"),
+                text: "Alex will follow up with legal.",
+                language: "en-US",
+                isFinal: true
+            )
         ])
-        try transcriptWriter.close()
+        await viewModel.applyTranscriptAccumulationResultsForTesting([
+            TranscriptSegmentAccumulationResult(
+                document: liveTranscript,
+                changedSegmentIDs: liveTranscript.segments.map(\.id),
+                plainTextReplacement: nil
+            )
+        ])
 
         try await viewModel.stopRecordingAndGenerateSummary(
             at: Date(timeIntervalSince1970: 200),
@@ -274,6 +291,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(summary.decisions.first?.sourceSegmentIDs, ["segment-1"])
         XCTAssertEqual(summary.actionItems.first?.sourceSegmentIDs, ["segment-2"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(stopped.summaryMarkdownURL).path))
+        let persistedCaptionDocument = try MeetingTranscriptStore.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(persistedCaptionDocument.turns.map(\.text), [
+            "We decided to launch on May 1.",
+            "Alex will follow up with legal."
+        ])
         XCTAssertEqual(viewModel.statusText, "Summary generated")
         XCTAssertFalse(viewModel.isRecording)
     }
