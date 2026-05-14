@@ -27,6 +27,34 @@ final class TranscriptFileWriterTests: XCTestCase {
         XCTAssertNil(document.segments.first?.translationIsFinal)
     }
 
+    func testReadDocumentProjectsCaptionDocumentForMigrationBridge() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("caption-v2-\(UUID().uuidString)")
+            .appendingPathExtension("json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let captionDocument = CaptionDocument(turns: [
+            CaptionTurn(
+                id: "turn-1",
+                speakerID: "speaker-0",
+                speakerLabel: "User A",
+                sections: [
+                    CaptionSection(id: "section-1", text: "你好。", utteranceIDs: ["utt-1"])
+                ],
+                state: .final,
+                source: CaptionTurnSource(providerID: "deepgram", utteranceIDs: ["utt-1"])
+            )
+        ])
+        try JSONEncoder.meetingAgent.encode(captionDocument).write(to: url)
+
+        let document = try TranscriptFileWriter.readDocument(from: url)
+
+        XCTAssertEqual(document.version, 2)
+        XCTAssertEqual(document.segments.count, 1)
+        XCTAssertEqual(document.segments.first?.id, "turn-1")
+        XCTAssertEqual(document.segments.first?.text, "你好。")
+        XCTAssertEqual(document.segments.first?.speakerID, "speaker-0")
+    }
+
     func testUpdateSegmentTranslationPersistsCacheAndTextEditClearsIt() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
         let jsonURL = url.deletingPathExtension().appendingPathExtension("json")

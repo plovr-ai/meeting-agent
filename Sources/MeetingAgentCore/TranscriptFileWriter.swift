@@ -55,7 +55,12 @@ public final class TranscriptFileWriter {
         guard !data.isEmpty else {
             return TranscriptDocument()
         }
-        return try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
+        do {
+            return try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
+        } catch {
+            let captionDocument = try JSONDecoder.meetingAgent.decode(CaptionDocument.self, from: data)
+            return captionDocument.transcriptDocument
+        }
     }
 
     public static func renderedTranscript(
