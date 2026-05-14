@@ -52,4 +52,19 @@ final class SpeechRecognitionEventTests: XCTestCase {
         XCTAssertTrue(SpeechRecognitionEvent.final(payload).isFinal)
         XCTAssertNil(SpeechRecognitionEvent.providerStatus(ProviderStatus(providerID: "deepgram", message: "ready")).payload)
     }
+
+    func testProviderStatusAndBoundaryHelpersNormalizeInputs() {
+        let status = ProviderStatus(providerID: " ", message: " ready ")
+
+        XCTAssertEqual(status.providerID, "unknown")
+        XCTAssertEqual(status.message, "ready")
+        XCTAssertFalse(SpeechBoundary().endsTurn)
+        XCTAssertTrue(SpeechBoundary(speechFinal: true).endsTurn)
+        XCTAssertTrue(SpeechBoundary(punctuationFinal: true).endsTurn)
+        XCTAssertTrue(SpeechBoundary(pauseDurationSeconds: 0.7).endsTurn)
+        XCTAssertEqual(
+            SpeechUtteranceKey(providerID: " ", speakerID: " speaker-1 ", startTimeSeconds: 1.2),
+            SpeechUtteranceKey(providerID: "unknown", speakerID: "speaker-1", startTimeSeconds: 1.2)
+        )
+    }
 }

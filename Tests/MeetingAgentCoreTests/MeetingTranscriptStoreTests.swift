@@ -43,6 +43,28 @@ final class MeetingTranscriptStoreTests: XCTestCase {
         XCTAssertEqual(persisted.turns.first?.text, "AB")
     }
 
+    func testFlushSnapshotWritesCurrentDocument() throws {
+        let directory = try temporaryDirectory()
+        let store = try MeetingTranscriptStore(directoryURL: directory)
+
+        _ = try store.apply(.hypothesis(payload(id: "utt-1", text: "草稿", speakerID: "speaker-0")))
+        try store.flushSnapshot()
+
+        let persisted = try MeetingTranscriptStore.readDocument(from: directory.appendingPathComponent("transcript.json"))
+        XCTAssertEqual(store.currentDocument.turns.first?.text, persisted.turns.first?.text)
+        XCTAssertEqual(persisted.turns.first?.state, .draft)
+    }
+
+    func testReadDocumentReturnsEmptyDocumentForMissingOrEmptyFile() throws {
+        let directory = try temporaryDirectory()
+        let missing = directory.appendingPathComponent("missing.json")
+        let empty = directory.appendingPathComponent("empty.json")
+        FileManager.default.createFile(atPath: empty.path, contents: Data())
+
+        XCTAssertTrue(try MeetingTranscriptStore.readDocument(from: missing).turns.isEmpty)
+        XCTAssertTrue(try MeetingTranscriptStore.readDocument(from: empty).turns.isEmpty)
+    }
+
     private func payload(
         id: String,
         resultID: String? = nil,
