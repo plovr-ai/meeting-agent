@@ -6,6 +6,7 @@ public struct CaptionReducer {
     private var finalizedUtteranceKeys = Set<String>()
     private var utteranceLocations: [String: Location] = [:]
     private var sectionContinuationPrefixesByUtteranceKey: [String: String] = [:]
+    private var sectionContinuationDraftsByUtteranceKey: [String: String] = [:]
     private var sectionClosedByTurnID: [String: Bool] = [:]
     private var nextTurnIndex = 0
     private var nextSectionIndex = 0
@@ -46,19 +47,20 @@ public struct CaptionReducer {
         }
 
         let turnIndex = targetTurnIndex(for: payload, state: .draft)
-        if let location = openDraftReplacementLocation(in: turnIndex, for: payload) {
-            updateSection(at: location, with: payload, state: .draft)
+        if let location = continuationLocation(in: turnIndex, for: payload) {
+            startSectionContinuation(at: location, for: payload, key: key, state: .draft)
             utteranceLocations[key] = location
             return
         }
-        if let location = continuationLocation(in: turnIndex, for: payload) {
-            startSectionContinuation(at: location, for: payload, key: key, state: .draft)
+        if let location = openDraftReplacementLocation(in: turnIndex, for: payload) {
+            updateSection(at: location, with: payload, state: .draft)
             utteranceLocations[key] = location
             return
         }
 
         let section = makeSection(for: payload)
         document.turns[turnIndex].sections.append(section)
+        sectionClosedByTurnID[document.turns[turnIndex].id] = false
         document.turns[turnIndex].state = .draft
         document.turns[turnIndex].source = mergedSource(document.turns[turnIndex].source, payload: payload)
         document.turns[turnIndex].endTimeSeconds = payload.endTimeSeconds
@@ -76,9 +78,7 @@ public struct CaptionReducer {
             if sectionContinuationPrefixesByUtteranceKey[key] != nil {
                 updateSection(at: location, with: payload, state: .final)
                 finalizedUtteranceKeys.insert(key)
-                if payload.boundary.endsTurn {
-                    sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
-                }
+                sectionClosedByTurnID[document.turns[location.turnIndex].id] = payload.boundary.endsTurn
                 return
             }
             if shouldMergeFinalWithoutReplacingVisibleDraft(payload, at: location) {
@@ -92,9 +92,7 @@ public struct CaptionReducer {
             }
             updateSection(at: location, with: payload, state: .final)
             finalizedUtteranceKeys.insert(key)
-            if payload.boundary.endsTurn {
-                sectionClosedByTurnID[document.turns[location.turnIndex].id] = true
-            }
+            sectionClosedByTurnID[document.turns[location.turnIndex].id] = payload.boundary.endsTurn
             return
         }
 
@@ -203,12 +201,16 @@ public struct CaptionReducer {
             return nil
         }
         let section = document.turns[turnIndex].sections[sectionIndex]
-        guard sectionIsFullyFinalized(section, providerID: payload.providerID),
+        guard sectionHasFinalizedUtterance(section, providerID: payload.providerID),
               timingsAreNear(section, payload: payload)
         else {
             return nil
         }
         return Location(turnIndex: turnIndex, sectionIndex: sectionIndex)
+    }
+
+    private func sectionHasFinalizedUtterance(_ section: CaptionSection, providerID: String) -> Bool {
+        section.utteranceIDs.contains { finalizedUtteranceKeys.contains("\(providerID):utterance:\($0)") }
     }
 
     private func openDraftCoveredFinalLocation(in turnIndex: Int, for payload: SpeechUtterancePayload) -> Location? {
@@ -279,7 +281,15 @@ public struct CaptionReducer {
         }
         let key = utteranceKey(for: payload)
         if let prefix = sectionContinuationPrefixesByUtteranceKey[key] {
-            document.turns[location.turnIndex].sections[location.sectionIndex].text = joinedSectionText(prefix, payload.text)
+            let visibleText = document.turns[location.turnIndex].sections[location.sectionIndex].text
+            let shouldPreserveVisibleText = state == .final
+                && sectionContinuationDraftsByUtteranceKey[key].map { visibleText != joinedSectionText(prefix, $0) } == true
+            if !shouldPreserveVisibleText {
+                document.turns[location.turnIndex].sections[location.sectionIndex].text = joinedSectionText(prefix, payload.text)
+            }
+            if state == .draft {
+                sectionContinuationDraftsByUtteranceKey[key] = payload.text
+            }
         } else {
             document.turns[location.turnIndex].sections[location.sectionIndex].text = payload.text
         }

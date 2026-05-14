@@ -209,6 +209,110 @@ final class CaptionReducerTests: XCTestCase {
         XCTAssertEqual(document.turns[0].text, "先这样\n然后继续")
     }
 
+    func testNewSectionAfterSpeechFinalAllowsLaterContinuations() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.final(payload(
+            id: "utt-1",
+            text: "第一段结束",
+            speakerID: "speaker-0",
+            speechFinal: true,
+            start: 0,
+            end: 3
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-2",
+            text: "第二段开头",
+            speakerID: "speaker-0",
+            start: 10,
+            end: 12
+        )))
+        _ = reducer.apply(.final(payload(
+            id: "utt-2",
+            text: "第二段开头",
+            speakerID: "speaker-0",
+            start: 10,
+            end: 12
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-3",
+            text: "继续补充",
+            speakerID: "speaker-0",
+            start: 12,
+            end: 14
+        )))
+        let document = reducer.apply(.final(payload(
+            id: "utt-3",
+            text: "继续补充",
+            speakerID: "speaker-0",
+            start: 12,
+            end: 14
+        )))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 2)
+        XCTAssertEqual(document.turns[0].text, "第一段结束\n第二段开头继续补充")
+    }
+
+    func testOverlappingContinuationDraftDoesNotEraseFinalizedPrefix() {
+        var reducer = CaptionReducer(provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-Hans"))
+
+        _ = reducer.apply(.final(payload(
+            id: "utt-1",
+            text: "第一段结束",
+            speakerID: "speaker-0",
+            speechFinal: true,
+            start: 0,
+            end: 3
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-2",
+            text: "第二段开头",
+            speakerID: "speaker-0",
+            start: 10,
+            end: 12
+        )))
+        _ = reducer.apply(.final(payload(
+            id: "utt-2",
+            text: "第二段开头",
+            speakerID: "speaker-0",
+            start: 10,
+            end: 12
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-3",
+            text: "第三段草稿",
+            speakerID: "speaker-0",
+            start: 12,
+            end: 15
+        )))
+        _ = reducer.apply(.hypothesis(payload(
+            id: "utt-4",
+            text: "后续草稿",
+            speakerID: "speaker-0",
+            start: 15,
+            end: 17
+        )))
+        _ = reducer.apply(.final(payload(
+            id: "utt-3",
+            text: "第三段最终",
+            speakerID: "speaker-0",
+            start: 12,
+            end: 15
+        )))
+        let document = reducer.apply(.final(payload(
+            id: "utt-4",
+            text: "后续最终",
+            speakerID: "speaker-0",
+            start: 15,
+            end: 17
+        )))
+
+        XCTAssertEqual(document.turns.count, 1)
+        XCTAssertEqual(document.turns[0].sections.count, 2)
+        XCTAssertEqual(document.turns[0].text, "第一段结束\n第二段开头第三段草稿后续最终")
+    }
+
     func testLongCJKWithoutBoundaryDoesNotSplitByCharacterCount() {
         var reducer = CaptionReducer()
         let longText = String(repeating: "这是一个很长的中文实时字幕片段", count: 20)
