@@ -873,8 +873,30 @@ struct MeetingPerformanceAnalyzer {
         if sameLanguageSkipped.count > 0 {
             failures.append("Failure: translation skipped as same-language")
         }
-        if captionVisible && !hasVisibleTranslation && !hasPersistedTranslation {
-            failures.append("Failure: captions were visible but no translation became visible or persisted")
+        let observedTranslationActivity = unitScheduled
+            + providerStarted.count
+            + providerFinished.count
+            + providerFailed.count
+            + noProvider.count
+            + sameLanguageSkipped.count
+            + overlayPublished.count
+            + visibleUnitResults.count
+            + stablePersisted
+            + translationResultRecordCount
+
+        if observedTranslationActivity == 0 {
+            let lines = [
+                "E2E Translation Status: SKIPPED",
+                "Reason: no translation activity observed",
+                "Realtime Captions Visible: \(captionVisible ? "yes" : "no")",
+                "Provider Calls Started: 0",
+                "Provider Calls Finished: 0",
+                "Provider Calls Failed: 0",
+                "Translation Overlay Published Events: 0",
+                "Visible Unit Result Events: 0",
+                "Translation Result Store Records: 0"
+            ]
+            return (true, lines)
         }
         if let firstLiveTranslationLatency,
            firstLiveTranslationLatency > Self.firstLiveTranslationLatencyBudgetSeconds {

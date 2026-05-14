@@ -99,6 +99,42 @@ final class MeetingRecorderTests: XCTestCase {
         }
     }
 
+    func testRecorderAggregatesAudioFrameDrainTelemetry() async throws {
+        let fixture = try RecorderFixture()
+        let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
+
+        let frames = (0..<120).map { index in
+            AudioFrame(
+                pcm: Data(repeating: UInt8(index % 128), count: 320),
+                sampleRate: 16_000,
+                channelCount: 1,
+                timestampNanos: UInt64(index) * 10_000_000
+            )
+        }
+        for frame in frames {
+            fixture.session.frameBuffer.push(frame)
+        }
+        try await fixture.recorder.startRecording(
+            target: fixture.target,
+            record: record,
+            speechProvider: .local,
+            localeIdentifier: "zh-CN"
+        )
+        try await waitFor {
+            fixture.writer.writtenFrames.count == frames.count
+        }
+
+        _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(fixture.writer.writtenFrames.count, frames.count)
+        let events = try performanceEvents(at: XCTUnwrap(record.performanceEventsURL))
+            .filter { $0.event == "audio_frames_drained" }
+        XCTAssertLessThan(events.count, frames.count)
+        XCTAssertEqual(events.compactMap { Int($0.metadata["frameCount"] ?? "") }.reduce(0, +), frames.count)
+        XCTAssertEqual(events.last?.metadata["lastFrameTimestampNanos"], String(frames.last?.timestampNanos ?? 0))
+        XCTAssertNotNil(events.last?.metadata["audioDurationSeconds"])
+    }
+
     func testRecorderEmitsTranscriptUpdateEvents() async throws {
         let fixture = try RecorderFixture()
         let record = try fixture.recorder.prepareRecord(for: fixture.target, startedAt: Date(timeIntervalSince1970: 100))
@@ -503,7 +539,7 @@ private struct RecorderFixture {
 
     init() throws {
         let storeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-recorder-\(UUID().uuidString)", isDirectory: true)
-        let session = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1)
+        let session = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1, frameBufferCapacity: 256)
         let writer = FakeAudioFrameWriter()
         let writerFactory = FakeAudioFrameWriterFactory(writer: writer)
         let transcriber = FakeAudioFrameTranscriber()
@@ -526,7 +562,7 @@ private struct RecorderFixture {
 }
 
 private final class FakeRecorderCaptureSession: AudioCaptureSessionManaging {
-    let frameBuffer = AudioFrameRingBuffer(capacity: 8)
+    let frameBuffer: AudioFrameRingBuffer
     let outputSampleRate: Double
     let outputChannelCount: Int
     var startError: Error?
@@ -534,7 +570,8 @@ private final class FakeRecorderCaptureSession: AudioCaptureSessionManaging {
     var startedTargets: [AudioCaptureTarget] = []
     var stopCallCount = 0
 
-    init(sampleRate: Double, channelCount: Int) {
+    init(sampleRate: Double, channelCount: Int, frameBufferCapacity: Int = 8) {
+        frameBuffer = AudioFrameRingBuffer(capacity: frameBufferCapacity)
         outputSampleRate = sampleRate
         outputChannelCount = channelCount
     }
@@ -725,9 +762,13 @@ private func waitForValue<T>(
 private struct RecorderTestTimeout: Error {}
 
 private func performanceEventNames(at url: URL) throws -> [String] {
+    try performanceEvents(at: url).map(\.event)
+}
+
+private func performanceEvents(at url: URL) throws -> [PerformanceEvent] {
     try String(contentsOf: url, encoding: .utf8)
         .split(separator: "\n")
-        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)).event }
+        .map { try JSONDecoder.meetingAgent.decode(PerformanceEvent.self, from: Data($0.utf8)) }
 }
 
 private func transcriptEventLogLineCount(for record: MeetingRecord) throws -> Int {

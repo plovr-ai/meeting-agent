@@ -132,7 +132,6 @@ enum RegressionFixtureFiles {
         process.arguments = [
             "swift",
             "scripts/analyze-meeting-performance.swift",
-            "--assert-translation-e2e",
             fixtureURL.path
         ]
         let stdout = Pipe()

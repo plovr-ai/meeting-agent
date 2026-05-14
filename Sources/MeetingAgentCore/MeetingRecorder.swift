@@ -55,6 +55,7 @@ public final class MeetingRecorder {
     private var performanceEventLogger: PerformanceEventLogger?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
     private var pendingTranscriptionFrames: [AudioFrame] = []
+    private var audioDrainTelemetry = RecorderAudioDrainTelemetry()
     private var isStartingTranscriber = false
     private var processingTask: Task<Void, Never>?
     private let processingLock = NSLock()
@@ -229,6 +230,7 @@ public final class MeetingRecorder {
             ]
         )
         pendingTranscriptionFrames = []
+        audioDrainTelemetry.reset()
         isStartingTranscriber = false
         speakerAudioEvidenceStore.reset()
         try store.save(updatedRecord)
@@ -354,17 +356,15 @@ public final class MeetingRecorder {
         processingLock.lock()
         defer { processingLock.unlock() }
 
-        if let first = frames.first, let last = frames.last {
+        if let event = audioDrainTelemetry.record(
+            frames,
+            bufferBacklog: bufferBacklog,
+            droppedFrameCount: droppedFrameCount
+        ) {
             performanceEventLogger?.log(
                 "audio_frames_drained",
-                audioTimeSeconds: TimeInterval(last.timestampNanos) / 1_000_000_000,
-                metadata: [
-                    "frameCount": String(frames.count),
-                    "firstFrameTimestampNanos": String(first.timestampNanos),
-                    "lastFrameTimestampNanos": String(last.timestampNanos),
-                    "bufferBacklog": String(bufferBacklog),
-                    "droppedFrameCount": String(droppedFrameCount)
-                ]
+                audioTimeSeconds: event.audioTimeSeconds,
+                metadata: event.metadata
             )
         }
         diagnosticsTracker?.record(
@@ -408,6 +408,7 @@ public final class MeetingRecorder {
         processingTask = nil
         captureSession?.frameBuffer.finish()
         try drainFrames()
+        flushAudioDrainTelemetry()
         try writer?.close()
         let activeTranscriber = transcriber
         activeTranscriber?.finish()
@@ -428,6 +429,15 @@ public final class MeetingRecorder {
         let stopped = try markStopped(at: endedAt, endedReason: endedReason)
         emit(.stopped(stopped))
         return stopped
+    }
+
+    private func flushAudioDrainTelemetry() {
+        guard let event = audioDrainTelemetry.flush() else { return }
+        performanceEventLogger?.log(
+            "audio_frames_drained",
+            audioTimeSeconds: event.audioTimeSeconds,
+            metadata: event.metadata
+        )
     }
 
     public func markStopped(
@@ -558,6 +568,88 @@ public final class MeetingRecorder {
         record.transcriptionFailureReason = message
         activeRecord = record
         try store.save(record)
+    }
+}
+
+private struct RecorderAudioDrainTelemetry {
+    private struct Pending {
+        var frameCount: Int = 0
+        var batchCount: Int = 0
+        var pcmBytes: Int = 0
+        var audioDurationSeconds: Double = 0
+        var firstFrameTimestampNanos: UInt64?
+        var lastFrameTimestampNanos: UInt64?
+        var maxBufferBacklog: Int = 0
+        var droppedFrameCount: Int = 0
+        var audioTimeSeconds: Double = 0
+    }
+
+    struct LogEvent {
+        let audioTimeSeconds: Double
+        let metadata: [String: String]
+    }
+
+    private var pending = Pending()
+    private let flushAudioDurationSeconds = 1.0
+
+    mutating func reset() {
+        pending = Pending()
+    }
+
+    mutating func record(
+        _ frames: [AudioFrame],
+        bufferBacklog: Int,
+        droppedFrameCount: Int
+    ) -> LogEvent? {
+        guard let first = frames.first, let last = frames.last else { return nil }
+        if pending.firstFrameTimestampNanos == nil {
+            pending.firstFrameTimestampNanos = first.timestampNanos
+        }
+        pending.frameCount += frames.count
+        pending.batchCount += 1
+        pending.pcmBytes += frames.reduce(0) { $0 + $1.pcm.count }
+        pending.audioDurationSeconds += frames.reduce(0) { $0 + frameDurationSeconds($1) }
+        pending.lastFrameTimestampNanos = last.timestampNanos
+        pending.maxBufferBacklog = max(pending.maxBufferBacklog, bufferBacklog)
+        pending.droppedFrameCount = droppedFrameCount
+        pending.audioTimeSeconds = TimeInterval(last.timestampNanos) / 1_000_000_000
+        guard pending.audioDurationSeconds >= flushAudioDurationSeconds else {
+            return nil
+        }
+        return flush()
+    }
+
+    mutating func flush() -> LogEvent? {
+        guard pending.frameCount > 0 else { return nil }
+        let event = LogEvent(
+            audioTimeSeconds: pending.audioTimeSeconds,
+            metadata: [
+                "frameCount": String(pending.frameCount),
+                "batchCount": String(pending.batchCount),
+                "pcmBytes": String(pending.pcmBytes),
+                "audioDurationSeconds": Self.metricString(pending.audioDurationSeconds),
+                "firstFrameTimestampNanos": String(pending.firstFrameTimestampNanos ?? 0),
+                "lastFrameTimestampNanos": String(pending.lastFrameTimestampNanos ?? 0),
+                "bufferBacklog": String(pending.maxBufferBacklog),
+                "droppedFrameCount": String(pending.droppedFrameCount)
+            ]
+        )
+        reset()
+        return event
+    }
+
+    private func frameDurationSeconds(_ frame: AudioFrame) -> Double {
+        guard frame.sampleRate > 0, frame.channelCount > 0 else { return 0 }
+        let bytesPerSample = 2
+        let sampleCount = frame.pcm.count / bytesPerSample / frame.channelCount
+        return Double(sampleCount) / frame.sampleRate
+    }
+
+    private static func metricString(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(value)
     }
 }
 

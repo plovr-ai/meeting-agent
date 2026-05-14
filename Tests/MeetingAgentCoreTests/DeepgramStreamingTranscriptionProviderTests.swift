@@ -265,6 +265,57 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(audioFrameSent.metadata["timestampNanos"], "10")
     }
 
+    func testStreamingProviderAggregatesAudioFrameSentTelemetry() async throws {
+        let transcriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-stream-aggregate-\(UUID().uuidString)")
+            .appendingPathExtension("txt")
+        let performanceURL = transcriptURL.deletingLastPathComponent()
+            .appendingPathComponent("performance-\(UUID().uuidString)")
+            .appendingPathExtension("jsonl")
+        defer {
+            try? FileManager.default.removeItem(at: transcriptURL)
+            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+            try? FileManager.default.removeItem(at: performanceURL)
+        }
+        let session = FakeDeepgramStreamingSession()
+        let client = FakeDeepgramStreamingClient(session: session)
+        let provider = DeepgramStreamingSpeechTranscriptionProvider(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            client: client
+        )
+        let transcriber = try await provider.start(context: SpeechTranscriptionStreamContext(
+            transcriptURL: transcriptURL,
+            localeIdentifier: "en-US",
+            sampleRate: 16_000,
+            channelCount: 1,
+            performanceEventLogger: PerformanceEventLogger(url: performanceURL)
+        ))
+        let frames = (0..<120).map { index in
+            AudioFrame(
+                pcm: Data(repeating: UInt8(index % 128), count: 320),
+                sampleRate: 16_000,
+                channelCount: 1,
+                timestampNanos: UInt64(index) * 10_000_000
+            )
+        }
+
+        for frame in frames {
+            try transcriber.append(frame)
+        }
+        try await waitFor { session.sentFrames.count == frames.count }
+        transcriber.finish()
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let sentEvents = try performanceEvents(at: performanceURL)
+            .filter { $0.event == "deepgram_audio_frame_sent" }
+        XCTAssertLessThan(sentEvents.count, frames.count)
+        XCTAssertEqual(sentEvents.first?.metadata["frameCount"], "1")
+        XCTAssertEqual(sentEvents.first?.metadata["timestampNanos"], "0")
+        XCTAssertEqual(sentEvents.compactMap { Int($0.metadata["frameCount"] ?? "") }.reduce(0, +), frames.count)
+        XCTAssertEqual(sentEvents.last?.metadata["lastFrameTimestampNanos"], String(frames.last?.timestampNanos ?? 0))
+        XCTAssertNotNil(sentEvents.last?.metadata["audioDurationSeconds"])
+    }
+
     func testStreamingProviderForwardsSpeechRecognitionEvents() async throws {
         let transcriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("deepgram-stream-events-\(UUID().uuidString)")

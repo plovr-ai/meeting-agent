@@ -663,6 +663,7 @@ private final class DeepgramFrameSendQueue {
     private var isSending = false
     private var isFinishing = false
     private var sentAudioSeconds: Double = 0
+    private var sentAudioTelemetry = DeepgramSentAudioTelemetry()
     var onFailure: ((Error) -> Void)?
 
     init(
@@ -694,7 +695,10 @@ private final class DeepgramFrameSendQueue {
         markFinishing()
 
         while true {
-            if isDrained { return }
+            if isDrained {
+                flushSentAudioTelemetry()
+                return
+            }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
     }
@@ -739,27 +743,44 @@ private final class DeepgramFrameSendQueue {
         frames.removeAll()
         isSending = false
         isFinishing = true
+        sentAudioTelemetry.reset()
         lock.unlock()
     }
 
     private func logFrameSent(_ frame: AudioFrame) {
         let durationSeconds = frameDurationSeconds(frame)
+        let event: DeepgramSentAudioTelemetry.LogEvent?
         lock.lock()
         sentAudioSeconds += durationSeconds
         let audioTimeSeconds = sentAudioSeconds
         let queuedFrameCount = frames.count
+        event = sentAudioTelemetry.record(
+            frame,
+            durationSeconds: durationSeconds,
+            audioTimeSeconds: audioTimeSeconds,
+            queuedFrameCount: queuedFrameCount
+        )
         lock.unlock()
+        if let event {
+            log(event)
+        }
+    }
+
+    private func flushSentAudioTelemetry() {
+        let event: DeepgramSentAudioTelemetry.LogEvent?
+        lock.lock()
+        event = sentAudioTelemetry.flush()
+        lock.unlock()
+        if let event {
+            log(event)
+        }
+    }
+
+    private func log(_ event: DeepgramSentAudioTelemetry.LogEvent) {
         performanceEventLogger?.log(
             "deepgram_audio_frame_sent",
-            audioTimeSeconds: audioTimeSeconds,
-            metadata: [
-                "pcmBytes": String(frame.pcm.count),
-                "sampleRate": Self.metricString(frame.sampleRate),
-                "channelCount": String(frame.channelCount),
-                "timestampNanos": String(frame.timestampNanos),
-                "frameDurationSeconds": String(durationSeconds),
-                "queuedFrameCount": String(queuedFrameCount)
-            ]
+            audioTimeSeconds: event.audioTimeSeconds,
+            metadata: event.metadata
         )
     }
 
@@ -768,6 +789,127 @@ private final class DeepgramFrameSendQueue {
         let bytesPerSample = 2
         let sampleCount = frame.pcm.count / bytesPerSample / frame.channelCount
         return Double(sampleCount) / frame.sampleRate
+    }
+
+    private static func metricString(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(value)
+    }
+}
+
+private struct DeepgramSentAudioTelemetry {
+    struct LogEvent {
+        let audioTimeSeconds: Double
+        let metadata: [String: String]
+    }
+
+    private struct Pending {
+        var frameCount: Int = 0
+        var pcmBytes: Int = 0
+        var audioDurationSeconds: Double = 0
+        var firstFrameTimestampNanos: UInt64?
+        var lastFrameTimestampNanos: UInt64?
+        var audioTimeSeconds: Double = 0
+        var queuedFrameCount: Int = 0
+        var sampleRate: Double = 0
+        var channelCount: Int = 0
+    }
+
+    private var pending = Pending()
+    private var didEmitFirstFrame = false
+    private let flushAudioDurationSeconds = 1.0
+
+    mutating func reset() {
+        pending = Pending()
+        didEmitFirstFrame = false
+    }
+
+    mutating func record(
+        _ frame: AudioFrame,
+        durationSeconds: Double,
+        audioTimeSeconds: Double,
+        queuedFrameCount: Int
+    ) -> LogEvent? {
+        if !didEmitFirstFrame {
+            didEmitFirstFrame = true
+            return LogEvent(
+                audioTimeSeconds: audioTimeSeconds,
+                metadata: metadata(
+                    frameCount: 1,
+                    pcmBytes: frame.pcm.count,
+                    audioDurationSeconds: durationSeconds,
+                    firstFrameTimestampNanos: frame.timestampNanos,
+                    lastFrameTimestampNanos: frame.timestampNanos,
+                    audioTimeSeconds: audioTimeSeconds,
+                    queuedFrameCount: queuedFrameCount,
+                    sampleRate: frame.sampleRate,
+                    channelCount: frame.channelCount
+                )
+            )
+        }
+
+        if pending.firstFrameTimestampNanos == nil {
+            pending.firstFrameTimestampNanos = frame.timestampNanos
+            pending.sampleRate = frame.sampleRate
+            pending.channelCount = frame.channelCount
+        }
+        pending.frameCount += 1
+        pending.pcmBytes += frame.pcm.count
+        pending.audioDurationSeconds += durationSeconds
+        pending.lastFrameTimestampNanos = frame.timestampNanos
+        pending.audioTimeSeconds = audioTimeSeconds
+        pending.queuedFrameCount = queuedFrameCount
+        guard pending.audioDurationSeconds >= flushAudioDurationSeconds else {
+            return nil
+        }
+        return flush()
+    }
+
+    mutating func flush() -> LogEvent? {
+        guard pending.frameCount > 0 else { return nil }
+        let event = LogEvent(
+            audioTimeSeconds: pending.audioTimeSeconds,
+            metadata: metadata(
+                frameCount: pending.frameCount,
+                pcmBytes: pending.pcmBytes,
+                audioDurationSeconds: pending.audioDurationSeconds,
+                firstFrameTimestampNanos: pending.firstFrameTimestampNanos ?? 0,
+                lastFrameTimestampNanos: pending.lastFrameTimestampNanos ?? 0,
+                audioTimeSeconds: pending.audioTimeSeconds,
+                queuedFrameCount: pending.queuedFrameCount,
+                sampleRate: pending.sampleRate,
+                channelCount: pending.channelCount
+            )
+        )
+        pending = Pending()
+        return event
+    }
+
+    private func metadata(
+        frameCount: Int,
+        pcmBytes: Int,
+        audioDurationSeconds: Double,
+        firstFrameTimestampNanos: UInt64,
+        lastFrameTimestampNanos: UInt64,
+        audioTimeSeconds: Double,
+        queuedFrameCount: Int,
+        sampleRate: Double,
+        channelCount: Int
+    ) -> [String: String] {
+        [
+            "frameCount": String(frameCount),
+            "pcmBytes": String(pcmBytes),
+            "sampleRate": Self.metricString(sampleRate),
+            "channelCount": String(channelCount),
+            "timestampNanos": String(firstFrameTimestampNanos),
+            "firstFrameTimestampNanos": String(firstFrameTimestampNanos),
+            "lastFrameTimestampNanos": String(lastFrameTimestampNanos),
+            "frameDurationSeconds": Self.metricString(audioDurationSeconds),
+            "audioDurationSeconds": Self.metricString(audioDurationSeconds),
+            "queuedFrameCount": String(queuedFrameCount)
+        ]
     }
 
     private static func metricString(_ value: Double) -> String {
