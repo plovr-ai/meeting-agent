@@ -42,6 +42,8 @@ public enum DeepgramRawResponseTransport: String, Equatable {
     case webSocket
 }
 
+private let deepgramLanguage = "multi"
+
 public struct DeepgramRawResponseContext: Equatable {
     public let providerID: String
     public let transport: DeepgramRawResponseTransport
@@ -126,6 +128,7 @@ public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionC
         var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "model", value: model),
+            URLQueryItem(name: "language", value: deepgramLanguage),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "diarize", value: "true"),
@@ -187,6 +190,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
         }
         components.queryItems = [
             URLQueryItem(name: "model", value: model),
+            URLQueryItem(name: "language", value: deepgramLanguage),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: String(Int(sampleRate.rounded()))),
             URLQueryItem(name: "channels", value: String(max(1, channelCount))),
@@ -214,6 +218,7 @@ public final class URLSessionDeepgramStreamingTranscriptionClient: DeepgramStrea
             metadata: [
                 "providerID": "deepgram-transcribe",
                 "model": model,
+                "language": deepgramLanguage,
                 "sampleRate": Self.metricString(sampleRate.rounded()),
                 "channelCount": String(max(1, channelCount)),
                 "encoding": "linear16",

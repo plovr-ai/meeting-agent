@@ -56,7 +56,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "audio/wav")
             XCTAssertEqual(request.httpBodyStreamData(), Data([0, 1, 2]))
             XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
-            XCTAssertEqual(request.url?.query?.contains("language="), false)
+            XCTAssertEqual(request.url?.query?.contains("language=multi"), true)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -76,6 +76,39 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         )
 
         XCTAssertEqual(String(data: data, encoding: .utf8), #"{"ok":true}"#)
+    }
+
+    func testStreamingClientBuildsMultilingualRequestAndLogsConnection() async throws {
+        var capturedRequest: URLRequest?
+        let eventsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepgram-streaming-\(UUID().uuidString)")
+            .appendingPathExtension("jsonl")
+        defer {
+            try? FileManager.default.removeItem(at: eventsURL)
+        }
+        let logger = PerformanceEventLogger(url: eventsURL)
+        let client = URLSessionDeepgramStreamingTranscriptionClient(
+            webSocketFactory: { request in
+                capturedRequest = request
+                return NoopDeepgramWebSocketTask()
+            }
+        )
+
+        _ = try await client.connect(
+            configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
+            sampleRate: 48_000,
+            channelCount: 1,
+            performanceEventLogger: logger
+        )
+
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Token key")
+        XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
+        XCTAssertEqual(request.url?.query?.contains("language=multi"), true)
+        XCTAssertEqual(request.url?.query?.contains("sample_rate=48000"), true)
+        let events = try String(contentsOf: eventsURL, encoding: .utf8)
+        XCTAssertTrue(events.contains(#""event":"deepgram_ws_connected""#))
+        XCTAssertTrue(events.contains(#""language":"multi""#))
     }
 
     func testURLSessionClientRejectsUnavailableConfiguration() async {
@@ -525,6 +558,13 @@ private final class RecordingDeepgramStreamingClient: DeepgramStreamingTranscrip
     ) async throws -> DeepgramStreamingTranscriptionSession {
         RecordingDeepgramStreamingSession()
     }
+}
+
+private final class NoopDeepgramWebSocketTask: DeepgramWebSocketTask {
+    func resume() {}
+    func send(_ message: URLSessionWebSocketTask.Message) async throws {}
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {}
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {}
 }
 
 private final class RecordingDeepgramStreamingSession: DeepgramStreamingTranscriptionSession {

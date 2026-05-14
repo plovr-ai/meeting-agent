@@ -22,7 +22,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(capturedRequest?.url), resolvingAgainstBaseURL: false))
         let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         XCTAssertEqual(query["model"], "nova-3")
-        XCTAssertNil(query["language"])
+        XCTAssertEqual(query["language"], "multi")
         XCTAssertEqual(query["sample_rate"], "16000")
         XCTAssertEqual(query["channels"], "1")
         XCTAssertEqual(query["interim_results"], "true")
