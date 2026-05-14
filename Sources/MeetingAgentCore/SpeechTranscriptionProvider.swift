@@ -25,6 +25,10 @@ public protocol TranscriptUpdateSink: AnyObject {
     func receiveFinal(_ update: TranscriptSegmentUpdate)
 }
 
+public protocol SpeechRecognitionEventSink: AnyObject {
+    func receive(_ event: SpeechRecognitionEvent)
+}
+
 public extension TranscriptUpdateSink {
     func receiveRealtime(_ update: TranscriptSegmentUpdate) {
         receive(update)
@@ -64,6 +68,7 @@ public struct SpeechTranscriptionStreamContext {
     public let channelCount: Int
     public let performanceEventLogger: PerformanceEventLogger?
     public let transcriptUpdateSink: TranscriptUpdateSink?
+    public let speechEventSink: SpeechRecognitionEventSink?
 
     public init(
         transcriptURL: URL,
@@ -71,7 +76,8 @@ public struct SpeechTranscriptionStreamContext {
         sampleRate: Double,
         channelCount: Int,
         performanceEventLogger: PerformanceEventLogger? = nil,
-        transcriptUpdateSink: TranscriptUpdateSink? = nil
+        transcriptUpdateSink: TranscriptUpdateSink? = nil,
+        speechEventSink: SpeechRecognitionEventSink? = nil
     ) {
         self.transcriptURL = transcriptURL
         self.localeIdentifier = localeIdentifier
@@ -79,6 +85,7 @@ public struct SpeechTranscriptionStreamContext {
         self.channelCount = channelCount
         self.performanceEventLogger = performanceEventLogger
         self.transcriptUpdateSink = transcriptUpdateSink
+        self.speechEventSink = speechEventSink
     }
 }
 
@@ -122,7 +129,8 @@ public enum StreamingSpeechTranscriberFactory {
         sampleRate: Double,
         channelCount: Int,
         performanceEventLogger: PerformanceEventLogger? = nil,
-        transcriptUpdateSink: TranscriptUpdateSink? = nil
+        transcriptUpdateSink: TranscriptUpdateSink? = nil,
+        speechEventSink: SpeechRecognitionEventSink? = nil
     ) async throws -> AudioFrameTranscriber {
         let context = SpeechTranscriptionStreamContext(
             transcriptURL: transcriptURL,
@@ -130,7 +138,8 @@ public enum StreamingSpeechTranscriberFactory {
             sampleRate: sampleRate,
             channelCount: channelCount,
             performanceEventLogger: performanceEventLogger,
-            transcriptUpdateSink: transcriptUpdateSink
+            transcriptUpdateSink: transcriptUpdateSink,
+            speechEventSink: speechEventSink
         )
         if configuration.usesDeepgram {
             return try await DeepgramStreamingSpeechTranscriptionProvider(

@@ -102,8 +102,17 @@ public protocol DeepgramStreamingTranscriptionClient {
 
 public protocol DeepgramStreamingTranscriptionSession: AnyObject {
     var segments: AsyncStream<TranscriptSegment> { get }
+    var speechEvents: AsyncStream<SpeechRecognitionEvent> { get }
     func send(_ frame: AudioFrame) async throws
     func close() async
+}
+
+public extension DeepgramStreamingTranscriptionSession {
+    var speechEvents: AsyncStream<SpeechRecognitionEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 }
 
 public final class URLSessionDeepgramTranscriptionClient: DeepgramTranscriptionClient {
@@ -254,6 +263,8 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     private let rawResponseLogger: DeepgramRawResponseLogger
     private let performanceEventLogger: PerformanceEventLogger?
     private var continuation: AsyncStream<TranscriptSegment>.Continuation?
+    private var eventContinuation: AsyncStream<SpeechRecognitionEvent>.Continuation?
+    private var didStartReceiving = false
 
     init(
         task: DeepgramWebSocketTask,
@@ -268,7 +279,14 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
     var segments: AsyncStream<TranscriptSegment> {
         AsyncStream { continuation in
             self.continuation = continuation
-            self.receiveNext()
+            self.startReceivingIfNeeded()
+        }
+    }
+
+    var speechEvents: AsyncStream<SpeechRecognitionEvent> {
+        AsyncStream { continuation in
+            self.eventContinuation = continuation
+            self.startReceivingIfNeeded()
         }
     }
 
@@ -281,6 +299,13 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
         try? await task.send(.string(finalize))
         task.cancel(with: .normalClosure, reason: nil)
         continuation?.finish()
+        eventContinuation?.finish()
+    }
+
+    private func startReceivingIfNeeded() {
+        guard !didStartReceiving else { return }
+        didStartReceiving = true
+        receiveNext()
     }
 
     private func receiveNext() {
@@ -295,8 +320,10 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
                 self.receiveNext()
             case .failure:
                 self.continuation?.finish()
+                self.eventContinuation?.finish()
             @unknown default:
                 self.continuation?.finish()
+                self.eventContinuation?.finish()
             }
         }
     }
@@ -315,6 +342,12 @@ final class URLSessionDeepgramStreamingSession: DeepgramStreamingTranscriptionSe
             providerID: "deepgram-transcribe"
         ) {
             continuation?.yield(segment)
+        }
+        for event in DeepgramSpeechEventAdapter.events(
+            from: data,
+            providerID: "deepgram-transcribe"
+        ) {
+            eventContinuation?.yield(event)
         }
     }
 }
@@ -451,11 +484,12 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
             channelCount: context.channelCount,
             performanceEventLogger: context.performanceEventLogger
         )
-        let writer = try TranscriptFileWriter(url: context.transcriptURL)
+        let writer = context.speechEventSink == nil ? try TranscriptFileWriter(url: context.transcriptURL) : nil
         return DeepgramStreamingTranscriber(
             session: session,
             writer: writer,
             transcriptUpdateSink: context.transcriptUpdateSink,
+            speechEventSink: context.speechEventSink,
             performanceEventLogger: context.performanceEventLogger
         )
     }
@@ -463,12 +497,14 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
 
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
-    private let writer: TranscriptFileWriter
+    private let writer: TranscriptFileWriter?
     private let transcriptUpdateSink: TranscriptUpdateSink?
+    private let speechEventSink: SpeechRecognitionEventSink?
     private let performanceEventLogger: PerformanceEventLogger?
     private let sendQueue: DeepgramFrameSendQueue
     private let failureLock = NSLock()
     private var receiveTask: Task<Void, Never>?
+    private var eventReceiveTask: Task<Void, Never>?
     private var sendFailure: String?
     private var fallbackSegmentIndex = 0
     private var reconciler = DeepgramTranscriptReconciler()
@@ -481,13 +517,15 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     init(
         session: DeepgramStreamingTranscriptionSession,
-        writer: TranscriptFileWriter,
+        writer: TranscriptFileWriter?,
         transcriptUpdateSink: TranscriptUpdateSink? = nil,
+        speechEventSink: SpeechRecognitionEventSink? = nil,
         performanceEventLogger: PerformanceEventLogger? = nil
     ) {
         self.session = session
         self.writer = writer
         self.transcriptUpdateSink = transcriptUpdateSink
+        self.speechEventSink = speechEventSink
         self.performanceEventLogger = performanceEventLogger
         self.sendQueue = DeepgramFrameSendQueue(
             session: session,
@@ -503,9 +541,17 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
                     segment: segment,
                     metadata: ["sourceProvider": segment.sourceProvider]
                 )
+                guard self?.speechEventSink == nil else { continue }
                 try? self?.write(segment)
             }
-            try? self?.writer.close()
+            if self?.speechEventSink == nil {
+                try? self?.writer?.close()
+            }
+        }
+        self.eventReceiveTask = Task { [weak self, session] in
+            for await event in session.speechEvents {
+                self?.speechEventSink?.receive(event)
+            }
         }
     }
 
@@ -522,6 +568,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
+        guard let writer else { return }
         let output = reconciler.apply(segment)
 
         for result in output.realtimeUpdates {

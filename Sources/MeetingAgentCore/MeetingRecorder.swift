@@ -43,7 +43,8 @@ public final class MeetingRecorder {
                     sampleRate: sampleRate,
                     channelCount: channelCount,
                     performanceEventLogger: performanceEventLogger,
-                    transcriptUpdateSink: transcriptUpdateSink
+                    transcriptUpdateSink: transcriptUpdateSink,
+                    speechEventSink: transcriptUpdateSink as? SpeechRecognitionEventSink
                 )
             }
         )
@@ -448,8 +449,10 @@ public final class MeetingRecorder {
     }
 }
 
-private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
+private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechRecognitionEventSink {
     private let store: RecordingTranscriptPersistenceStore
+    private let transcriptDirectoryURL: URL
+    private var captionStore: MeetingTranscriptStore?
     private let performanceEventLogger: PerformanceEventLogger?
     private var realtimeAccumulator = TranscriptSegmentAccumulator()
     private var pendingResults: [TranscriptSegmentAccumulationResult] = []
@@ -457,6 +460,7 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
 
     init(transcriptURL: URL, performanceEventLogger: PerformanceEventLogger?) throws {
         self.store = try RecordingTranscriptPersistenceStore(transcriptURL: transcriptURL)
+        self.transcriptDirectoryURL = transcriptURL.deletingLastPathComponent()
         self.performanceEventLogger = performanceEventLogger
     }
 
@@ -482,6 +486,28 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
 
     func receiveFinal(_ update: TranscriptSegmentUpdate) {
         receive(update)
+    }
+
+    func receive(_ event: SpeechRecognitionEvent) {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            let store = try speechEventStore()
+            let document = try store.apply(event)
+            let legacyDocument = document.transcriptDocument
+            pendingResults.append(TranscriptSegmentAccumulationResult(
+                document: legacyDocument,
+                changedSegmentIDs: legacyDocument.segments.map(\.id),
+                plainTextReplacement: nil,
+                source: event.isFinal ? .final : .realtime
+            ))
+            logSpeechEvent(event, document: document)
+        } catch {
+            performanceEventLogger?.log(
+                "speech_recognition_event_persist_failed",
+                metadata: ["error": String(describing: error)]
+            )
+        }
     }
 
     func drainResults() -> [TranscriptSegmentAccumulationResult] {
@@ -571,6 +597,30 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink {
                 ]
             )
         }
+    }
+
+    private func logSpeechEvent(_ event: SpeechRecognitionEvent, document: CaptionDocument) {
+        guard let payload = event.payload else { return }
+        performanceEventLogger?.log(
+            "speech_recognition_event_persisted",
+            segmentID: payload.providerUtteranceID,
+            isFinal: event.isFinal,
+            textLength: payload.text.count,
+            metadata: [
+                "providerID": payload.providerID,
+                "turnCount": String(document.turns.count),
+                "speakerID": payload.speaker?.identifier ?? ""
+            ]
+        )
+    }
+
+    private func speechEventStore() throws -> MeetingTranscriptStore {
+        if let captionStore {
+            return captionStore
+        }
+        let store = try MeetingTranscriptStore(directoryURL: transcriptDirectoryURL)
+        captionStore = store
+        return store
     }
 }
 

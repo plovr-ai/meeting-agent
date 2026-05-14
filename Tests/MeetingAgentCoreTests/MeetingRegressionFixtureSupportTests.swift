@@ -81,4 +81,34 @@ final class MeetingRegressionFixtureSupportTests: XCTestCase {
         XCTAssertEqual(try lookup.translation(forSourceSegmentIDs: ["segment-2", "segment-1"]), "译文")
         XCTAssertThrowsError(try lookup.translation(forSourceSegmentIDs: ["segment-1"]))
     }
+
+    func testLoadTranscriptProjectsCaptionDocumentFixtures() throws {
+        let fixtureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("caption-regression-fixture-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixtureURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let captionDocument = CaptionDocument(turns: [
+            CaptionTurn(
+                id: "turn-1",
+                speakerID: "speaker-0",
+                speakerLabel: "User A",
+                sections: [
+                    CaptionSection(id: "section-1", text: "第一句。", utteranceIDs: ["utt-1"]),
+                    CaptionSection(id: "section-2", text: "第二句。", utteranceIDs: ["utt-2"])
+                ],
+                state: .final,
+                source: CaptionTurnSource(providerID: "deepgram-transcribe", utteranceIDs: ["utt-1", "utt-2"])
+            )
+        ])
+        try JSONEncoder.meetingAgent.encode(captionDocument)
+            .write(to: fixtureURL.appendingPathComponent("transcript.json"))
+
+        let transcript = try RegressionFixtureFiles.loadTranscript(in: fixtureURL)
+
+        XCTAssertEqual(transcript.version, 2)
+        XCTAssertEqual(transcript.segments.map(\.id), ["turn-1"])
+        XCTAssertEqual(transcript.segments.first?.text, "第一句。\n第二句。")
+        XCTAssertEqual(transcript.segments.first?.speakerID, "speaker-0")
+    }
 }
