@@ -2329,6 +2329,82 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.receivedInputs.last?.transcript.finalTurns.map(\.turnID), ["final"])
     }
 
+    func testSelectingCompletedMeetingLoadsPersistedSummaryIntoMemoryWithoutProviderCall() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let provider = CapturingSummaryProvider(providerName: "test-summary")
+        var stored = try store.createMeeting(
+            name: "Completed Review",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        stored.endedAt = Date(timeIntervalSince1970: 200)
+        try store.save(stored)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(id: "segment-1", text: "We decided to launch.", language: "en-US")
+        ]), for: stored)
+        let summary = MeetingSummary(
+            overview: "Persisted summary",
+            keyTopics: [],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: ["segment-1"],
+            generatedAt: Date(timeIntervalSince1970: 300),
+            provider: "persisted",
+            status: .succeeded,
+            failureReason: nil
+        )
+        try FileSummaryRepository().saveSummary(summary, for: stored)
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            summaryProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+
+        viewModel.selectMeeting(stored.id)
+        await viewModel.waitForSummaryIdleForTesting()
+
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.transcript.consumptionView.finalTurns.map(\.turnID), ["segment-1"])
+        XCTAssertEqual(viewModel.selectedMeetingSummary, summary)
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.summary.source, .loadedFromPersistence)
+        XCTAssertTrue(provider.receivedInputs.isEmpty)
+    }
+
+    func testSelectingCompletedMeetingWithoutSummaryGeneratesFromHydratedMemoryTranscript() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let provider = CapturingSummaryProvider(providerName: "test-summary")
+        var stored = try store.createMeeting(
+            name: "Completed Review",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        stored.endedAt = Date(timeIntervalSince1970: 200)
+        try store.save(stored)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(id: "segment-1", text: "We decided to launch.", language: "en-US")
+        ]), for: stored)
+        let viewModel = MeetingAgentViewModel(
+            store: store,
+            summaryProviderFactory: { _ in provider },
+            processTargetsProvider: { [] }
+        )
+        try viewModel.loadMeetings()
+
+        viewModel.selectMeeting(stored.id)
+        await viewModel.waitForSummaryIdleForTesting()
+
+        XCTAssertEqual(provider.receivedInputs.first?.transcript.finalTurns.map(\.turnID), ["segment-1"])
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.summary.source, .generatedInSession)
+        XCTAssertEqual(viewModel.selectedMeetingSummary?.overview, "We decided to launch.")
+        XCTAssertEqual(try FileSummaryRepository().loadSummary(for: stored)?.overview, "We decided to launch.")
+    }
+
     func testGenerateSummaryUsesConfiguredSummaryModelIndependentlyFromTranslationModel() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

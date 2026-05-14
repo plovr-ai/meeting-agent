@@ -16,6 +16,7 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     @Published public private(set) var meetings: [MeetingRecord] = []
     @Published public private(set) var selectedMeetingID: UUID?
+    @Published public private(set) var selectedMeetingSessionState: MeetingSessionState?
     @Published public private(set) var selectedMeetingArtifactSnapshot: MeetingArtifactSnapshot?
     @Published public private(set) var pendingCandidate: AudioCaptureTarget?
     @Published public private(set) var statusText: String = "Idle"
@@ -37,6 +38,8 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let speechConfigurationStore: SpeechTranscriptionConfigurationStore
     private let recorder: MeetingRecorder
     private let exportService: MeetingExportService
+    private let transcriptRepository: TranscriptRepository
+    private let summaryRepository: SummaryRepository
     private var realtimeCaptionSession: RealtimeCaptionSession
     private var realtimeCaptionSessionUsesCaptionTranslationProvider = false
     private var latestRealtimeCaptionSnapshot: LiveCaptionPipelineSnapshot?
@@ -71,9 +74,14 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let processMonitor = MeetingProcessMonitor()
     private var activeSource: AudioCaptureSource?
     private var recorderEventTask: Task<Void, Never>?
+    private var summaryHydrationTask: Task<Void, Never>?
 
     private var activeTarget: AudioCaptureTarget? {
         activeSource?.processTarget
+    }
+
+    public var selectedMeetingSummary: MeetingSummary? {
+        selectedMeetingSessionState?.summary.summary
     }
 
     struct ActiveCaptionApplyContext: Equatable {
@@ -114,6 +122,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration: SpeechTranscriptionConfiguration? = nil,
         speechConfigurationStore: SpeechTranscriptionConfigurationStore = SpeechTranscriptionConfigurationStore(),
         exportService: MeetingExportService = MeetingExportService(),
+        transcriptRepository: TranscriptRepository = FileTranscriptRepository(),
+        summaryRepository: SummaryRepository = FileSummaryRepository(),
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
         liveCaptionSnapshotDebounceNanoseconds: UInt64 = 0,
         draftCaptionInputThrottleNanoseconds: UInt64 = 200_000_000,
@@ -123,6 +133,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.speechConfigurationStore = speechConfigurationStore
         self.recorder = recorder ?? MeetingRecorder(store: store)
         self.exportService = exportService
+        self.transcriptRepository = transcriptRepository
+        self.summaryRepository = summaryRepository
         self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
             Self.summaryProvider(for: configuration)
         }
@@ -595,17 +607,21 @@ public final class MeetingAgentViewModel: ObservableObject {
         guard let meeting = meetings.first(where: { $0.id == meetingID }) else {
             throw ProbeError.invalidArguments("Meeting not found")
         }
-        guard let transcriptJSONURL = meeting.transcriptJSONURL else {
+        guard meeting.transcriptJSONURL != nil else {
             throw ProbeError.invalidArguments("Meeting has no structured transcript URL")
         }
-        guard let summaryJSONURL = meeting.summaryJSONURL,
-              let summaryMarkdownURL = meeting.summaryMarkdownURL
-        else {
+        guard meeting.summaryJSONURL != nil, meeting.summaryMarkdownURL != nil else {
             throw ProbeError.invalidArguments("Meeting has no summary output URL")
         }
 
-        let transcript = try MeetingTranscriptStore.readDocument(from: transcriptJSONURL)
-        let consumptionView = TranscriptConsumptionView.project(meetingID: meeting.id, document: transcript)
+        let consumptionView: TranscriptConsumptionView
+        if let selectedMeetingSessionState,
+           selectedMeetingSessionState.meetingID == meetingID {
+            consumptionView = selectedMeetingSessionState.transcript.consumptionView
+        } else {
+            let transcript = try transcriptRepository.loadCaptionDocument(for: meeting)
+            consumptionView = TranscriptConsumptionView.project(meetingID: meeting.id, document: transcript)
+        }
         let progress = progressState(for: meeting)
         let provider = summaryProviderFactory(speechConfiguration)
         let summary = try await provider.generateSummary(
@@ -620,8 +636,11 @@ public final class MeetingAgentViewModel: ObservableObject {
                 generatedAt: generatedAt
             )
         )
-        try MeetingSummaryWriter.write(summary, jsonURL: summaryJSONURL, markdownURL: summaryMarkdownURL)
+        try summaryRepository.saveSummary(summary, for: meeting)
         try applyGeneratedTitleIfNeeded(summary: summary, meetingID: meetingID)
+        if selectedMeetingSessionState?.meetingID == meetingID {
+            selectedMeetingSessionState?.summary = .generated(summary)
+        }
         if selectedMeetingID == meetingID {
             refreshSelectedMeetingArtifactSnapshot()
         }
@@ -677,6 +696,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             recentlyStoppedLiveMeetingID = nil
         }
         selectedMeetingID = effectiveMeetingID
+        hydrateSelectedMeetingSessionState()
         refreshSelectedMeetingArtifactSnapshot()
         meetingGoal = selectedMeeting?.meetingGoal
         resetMeetingProgressState()
@@ -687,6 +707,62 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             resetLiveCaptionPipeline()
             refreshLiveCaptionTurnsFromSelectedMeeting()
+        }
+    }
+
+    private func hydrateSelectedMeetingSessionState() {
+        summaryHydrationTask?.cancel()
+        summaryHydrationTask = nil
+
+        guard let meeting = selectedMeeting else {
+            selectedMeetingSessionState = nil
+            return
+        }
+
+        do {
+            let captionDocument = try transcriptRepository.loadCaptionDocument(for: meeting)
+            var sessionState = MeetingSessionState(
+                meetingID: meeting.id,
+                transcript: TranscriptState(
+                    meetingID: meeting.id,
+                    captionDocument: captionDocument,
+                    source: meeting.id == activeMeetingID ? .activeRecording : .hydratedFromPersistence
+                ),
+                summary: .missing
+            )
+
+            if let summary = try summaryRepository.loadSummary(for: meeting) {
+                sessionState.summary = .loaded(summary)
+                selectedMeetingSessionState = sessionState
+            } else {
+                selectedMeetingSessionState = sessionState
+                if meeting.endedAt != nil, !sessionState.transcript.consumptionView.finalTurns.isEmpty {
+                    selectedMeetingSessionState?.summary = .generating
+                    summaryHydrationTask = Task { [weak self] in
+                        await self?.generateMissingSummaryFromSelectedSession(
+                            meetingID: meeting.id,
+                            generatedAt: Date()
+                        )
+                    }
+                }
+            }
+        } catch {
+            selectedMeetingSessionState = MeetingSessionState(
+                meetingID: meeting.id,
+                transcript: TranscriptState(meetingID: meeting.id),
+                summary: .failed("Failed to hydrate meeting state: \(error)")
+            )
+        }
+    }
+
+    private func generateMissingSummaryFromSelectedSession(meetingID: UUID, generatedAt: Date) async {
+        do {
+            try await generateSummary(for: meetingID, generatedAt: generatedAt)
+        } catch {
+            guard selectedMeetingSessionState?.meetingID == meetingID else { return }
+            selectedMeetingSessionState?.summary = .failed("Summary generation failed: \(error)")
+            statusText = "Summary failed"
+            objectWillChange.send()
         }
     }
 
@@ -1212,6 +1288,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         await liveCaptionReplayTask?.value
     }
 
+    func waitForSummaryIdleForTesting() async {
+        await summaryHydrationTask?.value
+    }
+
     private func refreshLiveCaptionTurnsFromSelectedMeetingAsync(
         document providedDocument: TranscriptDocument? = nil,
         sequence: Int? = nil
@@ -1255,15 +1335,21 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func selectedTranscriptDocument() -> TranscriptDocument? {
+        if let selectedMeetingSessionState,
+           selectedMeetingSessionState.meetingID == selectedMeetingID {
+            let document = selectedMeetingSessionState.transcript.captionDocument.transcriptDocument
+            return document.segments.isEmpty ? nil : document
+        }
         guard let meeting = selectedMeeting,
-              let transcriptJSONURL = meeting.transcriptJSONURL
+              meeting.transcriptJSONURL != nil
         else {
             return nil
         }
-        guard let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL) else {
+        guard let captionDocument = try? transcriptRepository.loadCaptionDocument(for: meeting) else {
             return nil
         }
-        return document
+        let document = captionDocument.transcriptDocument
+        return document.segments.isEmpty ? nil : document
     }
 
     private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {
