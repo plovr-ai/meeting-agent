@@ -768,13 +768,21 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func exportTranscript(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Transcript", for: meetingID) { record in
-            try exportService.exportTranscript(for: record, to: destinationURL)
+            if let session = selectedSession(for: record.id) {
+                try exportService.exportTranscript(for: record, session: session, to: destinationURL)
+            } else {
+                try exportService.exportTranscript(for: record, to: destinationURL)
+            }
         }
     }
 
     public func exportSummary(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Summary", for: meetingID) { record in
-            try exportService.exportSummary(for: record, to: destinationURL)
+            if let session = selectedSession(for: record.id) {
+                try exportService.exportSummary(session.summary.summary, to: destinationURL)
+            } else {
+                try exportService.exportSummary(for: record, to: destinationURL)
+            }
         }
     }
 
@@ -790,20 +798,32 @@ public final class MeetingAgentViewModel: ObservableObject {
         to destinationURL: URL
     ) throws {
         try export(format == .srt ? "SRT subtitles" : "VTT subtitles", for: meetingID) { record in
-            try exportService.exportSubtitles(for: record, format: format, to: destinationURL)
+            if let session = selectedSession(for: record.id) {
+                try exportService.exportSubtitles(for: record, session: session, format: format, to: destinationURL)
+            } else {
+                try exportService.exportSubtitles(for: record, format: format, to: destinationURL)
+            }
         }
     }
 
     public func exportReadinessReport(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Readiness report", for: meetingID) { record in
-            try exportService.exportReadinessReport(for: record, to: destinationURL)
+            if let session = selectedSession(for: record.id) {
+                try exportService.exportReadinessReport(for: record, session: session, to: destinationURL)
+            } else {
+                try exportService.exportReadinessReport(for: record, to: destinationURL)
+            }
         }
     }
 
     public func exportKnowledgePackage(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Knowledge package", for: meetingID) { record in
-            let summary = record.summaryJSONURL.flatMap { try? MeetingSummaryWriter.read(from: $0) }
-            try exportService.exportKnowledgePackage(for: record, summary: summary, to: destinationURL)
+            if let session = selectedSession(for: record.id) {
+                try exportService.exportKnowledgePackage(for: record, session: session, to: destinationURL)
+            } else {
+                let summary = record.summaryJSONURL.flatMap { try? MeetingSummaryWriter.read(from: $0) }
+                try exportService.exportKnowledgePackage(for: record, summary: summary, to: destinationURL)
+            }
         }
     }
 
@@ -814,13 +834,27 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw error
         }
         do {
-            let summary = try exportService.summaryText(for: record)
+            let summary: String
+            if let session = selectedSession(for: record.id) {
+                summary = try exportService.summaryText(summary: session.summary.summary)
+            } else {
+                summary = try exportService.summaryText(for: record)
+            }
             statusText = "Summary copied"
             return summary
         } catch {
             statusText = "Copy summary failed: \(Self.errorMessage(error))"
             throw error
         }
+    }
+
+    private func selectedSession(for meetingID: UUID) -> MeetingSessionState? {
+        guard let selectedMeetingSessionState,
+              selectedMeetingSessionState.meetingID == meetingID
+        else {
+            return nil
+        }
+        return selectedMeetingSessionState
     }
 
     public func updateSpeakerLabel(

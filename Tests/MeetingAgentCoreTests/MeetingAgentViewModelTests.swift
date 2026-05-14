@@ -2452,6 +2452,63 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(provider.receivedInputs.first?.transcript.finalTurns.map(\.turnID), ["segment-1"])
     }
 
+    func testExportsUseHydratedMemoryAfterTranscriptAndSummaryFilesAreRemoved() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        var stored = try store.createMeeting(
+            name: "Completed Review",
+            startedAt: Date(timeIntervalSince1970: 100)
+        ).record
+        stored.endedAt = Date(timeIntervalSince1970: 200)
+        try store.save(stored)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(
+                id: "segment-1",
+                startTimeSeconds: 1,
+                endTimeSeconds: 3,
+                text: "We decided to launch.",
+                language: "en-US"
+            )
+        ]), for: stored)
+        try FileSummaryRepository().saveSummary(MeetingSummary(
+            overview: "Persisted summary",
+            keyTopics: [],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: ["segment-1"],
+            generatedAt: Date(timeIntervalSince1970: 300),
+            provider: "persisted",
+            status: .succeeded,
+            failureReason: nil
+        ), for: stored)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(stored.id)
+        await viewModel.waitForSummaryIdleForTesting()
+        try FileManager.default.removeItem(at: XCTUnwrap(stored.transcriptJSONURL))
+        try FileManager.default.removeItem(at: XCTUnwrap(stored.summaryJSONURL))
+        try FileManager.default.removeItem(at: XCTUnwrap(stored.summaryMarkdownURL))
+
+        let transcriptDestination = root.appendingPathComponent("export-transcript.txt")
+        let summaryDestination = root.appendingPathComponent("export-summary.md")
+        let srtDestination = root.appendingPathComponent("export.srt")
+        let knowledgeDestination = root.appendingPathComponent("knowledge", isDirectory: true)
+        try viewModel.exportTranscript(for: stored.id, to: transcriptDestination)
+        try viewModel.exportSummary(for: stored.id, to: summaryDestination)
+        try viewModel.exportSubtitles(for: stored.id, format: .srt, to: srtDestination)
+        try viewModel.exportKnowledgePackage(for: stored.id, to: knowledgeDestination)
+
+        XCTAssertTrue(try String(contentsOf: transcriptDestination, encoding: .utf8).contains("We decided to launch."))
+        XCTAssertTrue(try String(contentsOf: summaryDestination, encoding: .utf8).contains("Persisted summary"))
+        XCTAssertTrue(try String(contentsOf: srtDestination, encoding: .utf8).contains("We decided to launch."))
+        XCTAssertTrue(try String(contentsOf: knowledgeDestination.appendingPathComponent("transcript.md"), encoding: .utf8).contains("We decided to launch."))
+    }
+
     func testGenerateSummaryUsesConfiguredSummaryModelIndependentlyFromTranslationModel() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

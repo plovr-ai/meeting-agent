@@ -33,8 +33,21 @@ public struct MeetingExportService {
         try write(transcript, to: destinationURL)
     }
 
+    public func exportTranscript(for record: MeetingRecord, session: MeetingSessionState, to destinationURL: URL) throws {
+        let document = transcriptDocument(for: session)
+        let transcript = TranscriptFormatter.render(document.segments)
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MeetingExportError.missingArtifact("transcript")
+        }
+        try write(transcript, to: destinationURL)
+    }
+
     public func exportSummary(for record: MeetingRecord, to destinationURL: URL) throws {
         try write(try summaryText(for: record), to: destinationURL)
+    }
+
+    public func exportSummary(_ summary: MeetingSummary?, to destinationURL: URL) throws {
+        try write(try renderedSummaryText(summary), to: destinationURL)
     }
 
     public func exportMeetingData(for record: MeetingRecord, to destinationURL: URL) throws {
@@ -61,8 +74,22 @@ public struct MeetingExportService {
         }
     }
 
+    public func exportSubtitles(
+        for record: MeetingRecord,
+        session: MeetingSessionState,
+        format: SubtitleExportFormat,
+        to destinationURL: URL
+    ) throws {
+        let document = transcriptDocument(for: session)
+        try exportSubtitles(segments: document.segments, format: format, to: destinationURL)
+    }
+
     public func exportReadinessReport(for record: MeetingRecord, to destinationURL: URL) throws {
         try write(readinessReport(for: record), to: destinationURL)
+    }
+
+    public func exportReadinessReport(for record: MeetingRecord, session: MeetingSessionState, to destinationURL: URL) throws {
+        try write(readinessReport(for: record, session: session), to: destinationURL)
     }
 
     public func exportKnowledgePackage(
@@ -72,6 +99,38 @@ public struct MeetingExportService {
         to destinationURL: URL
     ) throws {
         let document = try transcriptDocument(for: record)
+        let resolvedKnowledge: MeetingKnowledge
+        if let knowledge {
+            resolvedKnowledge = knowledge
+        } else if let summary {
+            resolvedKnowledge = MeetingKnowledgeExtractor.fromSummary(summary, segments: document.segments)
+        } else {
+            resolvedKnowledge = MeetingKnowledge(failureReason: "Knowledge extraction was not available.")
+        }
+        let package = MeetingKnowledgePackage(
+            record: record,
+            summary: summary,
+            segments: document.segments,
+            knowledge: resolvedKnowledge
+        )
+
+        try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try MeetingKnowledgePackageMarkdownRenderer.renderMeeting(package)
+            .write(to: destinationURL.appendingPathComponent("meeting.md"), atomically: true, encoding: .utf8)
+        try MeetingKnowledgePackageMarkdownRenderer.renderTranscript(package)
+            .write(to: destinationURL.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
+        try MeetingKnowledgePackageMarkdownRenderer.renderKnowledge(package)
+            .write(to: destinationURL.appendingPathComponent("knowledge.md"), atomically: true, encoding: .utf8)
+    }
+
+    public func exportKnowledgePackage(
+        for record: MeetingRecord,
+        session: MeetingSessionState,
+        knowledge: MeetingKnowledge? = nil,
+        to destinationURL: URL
+    ) throws {
+        let document = transcriptDocument(for: session)
+        let summary = session.summary.summary
         let resolvedKnowledge: MeetingKnowledge
         if let knowledge {
             resolvedKnowledge = knowledge
@@ -110,6 +169,10 @@ public struct MeetingExportService {
         return summary
     }
 
+    public func summaryText(summary: MeetingSummary?) throws -> String {
+        try renderedSummaryText(summary)
+    }
+
     private func readinessReport(for record: MeetingRecord) -> String {
         let transcript = TranscriptFileWriter.renderedTranscript(
             textURL: record.transcriptURL,
@@ -117,6 +180,69 @@ public struct MeetingExportService {
         )
         let diagnostics = diagnostics(for: record)
         let summaryAvailable = record.summaryURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
+
+        var lines: [String] = [
+            "# Meeting Readiness Report",
+            "",
+            "## Meeting",
+            "",
+            "- Name: \(record.name)",
+            "- ID: \(record.id.uuidString)",
+            "- Started: \(format(record.startedAt))",
+            "- Ended: \(record.endedAt.map(format) ?? "Not ended")",
+            "- STT provider: \(record.transcriptionProviderID)",
+            "- Language: \(record.speechLocaleIdentifier)",
+            "- Transcription: \(transcriptionLabel(for: record.transcriptionStatus))",
+            "- Failure reason: \(record.transcriptionFailureReason ?? "None")",
+            "",
+            "## Artifacts",
+            "",
+            "- Audio: \(artifactPath(record.audioURL))",
+            "- Transcript: \(artifactPath(record.transcriptURL))",
+            "- Structured transcript: \(artifactPath(record.transcriptJSONURL))",
+            "- Summary: \(summaryAvailable ? artifactPath(record.summaryURL) : "Not generated")",
+            "- Diagnostics: \(artifactPath(record.diagnosticsURL))",
+            "",
+            "## Capture Diagnostics",
+            ""
+        ]
+
+        if let diagnostics {
+            lines.append(contentsOf: [
+                "- Status: \(diagnostics.status.rawValue)",
+                "- Frames captured: \(diagnostics.framesCaptured)",
+                "- Duration seconds: \(format(diagnostics.durationSeconds))",
+                "- Average level: \(format(diagnostics.averageLevel))",
+                "- Peak level: \(format(diagnostics.peakLevel))",
+                "- Silent duration seconds: \(format(diagnostics.silentDurationSeconds))",
+                "- Dropped frames: \(diagnostics.droppedFrameCount)",
+                "- Startup replay frames: \(diagnostics.startupReplayFrameCount)",
+                "- Startup replay duration seconds: \(format(diagnostics.startupReplayDurationSeconds))",
+                "- Startup replay dropped frames: \(diagnostics.startupReplayDroppedFrameCount)",
+                ""
+            ])
+        } else {
+            lines.append(contentsOf: [
+                "No diagnostics artifact is available.",
+                ""
+            ])
+        }
+
+        lines.append(contentsOf: [
+            "## Transcript Excerpt",
+            "",
+            transcriptExcerpt(from: transcript),
+            ""
+        ])
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func readinessReport(for record: MeetingRecord, session: MeetingSessionState) -> String {
+        let document = transcriptDocument(for: session)
+        let transcript = TranscriptFormatter.render(document.segments)
+        let diagnostics = diagnostics(for: record)
+        let summaryAvailable = session.summary.summary != nil
 
         var lines: [String] = [
             "# Meeting Readiness Report",
@@ -192,6 +318,34 @@ public struct MeetingExportService {
             throw MeetingExportError.missingArtifact("structured transcript")
         }
         return try TranscriptFileWriter.readDocument(from: transcriptJSONURL)
+    }
+
+    private func transcriptDocument(for session: MeetingSessionState) -> TranscriptDocument {
+        session.transcript.captionDocument.transcriptDocument
+    }
+
+    private func exportSubtitles(segments: [TranscriptSegment], format: SubtitleExportFormat, to destinationURL: URL) throws {
+        let cues = subtitleCues(from: segments)
+        guard !cues.isEmpty else {
+            throw MeetingExportError.missingArtifact("timed transcript")
+        }
+        switch format {
+        case .srt:
+            try write(renderSRT(cues), to: destinationURL)
+        case .vtt:
+            try write(renderVTT(cues), to: destinationURL)
+        }
+    }
+
+    private func renderedSummaryText(_ summary: MeetingSummary?) throws -> String {
+        guard let summary else {
+            throw MeetingExportError.missingArtifact("summary")
+        }
+        let text = MeetingSummaryMarkdownRenderer.render(summary)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MeetingExportError.missingArtifact("summary")
+        }
+        return text
     }
 
     private func subtitleCues(from segments: [TranscriptSegment]) -> [SubtitleCue] {
