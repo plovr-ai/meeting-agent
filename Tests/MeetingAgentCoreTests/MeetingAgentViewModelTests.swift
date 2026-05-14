@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import MeetingAgentCore
 
@@ -275,6 +276,32 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(stopped.summaryMarkdownURL).path))
         XCTAssertEqual(viewModel.statusText, "Summary generated")
         XCTAssertFalse(viewModel.isRecording)
+    }
+
+    func testIdleDrainDoesNotInvalidateWindowWhenSelectedTranscriptAlreadyLoaded() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Recorded Meeting", startedAt: Date(timeIntervalSince1970: 100)).record
+        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(stored.transcriptURL))
+        try transcriptWriter.replace(with: [
+            TranscriptSegment(id: "segment-1", text: "This meeting has already stopped.", language: "en-US")
+        ])
+        try transcriptWriter.close()
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+
+        viewModel.drainRecordingFrames()
+        XCTAssertFalse(viewModel.liveCaptionTurns.isEmpty)
+
+        var invalidationCount = 0
+        let cancellable = viewModel.objectWillChange.sink {
+            invalidationCount += 1
+        }
+        viewModel.drainRecordingFrames()
+        cancellable.cancel()
+
+        XCTAssertEqual(invalidationCount, 0)
     }
 
     func testGenerateSummaryIncludesMatchingMeetingProgressSnapshot() async throws {

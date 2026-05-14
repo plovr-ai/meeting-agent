@@ -449,8 +449,9 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func drainRecordingFrames(endedAt: Date = Date()) {
         updateRecordingStatus()
         let transcriptResults = recorder.drainTranscriptUpdates()
-        handleTranscriptResults(transcriptResults)
-        objectWillChange.send()
+        if handleTranscriptResults(transcriptResults) {
+            objectWillChange.send()
+        }
     }
 
     @discardableResult
@@ -472,11 +473,12 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func handleRecorderEvent(_ event: MeetingRecorderEvent) {
+        var shouldNotifyComputedStateChanged = true
         switch event {
         case .statusChanged(let snapshot):
             updateRecordingStatus(snapshot: snapshot)
         case .transcriptUpdates(let results):
-            handleTranscriptResults(results)
+            shouldNotifyComputedStateChanged = handleTranscriptResults(results)
         case .failed(let failure):
             statusText = "Recording failed: \(failure.message)"
         case .stopped(let stopped):
@@ -489,23 +491,28 @@ public final class MeetingAgentViewModel: ObservableObject {
                 }
             }
         }
-        objectWillChange.send()
+        if shouldNotifyComputedStateChanged {
+            objectWillChange.send()
+        }
     }
 
-    private func handleTranscriptResults(_ transcriptResults: [TranscriptSegmentAccumulationResult]) {
+    private func handleTranscriptResults(_ transcriptResults: [TranscriptSegmentAccumulationResult]) -> Bool {
         if !transcriptResults.isEmpty && activeMeetingID == nil {
-            return
+            return false
         }
+        var shouldNotifyComputedStateChanged = isRecording || activeMeetingID != nil
         if transcriptResults.isEmpty {
             if !isRecording && activeMeetingID == nil && !shouldKeepRecentlyStoppedLiveCaptions() {
                 refreshLiveCaptionTurnsFromSelectedMeetingSynchronously()
             }
             if meetingProgressCoordinator != nil {
+                shouldNotifyComputedStateChanged = true
                 Task { [weak self] in
                     await self?.refreshMeetingProgress()
                 }
             }
         } else {
+            shouldNotifyComputedStateChanged = true
             let currentContext = currentActiveCaptionApplyContext()
             if shouldThrottleDraftCaptionInput(transcriptResults, context: currentContext) {
                 submitDraftCaptionInput(transcriptResults, context: currentContext)
@@ -522,6 +529,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 }
             }
         }
+        return shouldNotifyComputedStateChanged
     }
 
     private func shouldKeepRecentlyStoppedLiveCaptions() -> Bool {
