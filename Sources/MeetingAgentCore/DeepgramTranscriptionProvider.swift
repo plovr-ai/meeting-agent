@@ -541,9 +541,12 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
                     segment: segment,
                     metadata: ["sourceProvider": segment.sourceProvider]
                 )
+                guard self?.speechEventSink == nil else { continue }
                 try? self?.write(segment)
             }
-            try? self?.writer.close()
+            if self?.speechEventSink == nil {
+                try? self?.writer.close()
+            }
         }
         self.eventReceiveTask = Task { [weak self, session] in
             for await event in session.speechEvents {
