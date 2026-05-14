@@ -275,7 +275,10 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(workspaceSource.contains("Label(\"Back\", systemImage: \"chevron.left\")"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Stop Recording\", systemImage: \"stop.fill\")"))
-        XCTAssertTrue(workspaceSource.contains("Label(\"Record\", systemImage: \"record.circle\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Replay\", systemImage: \"play.fill\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Pause\", systemImage: \"pause.fill\")"))
+        XCTAssertTrue(workspaceSource.contains("Label(\"Continue\", systemImage: \"play.fill\")"))
+        XCTAssertFalse(workspaceSource.contains("Label(\"Record\", systemImage: \"record.circle\")"))
         XCTAssertTrue(workspaceSource.contains("Menu {"))
         XCTAssertTrue(workspaceSource.contains("Image(systemName: \"ellipsis.circle\")"))
         XCTAssertTrue(workspaceSource.contains(".accessibilityLabel(\"Meeting actions\")"))
@@ -710,6 +713,66 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("setMeetingGoal(buildGoal())"))
         XCTAssertFalse(source.contains("meetingGoal: viewModel.meetingGoal"))
         XCTAssertFalse(source.contains("draftGoal: meetingGoal"))
+    }
+
+    func testMeetingAudioReplayControllerIsAppLayerAVAudioPlayerWrapper() throws {
+        let source = try appSource(named: "MeetingAudioReplayController.swift")
+
+        XCTAssertTrue(source.contains("import AVFoundation"))
+        XCTAssertTrue(source.contains("final class MeetingAudioReplayController"))
+        XCTAssertTrue(source.contains("ObservableObject"))
+        XCTAssertTrue(source.contains("AVAudioPlayerDelegate"))
+        XCTAssertTrue(source.contains("enum State: Equatable"))
+        XCTAssertTrue(source.contains("case idle"))
+        XCTAssertTrue(source.contains("case playing(UUID)"))
+        XCTAssertTrue(source.contains("case paused(UUID)"))
+        XCTAssertTrue(source.contains("@Published private(set) var state: State = .idle"))
+        XCTAssertTrue(source.contains("func toggleReplay(for meetingID: UUID, audioURL: URL) throws"))
+        XCTAssertTrue(source.contains("func stop()"))
+        XCTAssertTrue(source.contains("AVAudioPlayer(contentsOf: audioURL)"))
+        XCTAssertTrue(source.contains("audioPlayerDidFinishPlaying"))
+        XCTAssertTrue(source.contains("audioPlayerDecodeErrorDidOccur"))
+    }
+
+    func testMeetingAudioReplayControllerStaysOutOfCoreLayer() throws {
+        let packageSource = try String(contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Package.swift"))
+
+        XCTAssertTrue(packageSource.contains(".executableTarget("))
+        XCTAssertTrue(packageSource.contains("name: \"MeetingAgentApp\""))
+        XCTAssertFalse(packageSource.contains("MeetingAudioReplayController"))
+    }
+
+    func testMeetingWorkspaceWiresAudioReplayControllerThroughDetailViews() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("@StateObject private var audioReplayController = MeetingAudioReplayController()"))
+        XCTAssertTrue(source.contains("audioReplayController: audioReplayController"))
+        XCTAssertTrue(source.contains("let audioReplayController: MeetingAudioReplayController"))
+        XCTAssertTrue(source.contains("@ObservedObject var audioReplayController: MeetingAudioReplayController"))
+        XCTAssertTrue(source.contains("audioReplayController.stop()"))
+    }
+
+    func testMeetingWorkspacePostRecordingCommandUsesReplayStates() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        guard let commandRange = source.range(of: "private var recordingCommand: some View") else {
+            return XCTFail("recordingCommand is missing")
+        }
+        guard let menuRange = source.range(of: "private var overflowMenu: some View", range: commandRange.upperBound..<source.endIndex) else {
+            return XCTFail("recordingCommand boundary is missing")
+        }
+        let commandSource = source[commandRange.lowerBound..<menuRange.lowerBound]
+
+        XCTAssertTrue(commandSource.contains("Label(\"Stop Recording\", systemImage: \"stop.fill\")"))
+        XCTAssertTrue(commandSource.contains("Label(\"Replay\", systemImage: \"play.fill\")"))
+        XCTAssertTrue(commandSource.contains("Label(\"Pause\", systemImage: \"pause.fill\")"))
+        XCTAssertTrue(commandSource.contains("Label(\"Continue\", systemImage: \"play.fill\")"))
+        XCTAssertTrue(commandSource.contains("audioReplayController.toggleReplay(for: meeting.id, audioURL: audioURL)"))
+        XCTAssertTrue(commandSource.contains("FileManager.default.fileExists(atPath: audioURL.path)"))
+        XCTAssertTrue(commandSource.contains(".help(\"Audio recording is not available.\")"))
+        XCTAssertFalse(commandSource.contains("Label(\"Record\", systemImage: \"record.circle\")"))
+        XCTAssertFalse(commandSource.contains("Recording can be started from an agenda item."))
     }
 
     private func appSource(named fileName: String) throws -> String {

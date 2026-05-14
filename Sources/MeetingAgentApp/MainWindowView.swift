@@ -14,6 +14,7 @@ struct MainWindowView: View {
     @ObservedObject var viewModel: MeetingAgentViewModel
     @State private var destination: MainWindowDestination = .today
     @State private var workspaceReturnDestination: MainWindowDestination = .today
+    @StateObject private var audioReplayController = MeetingAudioReplayController()
 
     var body: some View {
         NavigationSplitView {
@@ -94,6 +95,7 @@ struct MainWindowView: View {
                         let returnDestination = destination.agendaReturnDestination
                         Task {
                             do {
+                                audioReplayController.stop()
                                 try await viewModel.startRecording(for: target, meetingID: meeting.id)
                                 workspaceReturnDestination = returnDestination
                                 destination = .workspace
@@ -106,6 +108,7 @@ struct MainWindowView: View {
                         let returnDestination = destination.agendaReturnDestination
                         Task {
                             do {
+                                audioReplayController.stop()
                                 try await viewModel.startOfflineMicrophoneRecording()
                                 workspaceReturnDestination = returnDestination
                                 destination = .workspace
@@ -129,6 +132,7 @@ struct MainWindowView: View {
                     liveCaptionTurns: viewModel.liveCaptionTurns,
                     recommendedQuestions: viewModel.recommendedQuestions,
                     meetingProgressState: viewModel.meetingProgressState,
+                    audioReplayController: audioReplayController,
                     backToMeetings: {
                         destination = workspaceReturnDestination
                     },
@@ -205,6 +209,7 @@ struct MainWindowView: View {
             Button("Start Recording") {
                 Task {
                     do {
+                        audioReplayController.stop()
                         try await viewModel.startRecording(for: target)
                         destination = .workspace
                     } catch {
@@ -398,6 +403,7 @@ private struct MeetingDetailView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let meetingProgressState: MeetingProgressState?
+    let audioReplayController: MeetingAudioReplayController
     let backToMeetings: () -> Void
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
@@ -434,6 +440,7 @@ private struct MeetingDetailView: View {
                     transcriptLatencyText: artifactSnapshot?.transcriptLatencyText ?? "unavailable",
                     recommendedQuestions: recommendedQuestions,
                     meetingProgressState: meetingProgressState,
+                    audioReplayController: audioReplayController,
                     saveAgenda: saveAgenda,
                     stopRecording: stopRecording,
                     copySummary: { copySummary(meeting) },
@@ -567,6 +574,7 @@ private struct MeetingCommandCenterView: View {
     let transcriptLatencyText: String
     let recommendedQuestions: [FollowUpQuestionSuggestion]
     let meetingProgressState: MeetingProgressState?
+    @ObservedObject var audioReplayController: MeetingAudioReplayController
     let saveAgenda: (UUID, MeetingAgendaUpdate) throws -> Void
     let stopRecording: () -> Void
     let copySummary: () -> Void
@@ -692,14 +700,39 @@ private struct MeetingCommandCenterView: View {
                 Label("Stop Recording", systemImage: "stop.fill")
             }
             .buttonStyle(CommandCenterActionButtonStyle(variant: .danger))
+        } else if let audioURL = meeting.audioURL,
+                  FileManager.default.fileExists(atPath: audioURL.path) {
+            Button {
+                do {
+                    try audioReplayController.toggleReplay(for: meeting.id, audioURL: audioURL)
+                } catch {
+                    audioReplayController.stop()
+                    NSSound.beep()
+                }
+            } label: {
+                replayCommandLabel
+            }
+            .buttonStyle(CommandCenterActionButtonStyle())
         } else {
             Button {
             } label: {
-                Label("Record", systemImage: "record.circle")
+                Label("Replay", systemImage: "play.fill")
             }
             .buttonStyle(CommandCenterActionButtonStyle())
             .disabled(true)
-            .help("Recording can be started from an agenda item.")
+            .help("Audio recording is not available.")
+        }
+    }
+
+    @ViewBuilder
+    private var replayCommandLabel: some View {
+        switch audioReplayController.state {
+        case .playing(meeting.id):
+            Label("Pause", systemImage: "pause.fill")
+        case .paused(meeting.id):
+            Label("Continue", systemImage: "play.fill")
+        default:
+            Label("Replay", systemImage: "play.fill")
         }
     }
 
