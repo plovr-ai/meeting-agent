@@ -104,7 +104,7 @@ public struct OpenAIRealtimeTranscriptionProvider {
         let transport = transportFactory(url, apiKey)
         try await transport.connect()
         try await transport.send(try sessionUpdate(localeIdentifier: context.localeIdentifier))
-        let writer = try TranscriptFileWriter(url: context.transcriptURL)
+        let writer = context.transcriptUpdateSink == nil ? try TranscriptFileWriter(url: context.transcriptURL) : nil
         return OpenAIRealtimeTranscriptionTranscriber(
             transport: transport,
             writer: writer,
@@ -168,7 +168,7 @@ public struct OpenAIRealtimeTranscriptionProvider {
 
 final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
     private let transport: RealtimeTranscriptionWebSocketTransport
-    private let writer: TranscriptFileWriter
+    private let writer: TranscriptFileWriter?
     private let transcriptUpdateSink: TranscriptUpdateSink?
     private let localeIdentifier: String
     private var receiveTask: Task<Void, Never>?
@@ -176,7 +176,7 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
 
     init(
         transport: RealtimeTranscriptionWebSocketTransport,
-        writer: TranscriptFileWriter,
+        writer: TranscriptFileWriter?,
         transcriptUpdateSink: TranscriptUpdateSink? = nil,
         localeIdentifier: String
     ) {
@@ -202,16 +202,16 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
                             timingSource: .unavailable
                         )
                         transcriptUpdateSink?.receive(.upsert(segment))
-                        try writer.append(segment)
+                        try writer?.append(segment)
                         segmentIndex += 1
                     case .failed(let message):
                         transcriptUpdateSink?.receive(.replaceWithPlainText("OpenAI Realtime transcription failed: \(message)"))
-                        try writer.replace(with: "OpenAI Realtime transcription failed: \(message)")
+                        try writer?.replace(with: "OpenAI Realtime transcription failed: \(message)")
                     case .connected, .delta:
                         break
                     }
                 } catch {
-                    try? writer.replace(with: "OpenAI Realtime transcription failed: \(error)")
+                    try? writer?.replace(with: "OpenAI Realtime transcription failed: \(error)")
                 }
             }
         }
@@ -231,7 +231,7 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
         receiveTask?.cancel()
         Task { [transport, writer] in
             await transport.close()
-            try? writer.close()
+            try? writer?.close()
         }
     }
 

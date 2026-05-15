@@ -27,7 +27,7 @@ final class OpenAIRealtimeTranscriptionProviderTests: XCTestCase {
         XCTAssertNil(event)
     }
 
-    func testProviderStartsSessionSendsConfigurationAndWritesCompletedSegments() async throws {
+    func testProviderStartsSessionSendsConfigurationAndPublishesCompletedSegmentsWithoutTranscriptFile() async throws {
         let transport = FakeRealtimeTranscriptionTransport()
         let updateSink = RecordingOpenAITranscriptUpdateSink()
         let transcriptURL = temporaryURL("transcript.txt")
@@ -55,11 +55,10 @@ final class OpenAIRealtimeTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        let document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.map(\.text), ["Hello world"])
-        XCTAssertEqual(document.segments.first?.sourceProvider, "openai-realtime-transcribe")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: transcriptURL.deletingPathExtension().appendingPathExtension("json").path
+        ))
         XCTAssertEqual(updateSink.updates.count, 1)
         guard case .upsert(let updatedSegment) = updateSink.updates.first else {
             return XCTFail("Expected upsert update")

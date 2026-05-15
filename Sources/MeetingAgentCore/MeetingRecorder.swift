@@ -270,7 +270,7 @@ public final class MeetingRecorder {
                 )
             }
 
-            if updatedRecord.transcriptURL != nil {
+            if updatedRecord.transcriptJSONURL != nil {
                 isStartingTranscriber = true
             }
             captureSession = session
@@ -282,10 +282,13 @@ public final class MeetingRecorder {
             throw error
         }
 
-        if let transcriptURL = updatedRecord.transcriptURL {
+        if let transcriptJSONURL = updatedRecord.transcriptJSONURL {
+            let providerTranscriptURL = transcriptJSONURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("provider-transcript.legacy")
             do {
                 let updateSink = try RecordingTranscriptUpdateSink(
-                    transcriptURL: transcriptURL,
+                    transcriptJSONURL: transcriptJSONURL,
                     performanceEventLogger: performanceEventLogger,
                     onResults: { [weak self] results in
                         self?.emit(.transcriptUpdates(results))
@@ -294,7 +297,7 @@ public final class MeetingRecorder {
                 transcriptUpdateSink = updateSink
                 let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
-                    transcriptURL,
+                    providerTranscriptURL,
                     session.outputSampleRate,
                     session.outputChannelCount,
                     performanceEventLogger,
@@ -664,12 +667,12 @@ private final class RecordingTranscriptUpdateSink: TranscriptUpdateSink, SpeechR
     private let lock = NSLock()
 
     init(
-        transcriptURL: URL,
+        transcriptJSONURL: URL,
         performanceEventLogger: PerformanceEventLogger?,
         onResults: @escaping ([TranscriptSegmentAccumulationResult]) -> Void = { _ in }
     ) throws {
-        self.store = try RecordingTranscriptPersistenceStore(transcriptURL: transcriptURL)
-        self.transcriptDirectoryURL = transcriptURL.deletingLastPathComponent()
+        self.store = try RecordingTranscriptPersistenceStore(transcriptJSONURL: transcriptJSONURL)
+        self.transcriptDirectoryURL = transcriptJSONURL.deletingLastPathComponent()
         self.performanceEventLogger = performanceEventLogger
         self.onResults = onResults
     }

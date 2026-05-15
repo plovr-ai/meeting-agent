@@ -270,8 +270,8 @@ struct TodayAgendaView: View {
     }
 
     private func hasReadableTranscript(_ meeting: MeetingRecord) -> Bool {
-        guard let transcriptURL = meeting.transcriptURL else { return false }
-        return FileManager.default.isReadableFile(atPath: transcriptURL.path)
+        guard let transcriptJSONURL = meeting.transcriptJSONURL else { return false }
+        return FileManager.default.isReadableFile(atPath: transcriptJSONURL.path)
     }
 
     private func isCompleted(_ meeting: MeetingRecord) -> Bool {
@@ -477,14 +477,14 @@ private struct MeetingArtifactCard: View {
         if meeting.summaryURL != nil || meeting.summaryJSONURL != nil {
             return "Summary ready"
         }
-        if meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+        if meeting.transcriptJSONURL != nil {
             return "Transcript ready"
         }
         return "Artifacts pending"
     }
 
     private var artifactTint: Color {
-        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil || meeting.transcriptURL != nil || meeting.transcriptJSONURL != nil {
+        if meeting.summaryURL != nil || meeting.summaryJSONURL != nil || meeting.transcriptJSONURL != nil {
             return CommandCenterPalette.primary
         }
         return CommandCenterPalette.secondaryText

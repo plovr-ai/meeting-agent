@@ -175,14 +175,16 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
         try await start(
             transcriptURL: transcriptURL,
             localeIdentifier: localeIdentifier,
-            environment: .live
+            environment: .live,
+            transcriptUpdateSink: nil
         )
     }
 
     static func start(
         transcriptURL: URL,
         localeIdentifier: String,
-        environment: SystemSpeechEnvironment
+        environment: SystemSpeechEnvironment,
+        transcriptUpdateSink: TranscriptUpdateSink? = nil
     ) async throws -> SystemSpeechTranscriber {
         try await requestAuthorization(authorizer: environment.authorizer)
 
@@ -194,7 +196,12 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
         let request = environment.requestFactory()
         request.configureForDictation()
 
-        let writer = try environment.writerFactory(transcriptURL)
+        let writer: SystemSpeechWriting
+        if let transcriptUpdateSink {
+            writer = SystemSpeechUpdateSinkWriter(sink: transcriptUpdateSink)
+        } else {
+            writer = try environment.writerFactory(transcriptURL)
+        }
         let transcriber = SystemSpeechTranscriber(request: request, writer: writer)
         transcriber.task = recognizer.recognitionTask(with: request, localeIdentifier: localeIdentifier, writer: writer)
 
@@ -221,6 +228,22 @@ final class SystemSpeechTranscriber: AudioFrameTranscriber {
             throw ProbeError.speechRecognition("Speech recognition permission is \(status)")
         }
     }
+}
+
+private final class SystemSpeechUpdateSinkWriter: SystemSpeechWriting {
+    private let sink: TranscriptUpdateSink
+
+    init(sink: TranscriptUpdateSink) {
+        self.sink = sink
+    }
+
+    func replace(with segments: [TranscriptSegment]) throws {
+        for segment in segments {
+            sink.receive(.upsert(segment))
+        }
+    }
+
+    func close() throws {}
 }
 
 private extension SystemSpeechRecognizing {

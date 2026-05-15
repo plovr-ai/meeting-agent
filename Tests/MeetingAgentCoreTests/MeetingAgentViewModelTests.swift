@@ -528,11 +528,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
         try await viewModel.startRecording(for: target)
         let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(id: "segment-1", text: "Confirm launch owner.", language: "en-US", isFinal: true),
             TranscriptSegment(id: "partial", text: "partial", language: "en-US", isFinal: false)
-        ])
+        ]), for: record)
 
         viewModel.drainRecordingFrames()
 
@@ -564,8 +563,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         }
 
         let record = try XCTUnwrap(viewModel.meetings.first)
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "file-1",
                 text: "File replay should not replace active captions.",
@@ -573,7 +571,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 isFinal: true,
                 speechFinal: true
             )
-        ])
+        ]), for: record)
 
         viewModel.selectMeeting(record.id)
         await viewModel.waitForLiveCaptionReplayForTesting()
@@ -588,8 +586,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
     func testSelectingCompletedMeetingDuringActiveRecordingKeepsActiveRealtimeCaptions() async throws {
         let fixture = try ViewModelRecorderFixture()
         let completed = try fixture.store.createMeeting(name: "Completed Meeting", startedAt: Date(timeIntervalSince1970: 0)).record
-        let completedWriter = try TranscriptFileWriter(url: XCTUnwrap(completed.transcriptURL))
-        try completedWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(
                 id: "completed-1",
                 text: "Completed meeting replay should stay inactive.",
@@ -597,7 +594,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
                 isFinal: true,
                 speechFinal: true
             )
-        ])
+        ]), for: completed)
         let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
         let viewModel = MeetingAgentViewModel(
             store: fixture.store,
@@ -2067,9 +2064,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
             label: "Allan"
         )
 
-        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(stored.record.transcriptJSONURL))
-        XCTAssertEqual(document.segments.first?.speakerLabel, "Allan")
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(stored.record.transcriptURL), encoding: .utf8), "Allan:\nHello\n")
+        let document = try FileTranscriptRepository().loadCaptionDocument(for: stored.record)
+        XCTAssertEqual(document.turns.first?.speakerLabel, "Allan")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: try XCTUnwrap(stored.record.transcriptJSONURL).deletingLastPathComponent().appendingPathComponent("transcript.txt").path
+        ))
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.speaker.label, "Allan")
         XCTAssertEqual(viewModel.statusText, "Speaker label updated")
     }
@@ -2142,9 +2141,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
             text: "Corrected text"
         )
 
-        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(stored.transcriptJSONURL))
-        XCTAssertEqual(document.segments.first?.text, "Corrected text")
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(stored.transcriptURL), encoding: .utf8), "User A:\nCorrected text\n")
+        let document = try FileTranscriptRepository().loadCaptionDocument(for: stored)
+        XCTAssertEqual(document.turns.first?.text, "Corrected text")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: try XCTUnwrap(stored.transcriptJSONURL).deletingLastPathComponent().appendingPathComponent("transcript.txt").path
+        ))
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "Corrected text")
         XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(stored.summaryJSONURL).path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(stored.summaryMarkdownURL).path))
@@ -2202,10 +2203,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
             "First section should stay",
             "Corrected second section"
         ])
-        XCTAssertEqual(
-            try String(contentsOf: XCTUnwrap(stored.record.transcriptURL), encoding: .utf8),
-            "User A:\nFirst section should stay\nCorrected second section\n"
-        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: try XCTUnwrap(stored.record.transcriptJSONURL).deletingLastPathComponent().appendingPathComponent("transcript.txt").path
+        ))
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "First section should stay\nCorrected second section")
     }
 
@@ -2734,11 +2734,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MeetingStore(baseDirectory: root)
         let record = try store.createMeeting(name: "Demo", startedAt: Date()).record
-        let transcriptWriter = try TranscriptFileWriter(url: XCTUnwrap(record.transcriptURL))
-        try transcriptWriter.replace(with: [
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
             TranscriptSegment(text: "old", language: "en-US", sourceProvider: "test")
-        ])
-        try transcriptWriter.close()
+        ]), for: record)
         try MeetingSummaryWriter.write(MeetingSummary(
             overview: "old summary",
             keyTopics: [],
@@ -2996,7 +2994,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let store = MeetingStore(baseDirectory: root)
         let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100)).record
         FileManager.default.createFile(atPath: stored.audioURL!.path, contents: Data([0x52, 0x49, 0x46, 0x46]))
-        try "previous transcript".write(to: stored.transcriptURL!, atomically: true, encoding: .utf8)
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(text: "previous transcript", language: "en-US", sourceProvider: "test")
+        ]), for: stored)
         let viewModel = MeetingAgentViewModel(
             store: store,
             speechConfiguration: SpeechTranscriptionConfiguration(

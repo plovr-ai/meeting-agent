@@ -928,7 +928,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     public func retryTranscription(for meetingID: UUID) async {
         guard let index = meetings.firstIndex(where: { $0.id == meetingID }) else { return }
         var record = meetings[index]
-        guard let audioURL = record.audioURL, let transcriptURL = record.transcriptURL else {
+        guard let audioURL = record.audioURL, let transcriptJSONURL = record.transcriptJSONURL else {
             record.transcriptionStatus = .failed
             record.transcriptionFailureReason = "No saved audio is available for transcription retry"
             meetings[index] = record
@@ -953,7 +953,18 @@ public final class MeetingAgentViewModel: ObservableObject {
         try? store.save(record)
 
         do {
-            let previousTranscript = try? String(contentsOf: transcriptURL, encoding: .utf8)
+            let providerTranscriptURL = transcriptJSONURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("provider-transcript.legacy")
+            defer {
+                try? FileManager.default.removeItem(at: providerTranscriptURL)
+                try? FileManager.default.removeItem(
+                    at: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json")
+                )
+            }
+            let previousTranscript = try? TranscriptFormatter.render(
+                transcriptRepository.loadCaptionDocument(for: record).transcriptDocument.segments
+            )
             if speechConfiguration.usesDeepgram {
                 var retryConfiguration = speechConfiguration
                 retryConfiguration.localeIdentifier = retryLocaleIdentifier
@@ -962,7 +973,10 @@ public final class MeetingAgentViewModel: ObservableObject {
                     audio: AudioInput(wavURL: audioURL, localeIdentifier: retryLocaleIdentifier),
                     options: TranscriptionOptions(sourceLocale: retryLocaleIdentifier)
                 )
-                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(document.segments))
+                try transcriptRepository.saveCaptionDocument(
+                    Self.captionDocument(from: document.segments),
+                    for: record
+                )
             } else {
                 var retryConfiguration = speechConfiguration
                 retryConfiguration.localeIdentifier = retryLocaleIdentifier
@@ -972,11 +986,21 @@ public final class MeetingAgentViewModel: ObservableObject {
                 )
                 try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
                     inputAudioURL: audioURL,
-                    transcriptURL: transcriptURL,
+                    transcriptURL: providerTranscriptURL,
                     localeIdentifier: retryLocaleIdentifier,
                     meetingID: record.id,
                     previousTranscript: previousTranscript
                 ))
+                if FileManager.default.fileExists(atPath: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json").path) {
+                    let data = try Data(
+                        contentsOf: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json")
+                    )
+                    let legacyDocument = try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
+                    try transcriptRepository.saveCaptionDocument(
+                        Self.captionDocument(from: legacyDocument.segments),
+                        for: record
+                    )
+                }
             }
             record.transcriptionStatus = .transcribed
             record.transcriptionFailureReason = nil
@@ -1457,7 +1481,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             )
         }
         document.updatedAt = Date()
-        try saveCaptionDocumentAndRenderedText(document, for: record)
+        try saveCaptionDocument(document, for: record)
     }
 
     private func updateCaptionSegmentText(
@@ -1512,15 +1536,45 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw ProbeError.invalidArguments("Transcript segment not found")
         }
         document.updatedAt = Date()
-        try saveCaptionDocumentAndRenderedText(document, for: record)
+        try saveCaptionDocument(document, for: record)
     }
 
-    private func saveCaptionDocumentAndRenderedText(_ document: CaptionDocument, for record: MeetingRecord) throws {
+    private func saveCaptionDocument(_ document: CaptionDocument, for record: MeetingRecord) throws {
         try transcriptRepository.saveCaptionDocument(document, for: record)
-        if let transcriptURL = record.transcriptURL {
-            let transcript = TranscriptFormatter.render(document.transcriptDocument.segments)
-            try (transcript + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+    }
+
+    private static func captionDocument(from segments: [TranscriptSegment]) -> CaptionDocument {
+        let turns = segments.map { segment in
+            CaptionTurn(
+                id: segment.id,
+                speakerID: segment.speakerID,
+                speakerLabel: segment.speakerLabel,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                sections: [
+                    CaptionSection(
+                        id: "\(segment.id)-section",
+                        text: segment.text,
+                        utteranceIDs: [segment.id],
+                        startTimeSeconds: segment.startTimeSeconds,
+                        endTimeSeconds: segment.endTimeSeconds
+                    )
+                ],
+                state: segment.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: segment.sourceProvider,
+                    resultIDs: [segment.id],
+                    utteranceIDs: [segment.id]
+                ),
+                language: segment.language,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal,
+                createdAt: segment.createdAt,
+                updatedAt: Date()
+            )
         }
+        return CaptionDocument(turns: turns)
     }
 
     private static func captionDocumentSignature(_ document: TranscriptDocument) -> String {

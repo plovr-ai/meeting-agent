@@ -750,7 +750,7 @@ private struct MeetingCommandCenterView: View {
             } label: {
                 Label("Export Transcript", systemImage: "doc.text")
             }
-            .disabled(isRecording || meeting.transcriptURL == nil)
+            .disabled(isRecording || meeting.transcriptJSONURL == nil)
 
             Button {
                 exportMeetingData()

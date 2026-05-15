@@ -105,6 +105,30 @@ final class SystemSpeechTranscriberTests: XCTestCase {
         XCTAssertEqual(fixture.task.finishCallCount, 1)
     }
 
+    func testStartWithTranscriptUpdateSinkPublishesUpdatesWithoutCreatingWriter() async throws {
+        let fixture = SystemSpeechFixture(status: .authorized)
+        let updateSink = RecordingSystemSpeechUpdateSink()
+        let transcriber = try await SystemSpeechTranscriber.start(
+            transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
+            localeIdentifier: "en-US",
+            environment: fixture.environment(),
+            transcriptUpdateSink: updateSink
+        )
+
+        fixture.recognizer.send(.result(text: "Hello caption", isFinal: true))
+
+        XCTAssertTrue(fixture.writer.replacedSegments.isEmpty)
+        XCTAssertEqual(updateSink.updates.count, 1)
+        guard case .upsert(let segment) = updateSink.updates.first else {
+            return XCTFail("Expected upsert update")
+        }
+        XCTAssertEqual(segment.text, "Hello caption")
+        XCTAssertEqual(segment.sourceProvider, "local")
+        XCTAssertTrue(segment.isFinal)
+
+        transcriber.finish()
+    }
+
     func testAppendConvertsAudioFrameAndForwardsBuffer() async throws {
         let fixture = SystemSpeechFixture(status: .authorized)
         let transcriber = try await SystemSpeechTranscriber.start(
@@ -236,6 +260,14 @@ private final class FakeSystemSpeechWriter: SystemSpeechWriting {
 
     func close() throws {
         closeCallCount += 1
+    }
+}
+
+private final class RecordingSystemSpeechUpdateSink: TranscriptUpdateSink {
+    var updates: [TranscriptSegmentUpdate] = []
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
     }
 }
 
