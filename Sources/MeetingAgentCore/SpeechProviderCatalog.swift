@@ -16,7 +16,8 @@ public enum SpeechProviderCatalog {
     public static let hostedTranscriptionModelOptions: [ModelOption] = [
         ModelOption(id: "google/gemini-2.5-flash", displayName: "Gemini 2.5 Flash"),
         ModelOption(id: "openai/gpt-4o-mini-transcribe", displayName: "GPT-4o Mini Transcribe"),
-        ModelOption(id: "nova-3", displayName: "Deepgram Nova 3")
+        ModelOption(id: "nova-3", displayName: "Deepgram Nova 3"),
+        ModelOption(id: "paraformer-realtime-v2", displayName: "Aliyun Paraformer Realtime v2")
     ]
 
     public static let hostedSummaryModelOptions: [ModelOption] = [
@@ -29,6 +30,7 @@ public enum SpeechProviderCatalog {
         ProviderDescriptor(id: "macos-speech-local", displayName: "macOS Speech", capability: .audioTranscription, executionMode: .local, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: false, requiresAPIKey: false),
         ProviderDescriptor(id: "openrouter-transcribe", displayName: "OpenRouter Transcribe", capability: .audioTranscription, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: true, requiresAPIKey: true),
         ProviderDescriptor(id: "deepgram-transcribe", displayName: "Deepgram Transcribe", capability: .audioTranscription, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: true, requiresAPIKey: true),
-        ProviderDescriptor(id: "openai-realtime-transcribe", displayName: "OpenAI Realtime Transcription", capability: .audioTranscription, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: true, requiresAPIKey: true)
+        ProviderDescriptor(id: "openai-realtime-transcribe", displayName: "OpenAI Realtime Transcription", capability: .audioTranscription, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: true, requiresAPIKey: true),
+        ProviderDescriptor(id: "aliyun-paraformer-realtime-transcribe", displayName: "Aliyun Paraformer Realtime", capability: .audioTranscription, executionMode: .hosted, supportedSourceLocales: ["*"], supportedTargetLocales: [], requiresNetwork: true, requiresAPIKey: true)
     ]
 }

@@ -70,6 +70,7 @@ struct SettingsView: View {
                         Picker("Hosted Transcription Provider", selection: $draft.hostedTranscriptionProviderID) {
                             Text("OpenRouter").tag("openrouter-transcribe")
                             Text("Deepgram").tag("deepgram-transcribe")
+                            Text("Aliyun Paraformer").tag("aliyun-paraformer-realtime-transcribe")
                         }
 
                         if draft.hostedTranscriptionProviderID == "deepgram-transcribe" {
@@ -77,9 +78,13 @@ struct SettingsView: View {
                                 Text("Deepgram Nova 3").tag("nova-3")
                                 Text("Deepgram Nova 2").tag("nova-2")
                             }
+                        } else if draft.hostedTranscriptionProviderID == "aliyun-paraformer-realtime-transcribe" {
+                            Picker("Hosted Transcription Model", selection: $draft.aliyunRealtimeModelID) {
+                                Text("Aliyun Paraformer Realtime v2").tag("paraformer-realtime-v2")
+                            }
                         } else {
                             Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
-                                ForEach(SpeechProviderCatalog.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
+                                ForEach(openRouterTranscriptionModelOptions) { model in
                                     Text(model.displayName).tag(model.id)
                                 }
                             }
@@ -102,6 +107,12 @@ struct SettingsView: View {
                 if usesDeepgram {
                     SettingsCommandCenterPanel("Deepgram") {
                         SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
+                    }
+                }
+
+                if usesAliyunRealtime {
+                    SettingsCommandCenterPanel("Aliyun") {
+                        SecureField("DashScope API Key", text: dashScopeAPIKeyBinding)
                     }
                 }
 
@@ -152,7 +163,12 @@ struct SettingsView: View {
         }
         .onChange(of: draft.transcriptionExecutionMode) { _, mode in
             if mode == .hosted {
-                if draft.hostedTranscriptionProviderID != "deepgram-transcribe" {
+                let hostedProviders = [
+                    "openrouter-transcribe",
+                    "deepgram-transcribe",
+                    "aliyun-paraformer-realtime-transcribe"
+                ]
+                if !hostedProviders.contains(draft.hostedTranscriptionProviderID) {
                     draft.hostedTranscriptionProviderID = "openrouter-transcribe"
                 }
                 ensureHostedTranscriptionModel()
@@ -186,12 +202,29 @@ struct SettingsView: View {
         )
     }
 
+    private var dashScopeAPIKeyBinding: Binding<String> {
+        Binding(
+            get: { draft.dashScopeAPIKey ?? "" },
+            set: { draft.dashScopeAPIKey = SpeechTranscriptionConfiguration.normalized($0) }
+        )
+    }
+
     private var usesOpenRouter: Bool {
         draft.usesOpenRouter
     }
 
     private var usesDeepgram: Bool {
         draft.usesDeepgram
+    }
+
+    private var usesAliyunRealtime: Bool {
+        draft.usesAliyunRealtime
+    }
+
+    private var openRouterTranscriptionModelOptions: [SpeechProviderCatalog.ModelOption] {
+        SpeechProviderCatalog.hostedTranscriptionModelOptions.filter {
+            !["nova-3", "paraformer-realtime-v2"].contains($0.id)
+        }
     }
 
     private var whisperModelPathOptions: [String] {
@@ -219,6 +252,13 @@ struct SettingsView: View {
                 return
             }
             draft.deepgramModelID = SpeechTranscriptionConfiguration.defaultDeepgramModelID
+            return
+        }
+        if draft.hostedTranscriptionProviderID == "aliyun-paraformer-realtime-transcribe" {
+            if draft.aliyunRealtimeModelID == "paraformer-realtime-v2" {
+                return
+            }
+            draft.aliyunRealtimeModelID = SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionModelID
             return
         }
         if SpeechProviderCatalog.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {

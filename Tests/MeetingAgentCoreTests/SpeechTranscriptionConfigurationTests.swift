@@ -444,6 +444,51 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
     }
 
+    func testAliyunRealtimeHostedValidationRequiresDashScopeAPIKey() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            hostedTranscriptionProviderID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID,
+            hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionModelID
+        )
+
+        XCTAssertEqual(
+            configuration.validationStatus(environment: [:]),
+            .unavailable("DashScope API key is not configured")
+        )
+        XCTAssertEqual(
+            configuration.validationStatus(environment: ["DASHSCOPE_API_KEY": "env-key"]),
+            .available
+        )
+    }
+
+    func testConfigurationStorePersistsDashScopeSettings() throws {
+        let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
+        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            hostedTranscriptionProviderID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID,
+            hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionModelID,
+            dashScopeAPIKey: " dashscope-key ",
+            aliyunRealtimeModelID: " paraformer-realtime-v2 "
+        )
+
+        try store.save(configuration)
+        let loaded = try store.load()
+
+        XCTAssertEqual(loaded.dashScopeAPIKey, "dashscope-key")
+        XCTAssertEqual(loaded.aliyunRealtimeModelID, "paraformer-realtime-v2")
+    }
+
     func testHostedValidationUsesSettingsOpenRouterAPIKey() {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,

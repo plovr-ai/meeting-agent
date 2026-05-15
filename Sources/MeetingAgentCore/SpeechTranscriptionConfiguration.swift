@@ -14,6 +14,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let defaultDeepgramModelID = "nova-3"
     public static let defaultOpenAIRealtimeTranscriptionProviderID = "openai-realtime-transcribe"
     public static let defaultOpenAIRealtimeTranscriptionModelID = "gpt-4o-transcribe"
+    public static let defaultAliyunRealtimeTranscriptionProviderID = "aliyun-paraformer-realtime-transcribe"
+    public static let defaultAliyunRealtimeTranscriptionModelID = "paraformer-realtime-v2"
 
     public var provider: SpeechProvider
     public var localeIdentifier: String
@@ -28,6 +30,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var openAIRealtimeAPIKey: String?
     public var deepgramAPIKey: String?
     public var deepgramModelID: String
+    public var dashScopeAPIKey: String?
+    public var aliyunRealtimeModelID: String
 
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
@@ -42,7 +46,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         openRouterAPIKey: nil,
         openAIRealtimeAPIKey: nil,
         deepgramAPIKey: nil,
-        deepgramModelID: defaultDeepgramModelID
+        deepgramModelID: defaultDeepgramModelID,
+        dashScopeAPIKey: nil,
+        aliyunRealtimeModelID: defaultAliyunRealtimeTranscriptionModelID
     )
 
     public init(
@@ -58,7 +64,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         openRouterAPIKey: String? = nil,
         openAIRealtimeAPIKey: String? = nil,
         deepgramAPIKey: String? = nil,
-        deepgramModelID: String = defaultDeepgramModelID
+        deepgramModelID: String = defaultDeepgramModelID,
+        dashScopeAPIKey: String? = nil,
+        aliyunRealtimeModelID: String = defaultAliyunRealtimeTranscriptionModelID
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
@@ -86,6 +94,11 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         self.deepgramAPIKey = Self.normalized(deepgramAPIKey)
         self.deepgramModelID = Self.normalized(deepgramModelID, fallback: Self.defaultDeepgramModelID)
             ?? Self.defaultDeepgramModelID
+        self.dashScopeAPIKey = Self.normalized(dashScopeAPIKey)
+        self.aliyunRealtimeModelID = Self.normalized(
+            aliyunRealtimeModelID,
+            fallback: Self.defaultAliyunRealtimeTranscriptionModelID
+        ) ?? Self.defaultAliyunRealtimeTranscriptionModelID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -104,6 +117,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         case openAIRealtimeAPIKey
         case deepgramAPIKey
         case deepgramModelID
+        case dashScopeAPIKey
+        case aliyunRealtimeModelID
     }
 
     public init(from decoder: Decoder) throws {
@@ -124,7 +139,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             openRouterAPIKey: try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey),
             openAIRealtimeAPIKey: try container.decodeIfPresent(String.self, forKey: .openAIRealtimeAPIKey),
             deepgramAPIKey: try container.decodeIfPresent(String.self, forKey: .deepgramAPIKey),
-            deepgramModelID: try container.decodeIfPresent(String.self, forKey: .deepgramModelID) ?? Self.defaultDeepgramModelID
+            deepgramModelID: try container.decodeIfPresent(String.self, forKey: .deepgramModelID) ?? Self.defaultDeepgramModelID,
+            dashScopeAPIKey: try container.decodeIfPresent(String.self, forKey: .dashScopeAPIKey),
+            aliyunRealtimeModelID: try container.decodeIfPresent(String.self, forKey: .aliyunRealtimeModelID)
+                ?? Self.defaultAliyunRealtimeTranscriptionModelID
         )
     }
 
@@ -143,6 +161,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         try container.encodeIfPresent(openAIRealtimeAPIKey, forKey: .openAIRealtimeAPIKey)
         try container.encodeIfPresent(deepgramAPIKey, forKey: .deepgramAPIKey)
         try container.encode(deepgramModelID, forKey: .deepgramModelID)
+        try container.encodeIfPresent(dashScopeAPIKey, forKey: .dashScopeAPIKey)
+        try container.encode(aliyunRealtimeModelID, forKey: .aliyunRealtimeModelID)
     }
 
     public func validationStatus(
@@ -168,7 +188,20 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
                 return .unavailable("Deepgram model is not configured")
             }
         }
+        if usesAliyunRealtime {
+            guard Self.normalized(dashScopeAPIKey) != nil
+                || Self.normalized(environment["DASHSCOPE_API_KEY"]) != nil
+                || Self.normalized(environment["MEETING_AGENT_DASHSCOPE_API_KEY"]) != nil
+            else {
+                return .unavailable("DashScope API key is not configured")
+            }
+            guard Self.normalized(aliyunRealtimeModelID) != nil else {
+                return .unavailable("Aliyun realtime model is not configured")
+            }
+        }
         if transcriptionExecutionMode == .hosted,
+           !usesDeepgram,
+           !usesAliyunRealtime,
            Self.normalized(hostedTranscriptionModelID) == nil {
             return .unavailable("Hosted transcription model is not configured")
         }
@@ -223,6 +256,11 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             && hostedTranscriptionProviderID == Self.defaultDeepgramTranscriptionProviderID
     }
 
+    public var usesAliyunRealtime: Bool {
+        transcriptionExecutionMode == .hosted
+            && hostedTranscriptionProviderID == Self.defaultAliyunRealtimeTranscriptionProviderID
+    }
+
     public var effectiveTranscriptionProviderID: String {
         transcriptionExecutionMode == .hosted ? hostedTranscriptionProviderID : localTranscriptionProviderID
     }
@@ -274,6 +312,7 @@ public final class SpeechTranscriptionConfigurationStore {
         let defaults = try JSONDecoder.meetingAgent.decode(PackagedSpeechConfigurationDefaults.self, from: data)
         configuration.openRouterAPIKey = defaults.openRouterAPIKey
         configuration.deepgramAPIKey = defaults.deepgramAPIKey
+        configuration.dashScopeAPIKey = defaults.dashScopeAPIKey
         return configuration
     }
 }
@@ -281,6 +320,7 @@ public final class SpeechTranscriptionConfigurationStore {
 private struct PackagedSpeechConfigurationDefaults: Decodable {
     let openRouterAPIKey: String?
     let deepgramAPIKey: String?
+    let dashScopeAPIKey: String?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -290,10 +330,14 @@ private struct PackagedSpeechConfigurationDefaults: Decodable {
         deepgramAPIKey = SpeechTranscriptionConfiguration.normalized(
             try container.decodeIfPresent(String.self, forKey: .deepgramAPIKey)
         )
+        dashScopeAPIKey = SpeechTranscriptionConfiguration.normalized(
+            try container.decodeIfPresent(String.self, forKey: .dashScopeAPIKey)
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
         case openRouterAPIKey
         case deepgramAPIKey
+        case dashScopeAPIKey
     }
 }

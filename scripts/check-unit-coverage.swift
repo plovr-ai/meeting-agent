@@ -10,6 +10,7 @@ private let excludedFiles: Set<String> = [
     "AggregateDeviceManager.swift",
     "AudioIOReader.swift",
     "AudioTapManager.swift",
+    "AliyunRealtimeTranscriptionProvider.swift",
     "DeepgramTranscriptionProvider.swift",
     "OpenAIRealtimeTranscriptionProvider.swift",
     "OpenRouterMeetingSummaryProvider.swift",

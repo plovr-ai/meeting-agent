@@ -493,6 +493,9 @@ private struct MeetingDetailView: View {
         if configuration.usesDeepgram {
             return "Deepgram Transcription"
         }
+        if configuration.usesAliyunRealtime {
+            return "Aliyun Paraformer Realtime"
+        }
         if configuration.transcriptionExecutionMode == .hosted {
             return "Hosted Transcription"
         }
@@ -512,6 +515,9 @@ private struct MeetingDetailView: View {
         }
         if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID {
             return openAIRealtimeTranscriptionModelDisplayName(configuration.hostedTranscriptionModelID)
+        }
+        if configuration.usesAliyunRealtime {
+            return modelDisplayName(configuration.aliyunRealtimeModelID, in: SpeechProviderCatalog.hostedTranscriptionModelOptions)
         }
         if configuration.transcriptionExecutionMode == .hosted {
             return modelDisplayName(

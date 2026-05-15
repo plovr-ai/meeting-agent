@@ -251,7 +251,9 @@ public final class MeetingAgentViewModel: ObservableObject {
             openRouterAPIKey: configuration.openRouterAPIKey,
             openAIRealtimeAPIKey: configuration.openAIRealtimeAPIKey,
             deepgramAPIKey: configuration.deepgramAPIKey,
-            deepgramModelID: configuration.deepgramModelID
+            deepgramModelID: configuration.deepgramModelID,
+            dashScopeAPIKey: configuration.dashScopeAPIKey,
+            aliyunRealtimeModelID: configuration.aliyunRealtimeModelID
         )
         persistSpeechConfiguration()
         statusText = "Settings saved"

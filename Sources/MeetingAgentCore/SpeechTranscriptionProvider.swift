@@ -161,6 +161,14 @@ public enum StreamingSpeechTranscriberFactory {
                 model: configuration.hostedTranscriptionModelID
             ).start(context: context)
         }
+        if configuration.usesAliyunRealtime {
+            return try await AliyunRealtimeTranscriptionProvider(
+                apiKey: configuration.dashScopeAPIKey
+                    ?? ProcessInfo.processInfo.environment["DASHSCOPE_API_KEY"]
+                    ?? ProcessInfo.processInfo.environment["MEETING_AGENT_DASHSCOPE_API_KEY"],
+                model: configuration.aliyunRealtimeModelID
+            ).start(context: context)
+        }
         guard configuration.transcriptionExecutionMode == .local else {
             throw ProbeError.speechRecognition("Hosted transcription provider \(configuration.hostedTranscriptionProviderID) does not support streaming audio")
         }

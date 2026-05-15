@@ -38,6 +38,32 @@ final class PrimaryChainPreflightTests: XCTestCase {
         XCTAssertEqual(result.messages, [])
     }
 
+    func testAliyunRealtimeTranscriptionReportsMissingDashScopeCredentials() {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            transcriptionExecutionMode: .hosted,
+            hostedTranscriptionProviderID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID,
+            hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionModelID
+        )
+
+        let missing = PrimaryChainPreflight.evaluate(
+            configuration: configuration,
+            environment: [:]
+        )
+        let available = PrimaryChainPreflight.evaluate(
+            configuration: configuration,
+            environment: ["DASHSCOPE_API_KEY": "dashscope-key"]
+        )
+
+        XCTAssertEqual(missing.status, .unavailable)
+        XCTAssertEqual(missing.messages, ["DashScope API key is not configured"])
+        XCTAssertEqual(available.status, .available)
+        XCTAssertEqual(available.messages, [])
+    }
+
     func testEnvironmentCredentialsSatisfyPreflight() {
         let result = PrimaryChainPreflight.evaluate(
             configuration: .default,

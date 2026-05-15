@@ -34,6 +34,13 @@ public enum PrimaryChainPreflight {
             messages.append("OpenAI API key is not configured")
         }
 
+        if configuration.usesAliyunRealtime,
+           normalized(configuration.dashScopeAPIKey) == nil,
+           normalized(environment["DASHSCOPE_API_KEY"]) == nil,
+           normalized(environment["MEETING_AGENT_DASHSCOPE_API_KEY"]) == nil {
+            messages.append("DashScope API key is not configured")
+        }
+
         if configuration.usesOpenRouter,
            normalized(configuration.openRouterAPIKey) == nil,
            normalized(environment["MEETING_AGENT_OPENROUTER_API_KEY"]) == nil {
