@@ -143,11 +143,19 @@ final class MeetingStoreTests: XCTestCase {
         let legacyMetadata = try String(contentsOf: created.metadataURL, encoding: .utf8)
             .replacingOccurrences(of: #"  "transcriptionProviderID" : "whisper","#, with: "")
         try legacyMetadata.write(to: created.metadataURL, atomically: true, encoding: .utf8)
-        let transcript = TranscriptDocument(segments: [
-            TranscriptSegment(text: "hello", sourceProvider: "deepgram-transcribe")
-        ])
-        let transcriptData = try JSONEncoder.meetingAgent.encode(transcript)
-        try transcriptData.write(to: XCTUnwrap(created.record.transcriptJSONURL), options: .atomic)
+        try FileTranscriptRepository().saveCaptionDocument(
+            CaptionDocument(
+                turns: [
+                    CaptionTurn(
+                        sections: [CaptionSection(text: "hello")],
+                        state: .final,
+                        source: CaptionTurnSource(providerID: "deepgram-transcribe")
+                    )
+                ],
+                provider: CaptionProviderInfo(id: "deepgram-transcribe")
+            ),
+            for: created.record
+        )
 
         let loaded = try store.loadMeetings()
         let saved = try JSONDecoder.meetingAgent.decode(MeetingRecord.self, from: Data(contentsOf: created.metadataURL))

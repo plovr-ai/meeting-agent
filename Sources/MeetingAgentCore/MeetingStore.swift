@@ -15,9 +15,15 @@ public struct StoredMeeting: Equatable {
 public final class MeetingStore {
     private let baseDirectory: URL
     private let fileManager: FileManager
+    private let transcriptRepository: any TranscriptRepository
 
-    public init(baseDirectory: URL? = nil, fileManager: FileManager = .default) {
+    public init(
+        baseDirectory: URL? = nil,
+        fileManager: FileManager = .default,
+        transcriptRepository: any TranscriptRepository = FileTranscriptRepository()
+    ) {
         self.fileManager = fileManager
+        self.transcriptRepository = transcriptRepository
         if let baseDirectory {
             self.baseDirectory = baseDirectory
         } else {
@@ -119,13 +125,13 @@ public final class MeetingStore {
     }
 
     private func actualTranscriptionProviderID(for record: MeetingRecord) -> String? {
-        guard let transcriptJSONURL = record.transcriptJSONURL,
-              fileManager.fileExists(atPath: transcriptJSONURL.path),
-              let document = try? TranscriptFileWriter.readDocument(from: transcriptJSONURL)
-        else {
+        guard let captionDocument = try? transcriptRepository.loadCaptionDocument(for: record) else {
             return nil
         }
-        let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
+        let providers = Array(Set(
+            [captionDocument.provider?.id].compactMap { $0?.nilIfBlankForMeetingStore }
+                + captionDocument.turns.map(\.source.providerID).compactMap(\.nilIfBlankForMeetingStore)
+        )).sorted()
         return providers.count == 1 ? providers[0] : providers.first
     }
 
@@ -133,5 +139,12 @@ public final class MeetingStore {
         meetingsDirectory
             .appendingPathComponent(id.uuidString, isDirectory: true)
             .appendingPathComponent("metadata.json")
+    }
+}
+
+private extension String {
+    var nilIfBlankForMeetingStore: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

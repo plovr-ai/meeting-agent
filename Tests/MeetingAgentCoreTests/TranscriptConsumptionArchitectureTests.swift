@@ -6,7 +6,8 @@ final class TranscriptConsumptionArchitectureTests: XCTestCase {
         let productFiles = [
             "Sources/MeetingAgentCore/MeetingAgentViewModel.swift",
             "Sources/MeetingAgentCore/MeetingArtifactSnapshot.swift",
-            "Sources/MeetingAgentCore/MeetingExportService.swift"
+            "Sources/MeetingAgentCore/MeetingExportService.swift",
+            "Sources/MeetingAgentCore/MeetingStore.swift"
         ]
 
         for path in productFiles {
