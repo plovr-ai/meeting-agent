@@ -1011,6 +1011,50 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.liveCaptionTurns.first?.sourceSegmentID, "stop-replay")
     }
 
+    func testStopRecordingPersistsLiveCaptionTiming() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 10, displayName: "zoom.us", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [target] }
+        )
+        try await viewModel.startRecording(for: target)
+
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "timed-final",
+            speaker: TranscriptSpeaker(identifier: "speaker-1", label: "Alex"),
+            startTimeSeconds: 12.5,
+            endTimeSeconds: 15.25,
+            text: "We decided to launch on Monday.",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe",
+            isFinal: true,
+            speechFinal: true
+        )))
+        viewModel.drainRecordingFrames()
+        try await waitFor {
+            viewModel.liveCaptionTurns.first?.sourceSegmentID == "timed-final"
+        }
+
+        let record = try XCTUnwrap(viewModel.selectedMeeting)
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        let document = try MeetingTranscriptStore.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        let turn = try XCTUnwrap(document.turns.first)
+        XCTAssertEqual(turn.startTimeSeconds, 12.5)
+        XCTAssertEqual(turn.endTimeSeconds, 15.25)
+        XCTAssertEqual(turn.sections.first?.startTimeSeconds, 12.5)
+        XCTAssertEqual(turn.sections.first?.endTimeSeconds, 15.25)
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.first?.startTimeSeconds, 12.5)
+
+        let srtURL = fixture.root.appendingPathComponent("timed-export.srt")
+        try viewModel.exportSubtitles(for: record.id, format: .srt, to: srtURL)
+        let srt = try String(contentsOf: srtURL, encoding: .utf8)
+        XCTAssertTrue(srt.contains("00:00:12,500 --> 00:00:15,250"))
+    }
+
     func testDraftCaptionInputThrottleLogsCoalescingTelemetry() async throws {
         let fixture = try ViewModelRecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

@@ -51,6 +51,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private var realtimeSpeakerIdentificationRuntime: RealtimeSpeakerIdentificationRuntime?
     private var speakerIdentityMap: [String: SpeakerIdentityResolution] = [:]
     private var activeCaptionDocumentSignature: String?
+    private var activeTranscriptDocument: TranscriptDocument?
     private var selectedMeetingReplaySignature: SelectedMeetingReplaySignature?
     private var selectedMeetingReplayFileSignature: SelectedMeetingTranscriptFileSignature?
     private var recentlyStoppedLiveMeetingID: UUID?
@@ -1238,6 +1239,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         liveCaptionReplayTask = nil
         liveCaptionReplaySequence += 1
         activeCaptionDocumentSignature = nil
+        activeTranscriptDocument = nil
         selectedMeetingReplaySignature = nil
         selectedMeetingReplayFileSignature = nil
         resetDraftCaptionInputThrottleState(reason: "pipeline_reset")
@@ -1585,6 +1587,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             realtimeCaptionSessionUsesCaptionTranslationProvider = true
         }
         activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
+        activeTranscriptDocument = latest.document
         var latestSnapshot: LiveCaptionPipelineSnapshot?
         for result in results {
             guard isCurrentActiveCaptionApply(context) else { return }
@@ -1901,6 +1904,10 @@ public final class MeetingAgentViewModel: ObservableObject {
         let providerID = record.transcriptionProviderID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? speechConfiguration.provider.rawValue
             : record.transcriptionProviderID
+        var sourceSegmentsByID: [String: TranscriptSegment] = [:]
+        for segment in activeTranscriptDocument?.segments ?? [] {
+            sourceSegmentsByID[segment.id] = segment
+        }
         let speakers = Dictionary(grouping: turns, by: { $0.speaker.identifier ?? $0.speaker.label ?? "unknown" })
             .map { key, turns in
                 CaptionSpeaker(
@@ -1911,15 +1918,20 @@ public final class MeetingAgentViewModel: ObservableObject {
             }
             .sorted { $0.id < $1.id }
         let captionTurns = turns.map { turn in
-            CaptionTurn(
+            let timing = timing(for: turn.sourceSegmentIDs, sourceSegmentsByID: sourceSegmentsByID)
+            return CaptionTurn(
                 id: turn.id,
                 speakerID: turn.speaker.identifier,
                 speakerLabel: turn.speaker.label,
+                startTimeSeconds: timing.start,
+                endTimeSeconds: timing.end,
                 sections: [
                     CaptionSection(
                         id: "\(turn.id)-section",
                         text: turn.originalText,
-                        utteranceIDs: turn.sourceSegmentIDs
+                        utteranceIDs: turn.sourceSegmentIDs,
+                        startTimeSeconds: timing.start,
+                        endTimeSeconds: timing.end
                     )
                 ],
                 state: turn.isFinal ? .final : .draft,
@@ -1940,6 +1952,32 @@ public final class MeetingAgentViewModel: ObservableObject {
                 locale: speechConfiguration.localeIdentifier
             )
         )
+    }
+
+    private func timing(
+        for sourceSegmentIDs: [String],
+        sourceSegmentsByID: [String: TranscriptSegment]
+    ) -> (start: Double?, end: Double?) {
+        var start: Double?
+        var end: Double?
+        for sourceSegmentID in sourceSegmentIDs {
+            guard let segment = sourceSegmentsByID[sourceSegmentID] else { continue }
+            if let segmentStart = segment.startTimeSeconds {
+                if let currentStart = start {
+                    start = min(currentStart, segmentStart)
+                } else {
+                    start = segmentStart
+                }
+            }
+            if let segmentEnd = segment.endTimeSeconds {
+                if let currentEnd = end {
+                    end = max(currentEnd, segmentEnd)
+                } else {
+                    end = segmentEnd
+                }
+            }
+        }
+        return (start, end)
     }
 
     private func startRealtimeSpeakerIdentificationRuntime() {
