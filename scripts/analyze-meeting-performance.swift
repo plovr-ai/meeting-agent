@@ -8,6 +8,27 @@ struct PerformanceEvent: Decodable {
     var segmentID: String?
     var isFinal: Bool?
     var metadata: [String: String]?
+
+    enum CodingKeys: String, CodingKey {
+        case event
+        case wallTime
+        case audioTime
+        case audioTimeSeconds
+        case segmentID
+        case isFinal
+        case metadata
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        event = try container.decode(String.self, forKey: .event)
+        wallTime = try container.decodeIfPresent(String.self, forKey: .wallTime).flatMap(parseISO8601Date)
+        audioTime = try container.decodeIfPresent(Double.self, forKey: .audioTime)
+            ?? container.decodeIfPresent(Double.self, forKey: .audioTimeSeconds)
+        segmentID = try container.decodeIfPresent(String.self, forKey: .segmentID)
+        isFinal = try container.decodeIfPresent(Bool.self, forKey: .isFinal)
+        metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata)
+    }
 }
 
 struct Stats {
@@ -37,8 +58,19 @@ if inputURL.pathExtension == "jsonl" {
     eventsURL = inputURL.appendingPathComponent("performance-events.jsonl")
 }
 
+let fractionalSecondsDateFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+let wholeSecondsDateFormatter = ISO8601DateFormatter()
+
+func parseISO8601Date(_ value: String) -> Date? {
+    fractionalSecondsDateFormatter.date(from: value) ?? wholeSecondsDateFormatter.date(from: value)
+}
+
 let decoder = JSONDecoder()
-decoder.dateDecodingStrategy = .iso8601
 
 let events: [PerformanceEvent]
 do {
