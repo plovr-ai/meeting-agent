@@ -2110,6 +2110,61 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Transcript corrected; summary needs regeneration")
     }
 
+    func testUpdateTranscriptSegmentTextPreservesUnrelatedCaptionSections() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(name: "Google Meet", startedAt: Date(timeIntervalSince1970: 100))
+        try FileTranscriptRepository().saveCaptionDocument(CaptionDocument(turns: [
+            CaptionTurn(
+                id: "turn-1",
+                speakerID: "speaker-1",
+                speakerLabel: "User A",
+                startTimeSeconds: 1,
+                endTimeSeconds: 6,
+                sections: [
+                    CaptionSection(
+                        id: "section-1",
+                        text: "First section should stay",
+                        utteranceIDs: ["utt-1"],
+                        startTimeSeconds: 1,
+                        endTimeSeconds: 3
+                    ),
+                    CaptionSection(
+                        id: "section-2",
+                        text: "Second section before edit",
+                        utteranceIDs: ["utt-2"],
+                        startTimeSeconds: 4,
+                        endTimeSeconds: 6
+                    )
+                ],
+                state: .final,
+                source: CaptionTurnSource(providerID: "test", utteranceIDs: ["utt-1", "utt-2"])
+            )
+        ]), for: stored.record)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+        viewModel.selectMeeting(stored.record.id)
+        viewModel.drainRecordingFrames()
+
+        try await viewModel.updateTranscriptSegmentText(
+            for: stored.record.id,
+            segmentID: "utt-2",
+            text: "Corrected second section"
+        )
+
+        let captionDocument = try FileTranscriptRepository().loadCaptionDocument(for: stored.record)
+        XCTAssertEqual(captionDocument.turns.first?.sections.map(\.text), [
+            "First section should stay",
+            "Corrected second section"
+        ])
+        XCTAssertEqual(
+            try String(contentsOf: XCTUnwrap(stored.record.transcriptURL), encoding: .utf8),
+            "User A:\nFirst section should stay\nCorrected second section\n"
+        )
+        XCTAssertEqual(viewModel.liveCaptionTurns.first?.originalText, "First section should stay\nCorrected second section")
+    }
+
     func testExportHelpersWriteSummaryDataAndReadinessReports() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

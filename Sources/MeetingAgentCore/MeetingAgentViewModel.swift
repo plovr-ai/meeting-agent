@@ -1471,33 +1471,38 @@ public final class MeetingAgentViewModel: ObservableObject {
         var document = try transcriptRepository.loadCaptionDocument(for: record)
         var didUpdateSegment = false
         document.turns = document.turns.map { turn in
-            guard turn.id == normalizedSegmentID || turn.source.utteranceIDs.contains(normalizedSegmentID) else {
+            var updatedTurn = turn
+            var didUpdateSection = false
+            updatedTurn.sections = updatedTurn.sections.map { section in
+                guard section.utteranceIDs.contains(normalizedSegmentID) else {
+                    return section
+                }
+                didUpdateSection = true
+                var updatedSection = section
+                updatedSection.text = normalizedText
+                return updatedSection
+            }
+
+            if didUpdateSection {
+                didUpdateSegment = true
+                updatedTurn.updatedAt = Date()
+                return updatedTurn
+            }
+
+            guard turn.id == normalizedSegmentID else {
                 return turn
             }
+
             didUpdateSegment = true
-            var updatedTurn = turn
-            if updatedTurn.sections.isEmpty {
-                updatedTurn.sections = [
-                    CaptionSection(
-                        id: "\(turn.id)-section",
-                        text: normalizedText,
-                        utteranceIDs: turn.source.utteranceIDs,
-                        startTimeSeconds: turn.startTimeSeconds,
-                        endTimeSeconds: turn.endTimeSeconds
-                    )
-                ]
-            } else {
-                updatedTurn.sections = updatedTurn.sections.enumerated().map { index, section in
-                    guard index == 0 else {
-                        var clearedSection = section
-                        clearedSection.text = ""
-                        return clearedSection
-                    }
-                    var updatedSection = section
-                    updatedSection.text = normalizedText
-                    return updatedSection
-                }
-            }
+            updatedTurn.sections = [
+                CaptionSection(
+                    id: turn.sections.first?.id ?? "\(turn.id)-section",
+                    text: normalizedText,
+                    utteranceIDs: turn.source.utteranceIDs,
+                    startTimeSeconds: turn.startTimeSeconds,
+                    endTimeSeconds: turn.endTimeSeconds
+                )
+            ]
             updatedTurn.updatedAt = Date()
             return updatedTurn
         }
