@@ -31,7 +31,9 @@ private struct StubSpeechTranscriptionProvider: SpeechTranscriptionProvider {
         throw ProbeError.speechRecognition("not used")
     }
 
-    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
-        try "hello from whisper\n".write(to: context.transcriptURL, atomically: true, encoding: .utf8)
+    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws -> TranscriptDocument {
+        TranscriptDocument(segments: [
+            TranscriptSegment(text: "hello from whisper", language: context.localeIdentifier, sourceProvider: "whisper")
+        ])
     }
 }

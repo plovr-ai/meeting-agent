@@ -248,11 +248,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(updatedSegment.id, "dg-1")
         XCTAssertEqual(updatedSegment.text, "hello live")
         XCTAssertEqual(updatedSegment.sourceProvider, "deepgram-transcribe")
-        let document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.first?.text, "hello live")
-        XCTAssertEqual(document.segments.first?.sourceProvider, "deepgram-transcribe")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.deletingPathExtension().appendingPathExtension("json").path))
         let eventNames = try performanceEventNames(at: performanceURL)
         XCTAssertTrue(eventNames.contains("stt_segment_received"))
         XCTAssertTrue(eventNames.contains("transcript_segment_written"))
@@ -479,10 +476,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         """)
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        var document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments, [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.deletingPathExtension().appendingPathExtension("json").path))
         XCTAssertEqual(updateSink.realtimeTexts, ["hello"])
         XCTAssertEqual(updateSink.finalTexts, [])
 
@@ -500,12 +495,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.map(\.id), ["deepgram-transcribe-stream-active-0"])
-        XCTAssertEqual(document.segments.map(\.text), ["hello world"])
-        XCTAssertEqual(document.segments.map(\.isFinal), [true])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.deletingPathExtension().appendingPathExtension("json").path))
         XCTAssertEqual(updateSink.realtimeTexts, ["hello", "hello world"])
         XCTAssertEqual(updateSink.finalTexts, ["hello world"])
     }
@@ -520,6 +511,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         }
         let session = FakeDeepgramStreamingSession()
         let client = FakeDeepgramStreamingClient(session: session)
+        let updateSink = RecordingTranscriptUpdateSinkForTests()
         let provider = DeepgramStreamingSpeechTranscriptionProvider(
             configuration: DeepgramTranscriptionConfiguration(apiKey: "key", model: "nova-3"),
             client: client
@@ -528,7 +520,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
             transcriptURL: transcriptURL,
             localeIdentifier: "en-US",
             sampleRate: 48_000,
-            channelCount: 1
+            channelCount: 1,
+            transcriptUpdateSink: updateSink
         ))
 
         session.yieldJSON("""
@@ -555,11 +548,8 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         }
         """)
         try await Task.sleep(nanoseconds: 30_000_000)
-        var document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.map(\.text), ["my credit card number is two two"])
-        XCTAssertEqual(document.segments.map(\.speechFinal), [false])
+        XCTAssertEqual(updateSink.finalTexts, ["my credit card number is two two"])
+        XCTAssertEqual(updateSink.finalSegments.map(\.speechFinal), [false])
 
         session.yieldJSON("""
         {
@@ -585,22 +575,19 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        document = try TranscriptFileWriter.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.map(\.text), [
+        XCTAssertEqual(updateSink.finalSegments.map(\.text), [
             "my credit card number is two two",
             "two three three three."
         ])
-        XCTAssertEqual(document.segments.map(\.id), [
+        XCTAssertEqual(updateSink.finalSegments.map(\.id), [
             "deepgram-transcribe-stream-0.0",
             "deepgram-transcribe-stream-1.8"
         ])
-        XCTAssertEqual(document.segments.map(\.speakerID), [
+        XCTAssertEqual(updateSink.finalSegments.map(\.speakerID), [
             "deepgram-speaker-0",
             "deepgram-speaker-0"
         ])
-        XCTAssertEqual(document.segments.map(\.speechFinal), [false, true])
+        XCTAssertEqual(updateSink.finalSegments.map(\.speechFinal), [false, true])
     }
 
     func testStreamingProviderFlushesBufferedFinalSegmentsWithoutWordTimingsOnFinish() async throws {
@@ -648,7 +635,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        let document = try TranscriptFileWriter.readDocument(
+        let document = try LegacyTranscriptBridge.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.text), ["first final", "second final"])
@@ -783,7 +770,7 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        let document = try TranscriptFileWriter.readDocument(
+        let document = try LegacyTranscriptBridge.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.speakerID), ["deepgram-speaker-0", "deepgram-speaker-1"])
@@ -1014,6 +1001,10 @@ private final class RecordingTranscriptUpdateSinkForTests: TranscriptUpdateSink 
         finalUpdates.compactMap(Self.text)
     }
 
+    var finalSegments: [TranscriptSegment] {
+        finalUpdates.compactMap(Self.segment)
+    }
+
     func receive(_ update: TranscriptSegmentUpdate) {
         updates.append(update)
     }
@@ -1031,6 +1022,13 @@ private final class RecordingTranscriptUpdateSinkForTests: TranscriptUpdateSink 
     private static func text(from update: TranscriptSegmentUpdate) -> String? {
         if case .upsert(let segment) = update {
             return segment.text
+        }
+        return nil
+    }
+
+    private static func segment(from update: TranscriptSegmentUpdate) -> TranscriptSegment? {
+        if case .upsert(let segment) = update {
+            return segment
         }
         return nil
     }

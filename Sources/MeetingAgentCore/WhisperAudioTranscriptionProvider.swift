@@ -38,18 +38,28 @@ public struct WhisperAudioTranscriptionProvider: AudioTranscriptionProvider {
             meetingID: nil,
             previousTranscript: nil
         )
-        try await speechProvider.transcribeExistingAudio(context: context)
-        let rawText = try String(contentsOf: transcriptURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawText.isEmpty else {
-            return TranscriptDocument(segments: [])
-        }
-        return TranscriptDocument(segments: [
-            TranscriptSegment(
-                text: rawText,
-                language: options.sourceLocale,
-                sourceProvider: descriptor.id
-            )
-        ])
+        let document = try await speechProvider.transcribeExistingAudio(context: context)
+        return TranscriptDocument(
+            version: document.version,
+            segments: document.segments.map { segment in
+                TranscriptSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    startTimeSeconds: segment.startTimeSeconds,
+                    endTimeSeconds: segment.endTimeSeconds,
+                    text: segment.text,
+                    language: segment.language ?? options.sourceLocale,
+                    sourceProvider: descriptor.id,
+                    isFinal: segment.isFinal,
+                    speechFinal: segment.speechFinal,
+                    confidence: segment.confidence,
+                    createdAt: segment.createdAt,
+                    timingSource: segment.timingSource,
+                    translatedText: segment.translatedText,
+                    translationTargetLocale: segment.translationTargetLocale,
+                    translationIsFinal: segment.translationIsFinal
+                )
+            }
+        )
     }
 }

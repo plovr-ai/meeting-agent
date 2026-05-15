@@ -396,7 +396,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         )
         let runner = OutputWritingWhisperProcessRunner(outputText: "retry transcript\n")
 
-        try await WhisperSpeechTranscriptionProvider(
+        let document = try await WhisperSpeechTranscriptionProvider(
             configuration: configuration,
             processRunner: runner
         )
@@ -410,8 +410,8 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nretry transcript\n")
-        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.deletingPathExtension().appendingPathExtension("json").path))
         XCTAssertEqual(document.segments.count, 1)
         XCTAssertEqual(document.segments.first?.id, "whisper-retry-0")
         XCTAssertEqual(document.segments.first?.speakerID, "speaker-1")
@@ -438,7 +438,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         )
         let runner = OutputWritingWhisperProcessRunner(outputText: "english transcript\n")
 
-        try await WhisperSpeechTranscriptionProvider(
+        let document = try await WhisperSpeechTranscriptionProvider(
             configuration: configuration,
             processRunner: runner
         )
@@ -453,7 +453,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         )
 
         XCTAssertEqual(runner.languageCode, "en")
-        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
         XCTAssertEqual(document.segments.first?.language, "zh-CN")
     }
 
@@ -479,17 +479,12 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
         transcriber.finish()
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello from whisper\n")
-        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
-        XCTAssertEqual(document.segments.count, 1)
-        XCTAssertEqual(document.segments.first?.id, "whisper-0-0")
-        XCTAssertEqual(document.segments.first?.speakerID, "speaker-1")
-        XCTAssertEqual(document.segments.first?.speakerLabel, "User A")
-        XCTAssertEqual(document.segments.first?.startTimeSeconds, 0)
-        XCTAssertEqual(document.segments.first?.endTimeSeconds, 0.000125)
-        XCTAssertEqual(document.segments.first?.language, "en-US")
-        XCTAssertEqual(document.segments.first?.sourceProvider, "whisper")
-        XCTAssertEqual(document.segments.first?.timingSource, .approximate)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        let document = try MeetingTranscriptStore.readDocument(
+            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        )
+        XCTAssertEqual(document.turns.map(\.text), ["hello from whisper"])
+        XCTAssertEqual(document.turns.first?.source.providerID, "whisper")
         XCTAssertEqual(runner.languageCode, "en")
         XCTAssertNotNil(runner.inputWavURL)
     }
@@ -517,8 +512,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
 
         XCTAssertEqual(runner.languageCode, "en")
-        let document = try TranscriptFileWriter.readDocument(from: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
-        XCTAssertEqual(document.segments.first?.language, "zh-CN")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
     }
 
     func testTranscriberRunsWhisperBeforeFinishWhenChunkThresholdIsReached() throws {
@@ -544,7 +538,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
 
         XCTAssertEqual(runner.runCount, 1)
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nfirst chunk\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
     }
 
     func testTranscriberFiltersBlankAudioMarker() throws {
@@ -570,7 +564,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 1))
         try transcriber.append(AudioFrame(pcm: Data([0x00, 0x00]), sampleRate: 1_000, channelCount: 1, timestampNanos: 2))
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
     }
 
     func testTranscriberWritesFailureReasonWhenRunnerFails() throws {
@@ -595,7 +589,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
         try transcriber.append(AudioFrame(pcm: Data([0x01, 0x00, 0x02, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1))
         transcriber.finish()
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: process failed\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
         XCTAssertEqual(transcriber.failureReason, "Whisper transcription unavailable: process failed")
     }
 
@@ -620,7 +614,7 @@ final class WhisperTranscriptionProviderTests: XCTestCase {
 
         transcriber.finish()
 
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "Whisper transcription unavailable: no audio frames were captured\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
         XCTAssertEqual(transcriber.failureReason, "Whisper transcription unavailable: no audio frames were captured")
         XCTAssertNil(runner.inputWavURL)
     }

@@ -286,19 +286,19 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         )
     }
 
-    func testFileBackedTranscriptUpdateSinkPersistsUpdates() throws {
+    func testLegacyTranscriptUpdateFileSinkPersistsUpdates() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-sink-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let transcriptURL = directory.appendingPathComponent("transcript.txt")
-        let sink = try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL)
+        let sink = try LegacyTranscriptUpdateFileSink(transcriptURL: transcriptURL)
 
         sink.receive(.replaceAll([
             TranscriptSegment(id: "segment-1", text: "hello", language: "en-US", isFinal: true)
         ]))
         try sink.persist(.upsert(TranscriptSegment(id: "segment-2", text: "world", language: "en-US", isFinal: true)))
 
-        let document = try TranscriptFileWriter.readDocument(
+        let document = try LegacyTranscriptBridge.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.id), ["segment-1", "segment-2"])

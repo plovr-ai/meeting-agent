@@ -93,7 +93,7 @@ public protocol SpeechTranscriptionProvider {
     var provider: SpeechProvider { get }
     func start(transcriptURL: URL, localeIdentifier: String) async throws -> AudioFrameTranscriber
     func start(context: SpeechTranscriptionStreamContext) async throws -> AudioFrameTranscriber
-    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws
+    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws -> TranscriptDocument
 }
 
 public extension SpeechTranscriptionProvider {
@@ -104,7 +104,7 @@ public extension SpeechTranscriptionProvider {
         )
     }
 
-    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
+    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws -> TranscriptDocument {
         throw ProbeError.speechRecognition("\(provider.rawValue) does not support retrying from an existing audio file")
     }
 }

@@ -10,7 +10,7 @@ final class TranscriptConsumptionArchitectureTests: XCTestCase {
 
         for path in productFiles {
             let source = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-            XCTAssertFalse(source.contains("TranscriptFileWriter.readDocument"), path)
+            XCTAssertFalse(source.contains("LegacyTranscriptBridge.readDocument"), path)
             XCTAssertFalse(source.contains("MeetingSummaryWriter.read"), path)
             XCTAssertFalse(source.contains("FileTranscriptRepository()"), path)
             XCTAssertFalse(source.contains("FileSummaryRepository()"), path)
@@ -22,7 +22,7 @@ final class TranscriptConsumptionArchitectureTests: XCTestCase {
             contentsOf: root.appendingPathComponent("Sources/MeetingAgentCore/MeetingExportService.swift"),
             encoding: .utf8
         )
-        XCTAssertFalse(exportSource.contains("TranscriptFileWriter.readDocument(from:"), "MeetingExportService.swift")
+        XCTAssertFalse(exportSource.contains("LegacyTranscriptBridge.readDocument(from:"), "MeetingExportService.swift")
         XCTAssertFalse(exportSource.contains("TranscriptRepository"), "MeetingExportService.swift")
         XCTAssertFalse(exportSource.contains("SummaryRepository"), "MeetingExportService.swift")
 
@@ -69,9 +69,40 @@ final class TranscriptConsumptionArchitectureTests: XCTestCase {
 
         for path in realtimeFiles {
             let source = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-            XCTAssertFalse(source.contains("TranscriptFileWriter"), path)
-            XCTAssertFalse(source.contains("FileBackedTranscriptUpdateSink"), path)
+            XCTAssertFalse(source.contains("LegacyTranscriptBridge"), path)
+            XCTAssertFalse(source.contains("LegacyTranscriptUpdateFileSink"), path)
             XCTAssertFalse(source.contains("transcript.txt"), path)
+        }
+    }
+
+    func testSourceGrepKeepsLegacyTranscriptWriterArchitectureOutOfProviderPaths() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let sourceRoot = root.appendingPathComponent("Sources", isDirectory: true)
+        let forbiddenTerms = [
+            "TranscriptFileWriter",
+            "FileBackedTranscriptUpdateSink",
+            "provider-transcript.legacy"
+        ]
+        let allowedTranscriptTextFiles: Set<String> = [
+            "Sources/MeetingAgentApp/MainWindowView.swift",
+            "Sources/MeetingAgentCore/BilingualTranscriptStore.swift"
+        ]
+
+        let enumerator = FileManager.default.enumerator(
+            at: sourceRoot,
+            includingPropertiesForKeys: nil
+        )
+        while let fileURL = enumerator?.nextObject() as? URL {
+            guard fileURL.pathExtension == "swift" else { continue }
+            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
+            let source = try String(contentsOf: fileURL, encoding: .utf8)
+            for term in forbiddenTerms {
+                XCTAssertFalse(source.contains(term), "\(relativePath) contains \(term)")
+            }
+            if !allowedTranscriptTextFiles.contains(relativePath) {
+                XCTAssertFalse(source.contains("transcript.txt"), "\(relativePath) contains transcript.txt")
+            }
+            XCTAssertFalse(source.contains("renderedTranscript"), "\(relativePath) contains renderedTranscript")
         }
     }
 }

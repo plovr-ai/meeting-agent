@@ -38,14 +38,17 @@ final class SystemSpeechTranscriberTests: XCTestCase {
         XCTAssertNil(recognizer.recognitionTask(request: FakeSystemSpeechRequest(), onUpdate: { _ in }))
 
         let transcriptURL = FileManager.default.temporaryDirectory.appendingPathComponent("live-writer-\(UUID().uuidString).txt")
+        let transcriptJSONURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
         defer {
             try? FileManager.default.removeItem(at: transcriptURL)
-            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
+            try? FileManager.default.removeItem(at: transcriptJSONURL)
         }
         let writer = try environment.writerFactory(transcriptURL)
         try writer.replace(with: [TranscriptSegment(id: "segment-1", text: "hello")])
         try writer.close()
-        XCTAssertTrue(FileManager.default.fileExists(atPath: transcriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptURL.path))
+        let document = try MeetingTranscriptStore.readDocument(from: transcriptJSONURL)
+        XCTAssertEqual(document.turns.map(\.text), ["hello"])
     }
 
     func testStartRejectsDeniedAuthorizationBeforeCreatingRecognizer() async {

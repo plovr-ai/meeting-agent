@@ -100,7 +100,7 @@ struct SystemSpeechEnvironment {
         authorizer: LiveSystemSpeechAuthorizer(),
         recognizerFactory: { LiveSystemSpeechRecognizer(locale: $0) },
         requestFactory: { LiveSystemSpeechRequest() },
-        writerFactory: { try TranscriptFileWriter(url: $0) }
+        writerFactory: { CaptionDocumentSystemSpeechWriter(transcriptURL: $0) }
     )
 }
 
@@ -159,8 +159,6 @@ final class LiveSystemSpeechRequest: SystemSpeechRequesting {
 }
 
 extension SFSpeechRecognitionTask: SystemSpeechTasking {}
-extension TranscriptFileWriter: SystemSpeechWriting {}
-
 final class SystemSpeechTranscriber: AudioFrameTranscriber {
     private let request: SystemSpeechRequesting
     private let writer: SystemSpeechWriting
@@ -241,6 +239,20 @@ private final class SystemSpeechUpdateSinkWriter: SystemSpeechWriting {
         for segment in segments {
             sink.receive(.upsert(segment))
         }
+    }
+
+    func close() throws {}
+}
+
+private final class CaptionDocumentSystemSpeechWriter: SystemSpeechWriting {
+    private let sink: CaptionDocumentTranscriptUpdateSink
+
+    init(transcriptURL: URL) {
+        self.sink = CaptionDocumentTranscriptUpdateSink(transcriptURL: transcriptURL)
+    }
+
+    func replace(with segments: [TranscriptSegment]) throws {
+        try sink.persist(.replaceAll(segments))
     }
 
     func close() throws {}

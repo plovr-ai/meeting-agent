@@ -443,14 +443,13 @@ struct WhisperSpeechTranscriptionProvider: SpeechTranscriptionProvider {
         )
     }
 
-    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws {
+    func transcribeExistingAudio(context: SpeechTranscriptionContext) async throws -> TranscriptDocument {
         guard let inputAudioURL = context.inputAudioURL else {
             throw ProbeError.speechRecognition("Whisper transcription unavailable: no audio file is available for retry")
         }
         let configuration = try configuration ?? WhisperConfiguration.fromEnvironment()
-        try WhisperFileTranscriber.transcribe(
+        return try WhisperFileTranscriber.transcribe(
             inputAudioURL: inputAudioURL,
-            transcriptURL: context.transcriptURL,
             localeIdentifier: context.localeIdentifier,
             configuration: configuration,
             processRunner: processRunner
@@ -461,12 +460,11 @@ struct WhisperSpeechTranscriptionProvider: SpeechTranscriptionProvider {
 enum WhisperFileTranscriber {
     static func transcribe(
         inputAudioURL: URL,
-        transcriptURL: URL,
         localeIdentifier: String,
         configuration: WhisperConfiguration,
         processRunner: WhisperProcessRunning,
         workingDirectory: URL = FileManager.default.temporaryDirectory
-    ) throws {
+    ) throws -> TranscriptDocument {
         let temporaryDirectory = workingDirectory.appendingPathComponent("meeting-agent-whisper-retry-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
@@ -495,7 +493,7 @@ enum WhisperFileTranscriber {
                 timingSource: .unavailable
             )
         }
-        try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(segments))
+        return TranscriptDocument(segments: TranscriptSpeakerLabeler.assignSpeakerLabels(to: segments))
     }
 
     private static func normalizedTranscriptLines(_ text: String) -> [String] {
@@ -596,7 +594,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             if let transcriptUpdateSink {
                 transcriptUpdateSink.receive(.replaceWithPlainText(message))
             } else {
-                try? FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceWithPlainText(message))
+                try? CaptionDocumentTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceWithPlainText(message))
             }
         }
 
@@ -669,7 +667,7 @@ final class WhisperCLITranscriber: AudioFrameTranscriber {
             if let transcriptUpdateSink {
                 transcriptUpdateSink.receive(.replaceAll(transcriptSegments))
             } else {
-                try FileBackedTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(transcriptSegments))
+                try CaptionDocumentTranscriptUpdateSink(transcriptURL: transcriptURL).persist(.replaceAll(transcriptSegments))
             }
         }
 

@@ -685,15 +685,15 @@ public struct TranscriptSegmentAccumulator {
     }
 }
 
-public final class FileBackedTranscriptUpdateSink: TranscriptUpdateSink {
-    private let writer: TranscriptFileWriter
+public final class LegacyTranscriptUpdateFileSink: TranscriptUpdateSink {
+    private let writer: LegacyTranscriptBridge
     private var accumulator: TranscriptSegmentAccumulator
 
     public init(
         transcriptURL: URL,
         initialDocument: TranscriptDocument = TranscriptDocument()
     ) throws {
-        self.writer = try TranscriptFileWriter(url: transcriptURL)
+        self.writer = try LegacyTranscriptBridge(url: transcriptURL)
         self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
     }
 
@@ -708,5 +708,79 @@ public final class FileBackedTranscriptUpdateSink: TranscriptUpdateSink {
         } else {
             try writer.replace(with: result.document.segments)
         }
+    }
+}
+
+public final class CaptionDocumentTranscriptUpdateSink: TranscriptUpdateSink {
+    private let transcriptJSONURL: URL
+    private var accumulator: TranscriptSegmentAccumulator
+
+    public init(
+        transcriptURL: URL,
+        initialDocument: TranscriptDocument = TranscriptDocument()
+    ) {
+        if transcriptURL.pathExtension == "json" {
+            self.transcriptJSONURL = transcriptURL
+        } else {
+            self.transcriptJSONURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
+        }
+        self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
+    }
+
+    public func receive(_ update: TranscriptSegmentUpdate) {
+        try? persist(update)
+    }
+
+    public func persist(_ update: TranscriptSegmentUpdate) throws {
+        let result = accumulator.apply(update)
+        let document: CaptionDocument
+        if let text = result.plainTextReplacement {
+            let segment = TranscriptSegment(
+                id: "transcription-status",
+                text: text,
+                isFinal: true,
+                timingSource: .unavailable
+            )
+            document = Self.captionDocument(from: [segment])
+        } else {
+            document = Self.captionDocument(from: result.document.segments)
+        }
+        let data = try JSONEncoder.meetingAgent.encode(document)
+        try data.write(to: transcriptJSONURL, options: .atomic)
+    }
+
+    private static func captionDocument(from segments: [TranscriptSegment]) -> CaptionDocument {
+        var turns: [CaptionTurn] = []
+        for segment in segments {
+            turns.append(CaptionTurn(
+                id: segment.id,
+                speakerID: segment.speakerID,
+                speakerLabel: segment.speakerLabel,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                sections: [
+                    CaptionSection(
+                        id: "\(segment.id)-section",
+                        text: segment.text,
+                        utteranceIDs: [segment.id],
+                        startTimeSeconds: segment.startTimeSeconds,
+                        endTimeSeconds: segment.endTimeSeconds
+                    )
+                ],
+                state: segment.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: segment.sourceProvider,
+                    resultIDs: [segment.id],
+                    utteranceIDs: [segment.id]
+                ),
+                language: segment.language,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal,
+                createdAt: segment.createdAt,
+                updatedAt: Date()
+            ))
+        }
+        return CaptionDocument(turns: turns)
     }
 }
