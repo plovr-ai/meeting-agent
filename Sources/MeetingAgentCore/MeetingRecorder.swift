@@ -283,9 +283,6 @@ public final class MeetingRecorder {
         }
 
         if let transcriptJSONURL = updatedRecord.transcriptJSONURL {
-            let providerTranscriptURL = transcriptJSONURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("provider-transcript.legacy")
             do {
                 let updateSink = try RecordingTranscriptUpdateSink(
                     transcriptJSONURL: transcriptJSONURL,
@@ -297,7 +294,7 @@ public final class MeetingRecorder {
                 transcriptUpdateSink = updateSink
                 let startedTranscriber = try await transcriberFactory(
                     effectiveConfiguration,
-                    providerTranscriptURL,
+                    transcriptJSONURL,
                     session.outputSampleRate,
                     session.outputChannelCount,
                     performanceEventLogger,

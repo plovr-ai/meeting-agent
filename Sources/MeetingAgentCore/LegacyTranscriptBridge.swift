@@ -1,6 +1,6 @@
 import Foundation
 
-public final class TranscriptFileWriter {
+public final class LegacyTranscriptBridge {
     private let url: URL
     private let structuredURL: URL
     private var isClosed = false
@@ -63,7 +63,7 @@ public final class TranscriptFileWriter {
         }
     }
 
-    public static func renderedTranscript(
+    public static func renderedLegacyTranscript(
         textURL: URL?,
         structuredURL: URL?
     ) -> String? {
@@ -233,12 +233,15 @@ public final class TranscriptFileWriter {
     }
 
     private func replaceWithLabeledSegments(_ segments: [TranscriptSegment]) throws -> [TranscriptSegment] {
-        let labeledSegments = Self.assignSpeakerLabels(to: segments)
+        let labeledSegments = TranscriptSpeakerLabeler.assignSpeakerLabels(to: segments)
         try writeDocument(TranscriptDocument(segments: labeledSegments))
         try (TranscriptFormatter.render(labeledSegments) + "\n").write(to: url, atomically: true, encoding: .utf8)
         return labeledSegments
     }
 
+}
+
+enum TranscriptSpeakerLabeler {
     static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {
         var mapper = SpeakerLabelMapper(speakers: segments.map(\.speaker))
         var generatedIDsBySpeaker: [TranscriptSpeaker: String] = [:]
@@ -275,5 +278,4 @@ public final class TranscriptFileWriter {
             )
         }
     }
-
 }

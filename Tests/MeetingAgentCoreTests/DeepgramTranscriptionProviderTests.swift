@@ -270,9 +270,9 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             audio: AudioInput(wavURL: URL(fileURLWithPath: "/tmp/capture.wav"), localeIdentifier: "en-US"),
             options: TranscriptionOptions(sourceLocale: "en-US")
         )
-        try TranscriptFileWriter(url: transcriptURL).replace(with: output.segments)
+        try LegacyTranscriptBridge(url: transcriptURL).replace(with: output.segments)
 
-        let document = try TranscriptFileWriter.readDocument(
+        let document = try LegacyTranscriptBridge.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
         )
         XCTAssertEqual(document.segments.map(\.speakerID), [

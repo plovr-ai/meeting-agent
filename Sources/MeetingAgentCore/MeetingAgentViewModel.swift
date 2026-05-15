@@ -942,15 +942,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         try? store.save(record)
 
         do {
-            let providerTranscriptURL = transcriptJSONURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("provider-transcript.legacy")
-            defer {
-                try? FileManager.default.removeItem(at: providerTranscriptURL)
-                try? FileManager.default.removeItem(
-                    at: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json")
-                )
-            }
             let previousTranscript = try? TranscriptFormatter.render(
                 transcriptRepository.loadCaptionDocument(for: record).transcriptDocument.segments
             )
@@ -973,23 +964,17 @@ public final class MeetingAgentViewModel: ObservableObject {
                     for: retryConfiguration.provider,
                     configuration: retryConfiguration
                 )
-                try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
+                let document = try await provider.transcribeExistingAudio(context: SpeechTranscriptionContext(
                     inputAudioURL: audioURL,
-                    transcriptURL: providerTranscriptURL,
+                    transcriptURL: transcriptJSONURL,
                     localeIdentifier: retryLocaleIdentifier,
                     meetingID: record.id,
                     previousTranscript: previousTranscript
                 ))
-                if FileManager.default.fileExists(atPath: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json").path) {
-                    let data = try Data(
-                        contentsOf: providerTranscriptURL.deletingPathExtension().appendingPathExtension("json")
-                    )
-                    let legacyDocument = try JSONDecoder.meetingAgent.decode(TranscriptDocument.self, from: data)
-                    try transcriptRepository.saveCaptionDocument(
-                        Self.captionDocument(from: legacyDocument.segments),
-                        for: record
-                    )
-                }
+                try transcriptRepository.saveCaptionDocument(
+                    Self.captionDocument(from: document.segments),
+                    for: record
+                )
             }
             record.transcriptionStatus = .transcribed
             record.transcriptionFailureReason = nil

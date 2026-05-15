@@ -104,11 +104,10 @@ public struct OpenAIRealtimeTranscriptionProvider {
         let transport = transportFactory(url, apiKey)
         try await transport.connect()
         try await transport.send(try sessionUpdate(localeIdentifier: context.localeIdentifier))
-        let writer = context.transcriptUpdateSink == nil ? try TranscriptFileWriter(url: context.transcriptURL) : nil
+        let fallbackSink = context.transcriptUpdateSink ?? CaptionDocumentTranscriptUpdateSink(transcriptURL: context.transcriptURL)
         return OpenAIRealtimeTranscriptionTranscriber(
             transport: transport,
-            writer: writer,
-            transcriptUpdateSink: context.transcriptUpdateSink,
+            transcriptUpdateSink: fallbackSink,
             localeIdentifier: context.localeIdentifier
         )
     }
@@ -168,7 +167,6 @@ public struct OpenAIRealtimeTranscriptionProvider {
 
 final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
     private let transport: RealtimeTranscriptionWebSocketTransport
-    private let writer: TranscriptFileWriter?
     private let transcriptUpdateSink: TranscriptUpdateSink?
     private let localeIdentifier: String
     private var receiveTask: Task<Void, Never>?
@@ -176,15 +174,13 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
 
     init(
         transport: RealtimeTranscriptionWebSocketTransport,
-        writer: TranscriptFileWriter?,
         transcriptUpdateSink: TranscriptUpdateSink? = nil,
         localeIdentifier: String
     ) {
         self.transport = transport
-        self.writer = writer
         self.transcriptUpdateSink = transcriptUpdateSink
         self.localeIdentifier = localeIdentifier
-        self.receiveTask = Task { [transport, writer, transcriptUpdateSink, localeIdentifier] in
+        self.receiveTask = Task { [transport, transcriptUpdateSink, localeIdentifier] in
             var segmentIndex = 0
             for await data in transport.incomingMessages {
                 do {
@@ -202,16 +198,14 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
                             timingSource: .unavailable
                         )
                         transcriptUpdateSink?.receive(.upsert(segment))
-                        try writer?.append(segment)
                         segmentIndex += 1
                     case .failed(let message):
                         transcriptUpdateSink?.receive(.replaceWithPlainText("OpenAI Realtime transcription failed: \(message)"))
-                        try writer?.replace(with: "OpenAI Realtime transcription failed: \(message)")
                     case .connected, .delta:
                         break
                     }
                 } catch {
-                    try? writer?.replace(with: "OpenAI Realtime transcription failed: \(error)")
+                    transcriptUpdateSink?.receive(.replaceWithPlainText("OpenAI Realtime transcription failed: \(error)"))
                 }
             }
         }
@@ -229,9 +223,8 @@ final class OpenAIRealtimeTranscriptionTranscriber: AudioFrameTranscriber {
 
     func finish() {
         receiveTask?.cancel()
-        Task { [transport, writer] in
+        Task { [transport] in
             await transport.close()
-            try? writer?.close()
         }
     }
 

@@ -18,7 +18,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(source.contains("artifactSnapshot: viewModel.selectedMeetingArtifactSnapshot"))
         XCTAssertFalse(source.contains("String(contentsOf:"))
         XCTAssertFalse(source.contains("Data(contentsOf:"))
-        XCTAssertFalse(source.contains("TranscriptFileWriter.readDocument"))
+        XCTAssertFalse(source.contains("LegacyTranscriptBridge.readDocument"))
         XCTAssertFalse(source.contains("MeetingSummaryWriter.read"))
         XCTAssertFalse(source.contains("PipelineLatencySummary"))
     }

@@ -157,7 +157,7 @@ extension RegressionFixtureFiles {
     }
 
     static func loadTranscript(in fixtureURL: URL) throws -> TranscriptDocument {
-        try TranscriptFileWriter.readDocument(from: fixtureURL.appendingPathComponent("transcript.json"))
+        try LegacyTranscriptBridge.readDocument(from: fixtureURL.appendingPathComponent("transcript.json"))
     }
 
     static func loadTranslationRecords(in fixtureURL: URL) throws -> [TranslationResultPersistenceRecord] {

@@ -515,11 +515,12 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
             channelCount: context.channelCount,
             performanceEventLogger: context.performanceEventLogger
         )
-        let writer = context.speechEventSink == nil ? try TranscriptFileWriter(url: context.transcriptURL) : nil
+        let fallbackSink = context.speechEventSink == nil && context.transcriptUpdateSink == nil
+            ? CaptionDocumentTranscriptUpdateSink(transcriptURL: context.transcriptURL)
+            : nil
         return DeepgramStreamingTranscriber(
             session: session,
-            writer: writer,
-            transcriptUpdateSink: context.transcriptUpdateSink,
+            transcriptUpdateSink: context.transcriptUpdateSink ?? fallbackSink,
             speechEventSink: context.speechEventSink,
             performanceEventLogger: context.performanceEventLogger
         )
@@ -528,7 +529,6 @@ public struct DeepgramStreamingSpeechTranscriptionProvider {
 
 final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
     private let session: DeepgramStreamingTranscriptionSession
-    private let writer: TranscriptFileWriter?
     private let transcriptUpdateSink: TranscriptUpdateSink?
     private let speechEventSink: SpeechRecognitionEventSink?
     private let performanceEventLogger: PerformanceEventLogger?
@@ -548,13 +548,11 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     init(
         session: DeepgramStreamingTranscriptionSession,
-        writer: TranscriptFileWriter?,
         transcriptUpdateSink: TranscriptUpdateSink? = nil,
         speechEventSink: SpeechRecognitionEventSink? = nil,
         performanceEventLogger: PerformanceEventLogger? = nil
     ) {
         self.session = session
-        self.writer = writer
         self.transcriptUpdateSink = transcriptUpdateSink
         self.speechEventSink = speechEventSink
         self.performanceEventLogger = performanceEventLogger
@@ -574,9 +572,6 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
                 )
                 guard self?.speechEventSink == nil else { continue }
                 try? self?.write(segment)
-            }
-            if self?.speechEventSink == nil {
-                try? self?.writer?.close()
             }
         }
         self.eventReceiveTask = Task { [weak self, session] in
@@ -599,11 +594,10 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
 
     private func write(_ segment: TranscriptSegment) throws {
         let segment = stableFallbackSegment(segment)
-        guard let writer else { return }
         let output = reconciler.apply(segment)
 
         for result in output.realtimeUpdates {
-            let realtimeSegments = TranscriptFileWriter.assignSpeakerLabels(to: result.document.segments)
+            let realtimeSegments = TranscriptSpeakerLabeler.assignSpeakerLabels(to: result.document.segments)
             for realtimeSegment in realtimeSegments where result.changedSegmentIDs.contains(realtimeSegment.id) {
                 transcriptUpdateSink?.receiveRealtime(.upsert(realtimeSegment))
                 performanceEventLogger?.logSegment("transcript_segment_written", segment: realtimeSegment)
@@ -611,8 +605,7 @@ final class DeepgramStreamingTranscriber: AudioFrameTranscriber {
         }
 
         guard !output.finalUpdates.isEmpty else { return }
-        let finalSegments = TranscriptFileWriter.assignSpeakerLabels(to: output.finalDocument.segments)
-        try writer.replace(with: finalSegments)
+        let finalSegments = TranscriptSpeakerLabeler.assignSpeakerLabels(to: output.finalDocument.segments)
         for result in output.finalUpdates {
             for finalSegment in finalSegments where result.changedSegmentIDs.contains(finalSegment.id) {
                 transcriptUpdateSink?.receiveFinal(.upsert(finalSegment))

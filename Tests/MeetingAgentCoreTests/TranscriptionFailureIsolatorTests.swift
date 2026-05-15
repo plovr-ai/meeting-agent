@@ -3,13 +3,8 @@ import XCTest
 
 final class TranscriptionFailureIsolatorTests: XCTestCase {
     func testAppendSuccessKeepsTranscriberActiveAndFinishDisablesIt() {
-        let transcriptURL = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
-        defer {
-            try? FileManager.default.removeItem(at: transcriptURL)
-            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
-        }
         let transcriber = RecordingAppendTranscriber(failureReason: "pending")
-        let isolator = TranscriptionFailureIsolator(transcriber: transcriber, transcriptURL: transcriptURL)
+        let isolator = TranscriptionFailureIsolator(transcriber: transcriber)
         let frame = AudioFrame(pcm: Data([0x01, 0x00]), sampleRate: 16_000, channelCount: 1, timestampNanos: 1)
 
         XCTAssertTrue(isolator.isActive)
@@ -25,20 +20,12 @@ final class TranscriptionFailureIsolatorTests: XCTestCase {
         XCTAssertEqual(transcriber.finishCount, 1)
     }
 
-    func testAppendFailureWritesTranscriptFailureAndDisablesTranscriber() throws {
-        let transcriptURL = FileManager.default.temporaryDirectory.appendingPathComponent("probe-transcript-\(UUID().uuidString).txt")
-        let transcriptJSONURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        defer {
-            try? FileManager.default.removeItem(at: transcriptURL)
-            try? FileManager.default.removeItem(at: transcriptJSONURL)
-        }
-        try TranscriptFileWriter(url: transcriptURL).replace(with: [
-            TranscriptSegment(id: "stale", text: "stale structured text")
-        ])
+    func testAppendFailurePublishesTranscriptFailureAndDisablesTranscriber() throws {
         let transcriber = FailingAppendTranscriber()
+        let updateSink = RecordingFailureUpdateSink()
         let isolator = TranscriptionFailureIsolator(
             transcriber: transcriber,
-            transcriptURL: transcriptURL
+            transcriptUpdateSink: updateSink
         )
         let frame = AudioFrame(
             pcm: Data([0x01, 0x00]),
@@ -55,11 +42,11 @@ final class TranscriptionFailureIsolatorTests: XCTestCase {
         XCTAssertNil(repeatedFailureMessage)
         XCTAssertEqual(transcriber.appendCount, 1)
         XCTAssertEqual(transcriber.finishCount, 1)
-        XCTAssertEqual(
-            try String(contentsOf: transcriptURL, encoding: .utf8),
-            "Speech recognition failed: Speech recognition error: chunk failed\n"
-        )
-        XCTAssertEqual(try TranscriptFileWriter.readDocument(from: transcriptJSONURL), TranscriptDocument())
+        XCTAssertEqual(updateSink.updates.count, 1)
+        guard case .replaceWithPlainText(let message) = updateSink.updates.first else {
+            return XCTFail("Expected failure plain-text update")
+        }
+        XCTAssertEqual(message, "Speech recognition failed: Speech recognition error: chunk failed")
     }
 }
 
@@ -92,5 +79,13 @@ private final class FailingAppendTranscriber: AudioFrameTranscriber {
 
     func finish() {
         finishCount += 1
+    }
+}
+
+private final class RecordingFailureUpdateSink: TranscriptUpdateSink {
+    private(set) var updates: [TranscriptSegmentUpdate] = []
+
+    func receive(_ update: TranscriptSegmentUpdate) {
+        updates.append(update)
     }
 }

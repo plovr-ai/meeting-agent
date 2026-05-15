@@ -2,7 +2,7 @@ import Foundation
 
 public final class TranscriptionFailureIsolator {
     private var transcriber: AudioFrameTranscriber?
-    private let transcriptURL: URL
+    private let transcriptUpdateSink: TranscriptUpdateSink?
 
     public var isActive: Bool {
         transcriber != nil
@@ -12,9 +12,9 @@ public final class TranscriptionFailureIsolator {
         transcriber?.failureReason
     }
 
-    public init(transcriber: AudioFrameTranscriber?, transcriptURL: URL) {
+    public init(transcriber: AudioFrameTranscriber?, transcriptUpdateSink: TranscriptUpdateSink? = nil) {
         self.transcriber = transcriber
-        self.transcriptURL = transcriptURL
+        self.transcriptUpdateSink = transcriptUpdateSink
     }
 
     @discardableResult
@@ -28,7 +28,7 @@ public final class TranscriptionFailureIsolator {
             let message = "Speech recognition failed: \(error)"
             transcriber.finish()
             self.transcriber = nil
-            try? TranscriptFileWriter(url: transcriptURL).replace(with: message)
+            transcriptUpdateSink?.receive(.replaceWithPlainText(message))
             return message
         }
     }

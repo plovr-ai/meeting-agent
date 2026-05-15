@@ -441,7 +441,7 @@ final class MeetingRecorderTests: XCTestCase {
         )))
 
         let updates = fixture.recorder.drainTranscriptUpdates()
-        let persisted = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        let persisted = try LegacyTranscriptBridge.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
 
         XCTAssertEqual(updates.last?.source, .realtime)
         XCTAssertEqual(updates.last?.document.segments.map(\.text), ["live draft"])
