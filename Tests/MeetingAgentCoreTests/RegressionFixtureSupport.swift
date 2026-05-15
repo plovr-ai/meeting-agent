@@ -171,37 +171,4 @@ extension RegressionFixtureFiles {
         }
     }
 
-    @MainActor
-    static func projectStableTranslationTurns(
-        in fixtureURL: URL,
-        manifest: RegressionFixtureManifest
-    ) throws -> [LiveCaptionTurn] {
-        let transcript = try loadTranscript(in: fixtureURL)
-        let records = try loadTranslationRecords(in: fixtureURL)
-        let pipeline = LiveCaptionPipeline(
-            sourceLocale: manifest.sourceLocale,
-            targetLocale: manifest.targetLocale,
-            translationProvider: nil,
-            performanceEventLogger: nil,
-            translationMode: .unitPipelineActiveRecording
-        )
-        _ = pipeline.replayCaptionsOnly(transcript)
-        _ = pipeline.flushCaptionsOnly(reason: .manualStop)
-        let results = records.map { record in
-            TranslationResult(
-                id: record.resultID,
-                sourceID: record.sourceID,
-                laneID: record.laneID,
-                sourceText: record.sourceText,
-                translatedText: record.translatedText,
-                displayState: record.displayState,
-                createdAt: record.finalizedAt ?? record.createdAt,
-                sourceCreatedAt: record.createdAt,
-                sourceSegmentIDs: record.sourceSegmentIDs
-            )
-        }
-        return pipeline.attachTranslationResults(results).turns.filter {
-            $0.translatedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        }
-    }
 }
