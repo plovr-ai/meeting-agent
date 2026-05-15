@@ -297,12 +297,15 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func startRecordingPreparedRecord(
-        _ record: MeetingRecord,
+        _ preparedRecord: MeetingRecord,
         target candidate: AudioCaptureTarget,
         localeIdentifier: String?
     ) async throws {
+        var record = preparedRecord
+        let source = AudioCaptureSource.processWithMicrophone(candidate)
+        record.captureMode = .processWithMicrophone
         resetLiveCaptionStore()
-        activeSource = .process(candidate)
+        activeSource = source
         activeMeetingID = record.id
         startRealtimeSpeakerIdentificationRuntime()
         pendingCandidate = nil
@@ -312,7 +315,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         recordingConfiguration.localeIdentifier = recordingLocaleIdentifier
         do {
             try await recorder.startRecording(
-                target: candidate,
+                source: source,
                 record: record,
                 speechConfiguration: recordingConfiguration
             )

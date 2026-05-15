@@ -8,6 +8,12 @@ public enum TranscriptionStatus: String, Codable, Equatable {
     case retryRequested
 }
 
+public enum MeetingCaptureMode: String, Codable, Equatable {
+    case process
+    case microphone
+    case processWithMicrophone
+}
+
 public struct MeetingAttendee: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String
@@ -70,6 +76,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var startedAt: Date
     public var endedAt: Date?
     public var audioURL: URL?
+    public var microphoneAudioURL: URL?
     public var transcriptURL: URL?
     public var transcriptJSONURL: URL?
     public var meetingProgressJSONURL: URL?
@@ -83,6 +90,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var speechProvider: SpeechProvider
     public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
+    public var captureMode: MeetingCaptureMode
     public var meetingGoal: MeetingGoal?
     public var meetingGoals: [MeetingGoal]
     public var attendees: [MeetingAttendee]
@@ -96,6 +104,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         startedAt: Date,
         endedAt: Date?,
         audioURL: URL?,
+        microphoneAudioURL: URL? = nil,
         transcriptURL: URL?,
         transcriptJSONURL: URL? = nil,
         meetingProgressJSONURL: URL? = nil,
@@ -109,6 +118,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         speechProvider: SpeechProvider = .whisper,
         transcriptionProviderID: String? = nil,
         speechLocaleIdentifier: String = "en-US",
+        captureMode: MeetingCaptureMode = .process,
         meetingGoal: MeetingGoal? = nil,
         meetingGoals: [MeetingGoal]? = nil,
         attendees: [MeetingAttendee] = [],
@@ -121,6 +131,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.audioURL = audioURL
+        self.microphoneAudioURL = microphoneAudioURL
         self.transcriptURL = transcriptURL
         self.transcriptJSONURL = transcriptJSONURL
         self.meetingProgressJSONURL = meetingProgressJSONURL
@@ -137,6 +148,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
             fallback: speechProvider.rawValue
         ) ?? speechProvider.rawValue
         self.speechLocaleIdentifier = SpeechTranscriptionConfiguration.normalized(speechLocaleIdentifier, fallback: "en-US") ?? "en-US"
+        self.captureMode = captureMode
         if let meetingGoals {
             self.meetingGoals = meetingGoals
         } else if let meetingGoal {
@@ -157,6 +169,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case startedAt
         case endedAt
         case audioURL
+        case microphoneAudioURL
         case transcriptURL
         case transcriptJSONURL
         case meetingProgressJSONURL
@@ -170,6 +183,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case speechProvider
         case transcriptionProviderID
         case speechLocaleIdentifier
+        case captureMode
         case meetingGoal
         case meetingGoals
         case attendees
@@ -185,6 +199,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
         audioURL = try container.decodeIfPresent(URL.self, forKey: .audioURL)
+        microphoneAudioURL = try container.decodeIfPresent(URL.self, forKey: .microphoneAudioURL)
         transcriptURL = try container.decodeIfPresent(URL.self, forKey: .transcriptURL)
         transcriptJSONURL = try container.decodeIfPresent(URL.self, forKey: .transcriptJSONURL)
         meetingProgressJSONURL = try container.decodeIfPresent(URL.self, forKey: .meetingProgressJSONURL)
@@ -199,6 +214,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         transcriptionProviderID = try container.decodeIfPresent(String.self, forKey: .transcriptionProviderID)
             ?? speechProvider.rawValue
         speechLocaleIdentifier = try container.decodeIfPresent(String.self, forKey: .speechLocaleIdentifier) ?? "en-US"
+        captureMode = try container.decodeIfPresent(MeetingCaptureMode.self, forKey: .captureMode) ?? .process
         let decodedMeetingGoal = try container.decodeIfPresent(MeetingGoal.self, forKey: .meetingGoal)
         if let decodedMeetingGoals = try container.decodeIfPresent([MeetingGoal].self, forKey: .meetingGoals) {
             meetingGoals = decodedMeetingGoals

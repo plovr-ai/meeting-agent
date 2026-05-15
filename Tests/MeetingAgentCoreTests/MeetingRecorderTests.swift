@@ -201,7 +201,7 @@ final class MeetingRecorderTests: XCTestCase {
         )
 
         XCTAssertEqual(record.name, "Offline Discussion")
-        XCTAssertEqual(fixture.session.startedSources, [source])
+        XCTAssertEqual(fixture.microphoneSession.startedSources, [source])
         XCTAssertEqual(fixture.recorder.state, .recording(record.id))
     }
 
@@ -213,6 +213,106 @@ final class MeetingRecorderTests: XCTestCase {
 
         XCTAssertEqual(fixture.session.startedSources, [.process(fixture.target)])
         XCTAssertEqual(fixture.session.startedTargets, [fixture.target])
+    }
+
+    func testProcessWithMicrophoneStartsTwoCaptureSessionsAndTranscribers() async throws {
+        let fixture = try RecorderFixture()
+        var record = try fixture.recorder.prepareRecord(
+            named: "Zoom",
+            source: .processWithMicrophone(fixture.target),
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        record.captureMode = .processWithMicrophone
+
+        try await fixture.recorder.startRecording(
+            source: .processWithMicrophone(fixture.target),
+            record: record,
+            speechConfiguration: .default
+        )
+
+        XCTAssertEqual(fixture.processSession.startedSources, [.processWithMicrophone(fixture.target)])
+        XCTAssertEqual(fixture.microphoneSession.startedSources, [.microphone(displayName: "Computer Microphone")])
+        XCTAssertEqual(fixture.transcriberFactory.requests.count, 2)
+        XCTAssertEqual(fixture.writerFactory.requests.map { $0.url.lastPathComponent }, ["audio.wav", "audio-microphone.wav"])
+    }
+
+    func testMicrophoneSpeechEventsAreAttributedAsMe() async throws {
+        let fixture = try RecorderFixture()
+        var record = try fixture.recorder.prepareRecord(
+            named: "Zoom",
+            source: .processWithMicrophone(fixture.target),
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        record.captureMode = .processWithMicrophone
+
+        try await fixture.recorder.startRecording(
+            source: .processWithMicrophone(fixture.target),
+            record: record,
+            speechConfiguration: .default
+        )
+        fixture.microphoneTranscriber.emitSpeechEvent(.final(testSpeechPayload(
+            speakerID: "provider-speaker-1",
+            text: "I agree with the launch owner."
+        )))
+
+        let results = fixture.recorder.drainTranscriptUpdates()
+
+        XCTAssertEqual(results.first?.document.segments.first?.speakerID, "local-user")
+        XCTAssertEqual(results.first?.document.segments.first?.speakerLabel, "Me")
+    }
+
+    func testMicrophoneTranscriptUpdatesAreAttributedAsMe() async throws {
+        let fixture = try RecorderFixture()
+        var record = try fixture.recorder.prepareRecord(
+            named: "Zoom",
+            source: .processWithMicrophone(fixture.target),
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        record.captureMode = .processWithMicrophone
+
+        try await fixture.recorder.startRecording(
+            source: .processWithMicrophone(fixture.target),
+            record: record,
+            speechConfiguration: .default
+        )
+        fixture.microphoneTranscriber.emit(.upsert(TranscriptSegment(
+            id: "mic-segment-1",
+            speaker: TranscriptSpeaker(identifier: "provider-speaker-1", label: "Speaker 1"),
+            text: "I agree with the launch owner.",
+            language: "en-US",
+            sourceProvider: "whisper",
+            isFinal: true
+        )))
+
+        let results = fixture.recorder.drainTranscriptUpdates()
+
+        XCTAssertEqual(results.first?.document.segments.first?.speakerID, "local-user")
+        XCTAssertEqual(results.first?.document.segments.first?.speakerLabel, "Me")
+    }
+
+    func testProcessSpeechEventsAreNotAttributedAsMe() async throws {
+        let fixture = try RecorderFixture()
+        var record = try fixture.recorder.prepareRecord(
+            named: "Zoom",
+            source: .processWithMicrophone(fixture.target),
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        record.captureMode = .processWithMicrophone
+
+        try await fixture.recorder.startRecording(
+            source: .processWithMicrophone(fixture.target),
+            record: record,
+            speechConfiguration: .default
+        )
+        fixture.processTranscriber.emitSpeechEvent(.final(testSpeechPayload(
+            speakerID: "deepgram-speaker-1",
+            text: "Remote participant speaking."
+        )))
+
+        let results = fixture.recorder.drainTranscriptUpdates()
+
+        XCTAssertEqual(results.first?.document.segments.first?.speakerID, "deepgram-speaker-1")
+        XCTAssertNotEqual(results.first?.document.segments.first?.speakerLabel, "Me")
     }
 
     func testDrainFramesSkipsSilentAudioOnlyForTranscription() async throws {
@@ -507,6 +607,41 @@ final class MeetingRecorderTests: XCTestCase {
         XCTAssertEqual(captionDocument.turns.map(\.text), ["我们确认负责人。"])
     }
 
+    func testRecorderStopPersistsMergedProcessAndMicrophoneSpeechEvents() async throws {
+        let fixture = try RecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
+        let record = try fixture.recorder.prepareRecord(
+            named: "Zoom",
+            source: .processWithMicrophone(fixture.target),
+            startedAt: Date(timeIntervalSince1970: 100)
+        )
+        try await fixture.recorder.startRecording(
+            source: .processWithMicrophone(fixture.target),
+            record: record,
+            speechConfiguration: .default
+        )
+
+        fixture.processTranscriber.emitSpeechEvent(.final(testSpeechPayload(
+            speakerID: "deepgram-speaker-1",
+            text: "Remote participant speaking."
+        )))
+        fixture.microphoneTranscriber.emitSpeechEvent(.final(testSpeechPayload(
+            speakerID: "provider-speaker-1",
+            text: "I agree with the launch owner."
+        )))
+        _ = fixture.recorder.drainTranscriptUpdates()
+
+        _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
+
+        let captionDocument = try MeetingTranscriptStore.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertTrue(captionDocument.turns.contains {
+            $0.speakerID == "deepgram-speaker-1" && $0.speakerLabel != "Me"
+        })
+        XCTAssertTrue(captionDocument.turns.contains {
+            $0.speakerID == "local-user" && $0.speakerLabel == "Me"
+        })
+    }
+
     func testTranscriptUpdatePipelineLogsEmittedAndPersistedEvents() async throws {
         let fixture = try RecorderFixture()
         defer { try? FileManager.default.removeItem(at: fixture.storeRoot) }
@@ -530,9 +665,15 @@ final class MeetingRecorderTests: XCTestCase {
 private struct RecorderFixture {
     let storeRoot: URL
     let store: MeetingStore
+    let processSession: FakeRecorderCaptureSession
+    let microphoneSession: FakeRecorderCaptureSession
     let session: FakeRecorderCaptureSession
+    let processWriter: FakeAudioFrameWriter
+    let microphoneWriter: FakeAudioFrameWriter
     let writer: FakeAudioFrameWriter
     let writerFactory: FakeAudioFrameWriterFactory
+    let processTranscriber: FakeAudioFrameTranscriber
+    let microphoneTranscriber: FakeAudioFrameTranscriber
     let transcriber: FakeAudioFrameTranscriber
     let transcriberFactory: FakeRecorderTranscriberFactory
     let recorder: MeetingRecorder
@@ -540,22 +681,38 @@ private struct RecorderFixture {
 
     init() throws {
         let storeRoot = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-recorder-\(UUID().uuidString)", isDirectory: true)
-        let session = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1, frameBufferCapacity: 256)
-        let writer = FakeAudioFrameWriter()
-        let writerFactory = FakeAudioFrameWriterFactory(writer: writer)
-        let transcriber = FakeAudioFrameTranscriber()
-        let transcriberFactory = FakeRecorderTranscriberFactory(transcriber: transcriber)
+        let processSession = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1, frameBufferCapacity: 256)
+        let microphoneSession = FakeRecorderCaptureSession(sampleRate: 16_000, channelCount: 1, frameBufferCapacity: 256)
+        let processWriter = FakeAudioFrameWriter()
+        let microphoneWriter = FakeAudioFrameWriter()
+        let writerFactory = FakeAudioFrameWriterFactory(
+            processWriter: processWriter,
+            microphoneWriter: microphoneWriter
+        )
+        let processTranscriber = FakeAudioFrameTranscriber()
+        let microphoneTranscriber = FakeAudioFrameTranscriber()
+        let transcriberFactory = FakeRecorderTranscriberFactory(
+            processTranscriber: processTranscriber,
+            microphoneTranscriber: microphoneTranscriber
+        )
         self.storeRoot = storeRoot
         let store = MeetingStore(baseDirectory: storeRoot)
         self.store = store
-        self.session = session
-        self.writer = writer
+        self.processSession = processSession
+        self.microphoneSession = microphoneSession
+        self.session = processSession
+        self.processWriter = processWriter
+        self.microphoneWriter = microphoneWriter
+        self.writer = processWriter
         self.writerFactory = writerFactory
-        self.transcriber = transcriber
+        self.processTranscriber = processTranscriber
+        self.microphoneTranscriber = microphoneTranscriber
+        self.transcriber = processTranscriber
         self.transcriberFactory = transcriberFactory
         recorder = MeetingRecorder(
             store: store,
-            captureSessionFactory: { session },
+            processCaptureSessionFactory: { processSession },
+            microphoneCaptureSessionFactory: { microphoneSession },
             wavWriterFactory: writerFactory.makeWriter,
             transcriberFactory: transcriberFactory.startTranscriber
         )
@@ -621,16 +778,21 @@ private final class FakeAudioFrameWriterFactory {
 
     var requests: [Request] = []
     var onMakeWriter: (() -> Void)?
-    private let writer: FakeAudioFrameWriter
+    private let processWriter: FakeAudioFrameWriter
+    private let microphoneWriter: FakeAudioFrameWriter
 
-    init(writer: FakeAudioFrameWriter) {
-        self.writer = writer
+    init(processWriter: FakeAudioFrameWriter, microphoneWriter: FakeAudioFrameWriter) {
+        self.processWriter = processWriter
+        self.microphoneWriter = microphoneWriter
     }
 
     func makeWriter(url: URL, sampleRate: UInt32, channelCount: UInt16) throws -> AudioFrameWriting {
         requests.append(Request(url: url, sampleRate: sampleRate, channelCount: channelCount))
         onMakeWriter?()
-        return writer
+        if url.lastPathComponent == "audio-microphone.wav" {
+            return microphoneWriter
+        }
+        return processWriter
     }
 }
 
@@ -640,6 +802,7 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
     var appendedFrames: [AudioFrame] = []
     var finishCallCount = 0
     var transcriptUpdateSink: TranscriptUpdateSink?
+    var speechEventSink: SpeechRecognitionEventSink?
 
     func append(_ frame: AudioFrame) throws {
         if let appendError {
@@ -661,7 +824,7 @@ private final class FakeAudioFrameTranscriber: AudioFrameTranscriber {
     }
 
     func emitSpeechEvent(_ event: SpeechRecognitionEvent) {
-        (transcriptUpdateSink as? SpeechRecognitionEventSink)?.receive(event)
+        (speechEventSink ?? transcriptUpdateSink as? SpeechRecognitionEventSink)?.receive(event)
     }
 }
 
@@ -675,11 +838,13 @@ private final class FakeRecorderTranscriberFactory {
     var requests: [Request] = []
     var error: Error?
     var shouldSuspend = false
-    private let transcriber: FakeAudioFrameTranscriber
+    private let processTranscriber: FakeAudioFrameTranscriber
+    private let microphoneTranscriber: FakeAudioFrameTranscriber
     private var continuation: CheckedContinuation<Void, Never>?
 
-    init(transcriber: FakeAudioFrameTranscriber) {
-        self.transcriber = transcriber
+    init(processTranscriber: FakeAudioFrameTranscriber, microphoneTranscriber: FakeAudioFrameTranscriber) {
+        self.processTranscriber = processTranscriber
+        self.microphoneTranscriber = microphoneTranscriber
     }
 
     func startTranscriber(
@@ -688,7 +853,8 @@ private final class FakeRecorderTranscriberFactory {
         sampleRate: Double,
         channelCount: Int,
         performanceEventLogger: PerformanceEventLogger?,
-        transcriptUpdateSink: TranscriptUpdateSink?
+        transcriptUpdateSink: TranscriptUpdateSink?,
+        speechEventSink: SpeechRecognitionEventSink?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(
             localeIdentifier: configuration.localeIdentifier,
@@ -703,7 +869,9 @@ private final class FakeRecorderTranscriberFactory {
         if let error {
             throw error
         }
+        let transcriber = requests.count == 1 ? processTranscriber : microphoneTranscriber
         transcriber.transcriptUpdateSink = transcriptUpdateSink
+        transcriber.speechEventSink = speechEventSink
         return transcriber
     }
 
@@ -779,6 +947,21 @@ private func transcriptEventLogLineCount(for record: MeetingRecord) throws -> In
     return try String(contentsOf: eventLogURL, encoding: .utf8)
         .split(whereSeparator: \.isNewline)
         .count
+}
+
+private func testSpeechPayload(speakerID: String, text: String) -> SpeechUtterancePayload {
+    SpeechUtterancePayload(
+        providerID: "deepgram-transcribe",
+        providerResultID: "result-\(speakerID)",
+        providerUtteranceID: "utt-\(speakerID)",
+        speaker: TranscriptSpeaker(identifier: speakerID),
+        startTimeSeconds: 1,
+        endTimeSeconds: 2,
+        text: text,
+        language: "en-US",
+        confidence: 0.9,
+        boundary: SpeechBoundary(speechFinal: true)
+    )
 }
 
 private func XCTAssertThrowsErrorAsync(

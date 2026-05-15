@@ -16,8 +16,10 @@ final class MeetingStoreTests: XCTestCase {
 
         XCTAssertEqual(created.record.name, "Google Chrome")
         XCTAssertEqual(created.record.audioURL?.lastPathComponent, "audio.wav")
+        XCTAssertEqual(created.record.microphoneAudioURL?.lastPathComponent, "audio-microphone.wav")
         XCTAssertNil(created.record.transcriptURL)
         XCTAssertEqual(created.record.transcriptJSONURL?.lastPathComponent, "transcript.json")
+        XCTAssertEqual(created.record.captureMode, .process)
         XCTAssertEqual(created.record.summaryURL?.lastPathComponent, "summary.md")
         XCTAssertEqual(created.record.summaryJSONURL?.lastPathComponent, "summary.json")
         XCTAssertEqual(created.record.summaryMarkdownURL?.lastPathComponent, "summary.md")

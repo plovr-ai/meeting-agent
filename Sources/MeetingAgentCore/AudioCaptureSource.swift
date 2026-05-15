@@ -3,6 +3,7 @@ import Foundation
 public enum AudioCaptureSourceKind: String, Codable, Equatable {
     case process
     case microphone
+    case processWithMicrophone
 }
 
 public enum AudioCaptureSource: Equatable {
@@ -10,6 +11,7 @@ public enum AudioCaptureSource: Equatable {
 
     case process(AudioCaptureTarget)
     case microphone(displayName: String = "Computer Microphone")
+    case processWithMicrophone(AudioCaptureTarget, microphoneDisplayName: String = "Computer Microphone")
 
     public var kind: AudioCaptureSourceKind {
         switch self {
@@ -17,6 +19,8 @@ public enum AudioCaptureSource: Equatable {
             return .process
         case .microphone:
             return .microphone
+        case .processWithMicrophone:
+            return .processWithMicrophone
         }
     }
 
@@ -26,6 +30,8 @@ public enum AudioCaptureSource: Equatable {
             return target.displayName
         case .microphone(let displayName):
             return displayName
+        case .processWithMicrophone(let target, _):
+            return target.displayName
         }
     }
 
@@ -35,6 +41,8 @@ public enum AudioCaptureSource: Equatable {
             return target.processID
         case .microphone:
             return Self.microphoneProcessID
+        case .processWithMicrophone(let target, _):
+            return target.processID
         }
     }
 
@@ -44,6 +52,19 @@ public enum AudioCaptureSource: Equatable {
             return target
         case .microphone:
             return nil
+        case .processWithMicrophone(let target, _):
+            return target
+        }
+    }
+
+    public var microphoneDisplayName: String {
+        switch self {
+        case .process:
+            return "Computer Microphone"
+        case .microphone(let displayName):
+            return displayName
+        case .processWithMicrophone(_, let microphoneDisplayName):
+            return microphoneDisplayName
         }
     }
 }
