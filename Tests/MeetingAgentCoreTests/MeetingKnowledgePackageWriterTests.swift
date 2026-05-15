@@ -36,6 +36,10 @@ final class MeetingKnowledgePackageWriterTests: XCTestCase {
 
         XCTAssertThrowsError(try MeetingKnowledgePackageWriter().write(fixture.package, to: destination)) { error in
             XCTAssertEqual(error as? MeetingKnowledgePackageWriterError, .destinationIsFile(destination.path))
+            XCTAssertEqual(
+                (error as? LocalizedError)?.errorDescription,
+                "Knowledge package destination is a file: \(destination.path)"
+            )
         }
     }
 }
