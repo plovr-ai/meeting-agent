@@ -635,9 +635,9 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        let document = try LegacyTranscriptBridge.readDocument(
+        let document = try MeetingTranscriptStore.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
+        ).transcriptDocument
         XCTAssertEqual(document.segments.map(\.text), ["first final", "second final"])
         XCTAssertEqual(document.segments.map(\.id), [
             "deepgram-transcribe-stream-active-0",
@@ -770,9 +770,9 @@ final class DeepgramStreamingTranscriptionProviderTests: XCTestCase {
         transcriber.finish()
         try await Task.sleep(nanoseconds: 30_000_000)
 
-        let document = try LegacyTranscriptBridge.readDocument(
+        let document = try MeetingTranscriptStore.readDocument(
             from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
+        ).transcriptDocument
         XCTAssertEqual(document.segments.map(\.speakerID), ["deepgram-speaker-0", "deepgram-speaker-1"])
         XCTAssertEqual(document.segments.map(\.speakerLabel), ["User A", "User B"])
         XCTAssertEqual(document.segments.map(\.text), ["Hello team.", "Yes."])

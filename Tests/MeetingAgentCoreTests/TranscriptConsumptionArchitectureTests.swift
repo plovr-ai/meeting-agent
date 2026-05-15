@@ -79,13 +79,14 @@ final class TranscriptConsumptionArchitectureTests: XCTestCase {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let sourceRoot = root.appendingPathComponent("Sources", isDirectory: true)
         let forbiddenTerms = [
+            "LegacyTranscriptBridge",
+            "LegacyTranscriptUpdateFileSink",
             "TranscriptFileWriter",
             "FileBackedTranscriptUpdateSink",
             "provider-transcript.legacy"
         ]
         let allowedTranscriptTextFiles: Set<String> = [
-            "Sources/MeetingAgentApp/MainWindowView.swift",
-            "Sources/MeetingAgentCore/BilingualTranscriptStore.swift"
+            "Sources/MeetingAgentApp/MainWindowView.swift"
         ]
 
         let enumerator = FileManager.default.enumerator(

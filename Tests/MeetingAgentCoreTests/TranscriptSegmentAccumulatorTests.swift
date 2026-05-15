@@ -286,24 +286,150 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
         )
     }
 
-    func testLegacyTranscriptUpdateFileSinkPersistsUpdates() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-sink-\(UUID().uuidString)", isDirectory: true)
+    func testCoveredFinalKeepsLaterInterimOutOfDocument() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "final",
+            start: 0,
+            end: 4,
+            text: "alpha beta gamma",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "interim",
+            start: 1,
+            end: 3,
+            text: "beta gamma",
+            isFinal: false
+        )))
+
+        XCTAssertEqual(result.changedSegmentIDs, [])
+        XCTAssertEqual(result.document.segments.map(\.id), ["final"])
+    }
+
+    func testNonDeepgramInterimReplacesOverlappingInterim() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "draft-1",
+            start: 1,
+            end: 3,
+            text: "hello team",
+            isFinal: false
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "draft-2",
+            start: 1.1,
+            end: 3.1,
+            text: "hello team updated",
+            isFinal: false
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.id), ["draft-2"])
+        XCTAssertEqual(result.document.segments.map(\.text), ["hello team updated"])
+    }
+
+    func testNonDeepgramFinalCoversInterimWhenSpeakerMatches() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "draft",
+            start: 1,
+            end: 3,
+            text: "hello team",
+            isFinal: false
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "final",
+            start: 0.9,
+            end: 3.1,
+            text: "hello team",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.id), ["final"])
+    }
+
+    func testPartiallyCoveredInterimPrefixIsTrimmed() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "final",
+            start: 0,
+            end: 2,
+            text: "alpha beta gamma",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "interim",
+            start: 1.5,
+            end: 5,
+            text: "beta gamma delta",
+            isFinal: false
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.text), ["alpha beta gamma", "delta"])
+        XCTAssertEqual(result.document.segments.last?.startTimeSeconds, 2)
+    }
+
+    func testAdjacentNonDeepgramFinalPrefixIsTrimmed() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "final-1",
+            start: 0,
+            end: 2,
+            text: "alpha beta gamma",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "final-2",
+            start: 2.1,
+            end: 4,
+            text: "beta gamma delta",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.text), ["alpha beta gamma", "delta"])
+    }
+
+    func testFullyCoveredAdjacentFinalPrefixIsPreserved() {
+        var accumulator = TranscriptSegmentAccumulator()
+
+        _ = accumulator.apply(.upsert(genericSegment(
+            id: "final-1",
+            start: 0,
+            end: 2,
+            text: "alpha beta",
+            isFinal: true
+        )))
+        let result = accumulator.apply(.upsert(genericSegment(
+            id: "final-2",
+            start: 2.1,
+            end: 4,
+            text: "alpha beta",
+            isFinal: true
+        )))
+
+        XCTAssertEqual(result.document.segments.map(\.id), ["final-1", "final-2"])
+    }
+
+    func testCaptionDocumentSinkAcceptsJSONTranscriptURL() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("caption-document-sink-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let transcriptURL = directory.appendingPathComponent("transcript.txt")
-        let sink = try LegacyTranscriptUpdateFileSink(transcriptURL: transcriptURL)
+        let transcriptURL = directory.appendingPathComponent("transcript.json")
+        let sink = CaptionDocumentTranscriptUpdateSink(transcriptURL: transcriptURL)
 
-        sink.receive(.replaceAll([
+        try sink.persist(.replaceAll([
             TranscriptSegment(id: "segment-1", text: "hello", language: "en-US", isFinal: true)
         ]))
-        try sink.persist(.upsert(TranscriptSegment(id: "segment-2", text: "world", language: "en-US", isFinal: true)))
 
-        let document = try LegacyTranscriptBridge.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
-        XCTAssertEqual(document.segments.map(\.id), ["segment-1", "segment-2"])
-        XCTAssertEqual(document.segments.map(\.text), ["hello", "world"])
-        XCTAssertEqual(try String(contentsOf: transcriptURL, encoding: .utf8), "User A:\nhello world\n")
+        let document = try MeetingTranscriptStore.readDocument(from: transcriptURL)
+        XCTAssertEqual(document.turns.map(\.id), ["segment-1"])
+        XCTAssertEqual(document.turns.map(\.text), ["hello"])
     }
 
     private func deepgramSegment(
@@ -321,6 +447,27 @@ final class TranscriptSegmentAccumulatorTests: XCTestCase {
             endTimeSeconds: end,
             text: text,
             sourceProvider: SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID,
+            isFinal: isFinal,
+            speechFinal: false,
+            timingSource: .precise
+        )
+    }
+
+    private func genericSegment(
+        id: String,
+        speaker: String = "speaker-1",
+        start: Double,
+        end: Double,
+        text: String,
+        isFinal: Bool
+    ) -> TranscriptSegment {
+        TranscriptSegment(
+            id: id,
+            speaker: TranscriptSpeaker(identifier: speaker),
+            startTimeSeconds: start,
+            endTimeSeconds: end,
+            text: text,
+            sourceProvider: "unit-test-provider",
             isFinal: isFinal,
             speechFinal: false,
             timingSource: .precise

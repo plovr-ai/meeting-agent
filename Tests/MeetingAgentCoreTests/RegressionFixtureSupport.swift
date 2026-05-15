@@ -109,7 +109,8 @@ extension RegressionFixtureFiles {
     }
 
     static func loadTranscript(in fixtureURL: URL) throws -> TranscriptDocument {
-        try LegacyTranscriptBridge.readDocument(from: fixtureURL.appendingPathComponent("transcript.json"))
+        try MeetingTranscriptStore.readDocument(from: fixtureURL.appendingPathComponent("transcript.json"))
+            .transcriptDocument
     }
 
 }

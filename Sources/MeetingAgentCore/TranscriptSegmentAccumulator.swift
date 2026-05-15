@@ -685,32 +685,6 @@ public struct TranscriptSegmentAccumulator {
     }
 }
 
-public final class LegacyTranscriptUpdateFileSink: TranscriptUpdateSink {
-    private let writer: LegacyTranscriptBridge
-    private var accumulator: TranscriptSegmentAccumulator
-
-    public init(
-        transcriptURL: URL,
-        initialDocument: TranscriptDocument = TranscriptDocument()
-    ) throws {
-        self.writer = try LegacyTranscriptBridge(url: transcriptURL)
-        self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
-    }
-
-    public func receive(_ update: TranscriptSegmentUpdate) {
-        try? persist(update)
-    }
-
-    public func persist(_ update: TranscriptSegmentUpdate) throws {
-        let result = accumulator.apply(update)
-        if let text = result.plainTextReplacement {
-            try writer.replace(with: text)
-        } else {
-            try writer.replace(with: result.document.segments)
-        }
-    }
-}
-
 public final class CaptionDocumentTranscriptUpdateSink: TranscriptUpdateSink {
     private let transcriptJSONURL: URL
     private var accumulator: TranscriptSegmentAccumulator

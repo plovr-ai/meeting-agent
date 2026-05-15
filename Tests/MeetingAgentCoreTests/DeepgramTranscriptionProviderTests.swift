@@ -237,14 +237,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(String(data: try XCTUnwrap(logger.entries.first?.data), encoding: .utf8), response)
     }
 
-    func testProviderWritesDeepgramSpeakersIntoUserLabelsThroughTranscriptWriter() async throws {
-        let transcriptURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("deepgram-users-\(UUID().uuidString)")
-            .appendingPathExtension("txt")
-        defer {
-            try? FileManager.default.removeItem(at: transcriptURL)
-            try? FileManager.default.removeItem(at: transcriptURL.deletingPathExtension().appendingPathExtension("json"))
-        }
+    func testProviderSpeakerIDsCanBeAssignedToUserLabels() async throws {
         let client = RecordingDeepgramClient(response: """
         {
           "results": {
@@ -265,11 +258,8 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             audio: AudioInput(wavURL: URL(fileURLWithPath: "/tmp/capture.wav"), localeIdentifier: "en-US"),
             options: TranscriptionOptions(sourceLocale: "en-US")
         )
-        try LegacyTranscriptBridge(url: transcriptURL).replace(with: output.segments)
 
-        let document = try LegacyTranscriptBridge.readDocument(
-            from: transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        )
+        let document = TranscriptDocument(segments: TranscriptSpeakerLabeler.assignSpeakerLabels(to: output.segments))
         XCTAssertEqual(document.segments.map(\.speakerID), [
             "deepgram-speaker-2",
             "deepgram-speaker-7",
@@ -277,7 +267,7 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
         ])
         XCTAssertEqual(document.segments.map(\.speakerLabel), ["User A", "User B", "User A"])
         XCTAssertEqual(
-            try String(contentsOf: transcriptURL, encoding: .utf8),
+            TranscriptFormatter.render(document.segments) + "\n",
             """
             User A:
             hello

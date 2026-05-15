@@ -65,11 +65,11 @@ Use the app settings to match the meeting language. The default is `en-US`; Chin
 - `LocalSpeechTranscriptionProvider` uses `SystemSpeechTranscriber`.
 - `WhisperSpeechTranscriptionProvider` uses a local `whisper.cpp` CLI and model.
 - `SystemSpeechTranscriber` adapts captured PCM frames into `SFSpeechAudioBufferRecognitionRequest`.
-- If Speech recognition permission or availability fails, WAV recording should continue and the transcript file should contain the failure reason.
+- If Speech recognition permission or availability fails, WAV recording should continue and the caption document should contain the failure reason.
 
 ## Realtime Caption Architecture
 
-- Realtime captions are currently caption-only. Active recording must not call realtime translation providers, `TranslationRuntime`, `TranslationExperiencePipeline`, `LiveTranslationScheduler`, replay backfill schedulers, or publish `caption_translation_*` / `translation_*` overlay events.
+- Realtime captions are currently caption-only. Active recording must not call realtime translation providers or publish `caption_translation_*` / `translation_*` overlay events unless a new translation architecture is explicitly introduced.
 - The active path is:
   - audio capture writes WAV through `MeetingRecorder`;
   - the selected `SpeechTranscriptionProvider` emits `SpeechRecognitionEvent` / `TranscriptSegment` updates;
@@ -80,10 +80,10 @@ Use the app settings to match the meeting language. The default is `en-US`; Chin
 - Speaker separation should come from provider/model output when available. Different speakers must naturally create separate visible turns. Same-speaker text should remain in the same turn and use readable sections only when pause, punctuation, or `speechFinal` boundaries justify it. Do not split realtime captions by arbitrary character count.
 - Interim text may revise in place, for example `A` -> `AB` -> `AC`. The UI must replace the active draft rather than append every interim prefix as separate visible rows.
 - Final transcript updates must bypass draft throttling. Draft caption throttling must not cancel or stale an already pending final caption apply.
-- Caption persistence is the source of truth for realtime subtitles. On stop, `MeetingRecorder` must flush the caption document and must not overwrite it with an empty legacy transcript document.
+- Caption persistence is the source of truth for realtime subtitles. On stop, `MeetingRecorder` must flush the caption document and must not overwrite it with empty or legacy transcript data.
 - Product consumers must use `MeetingSessionState` / `TranscriptState` / `SummaryState` in memory. Transcript and summary files are repository-backed hydrate/backup details only: opening a completed meeting may load files into memory once, but summary, export, artifact snapshot, clipboard, and knowledge package flows must read the in-memory state whenever it exists instead of directly reading transcript or summary files.
-- `transcript.txt` / legacy transcript JSON support exists for compatibility, export, retry, and non-realtime transcription paths. Do not add redundant meeting artifacts for the realtime caption path; preserve existing post-meeting markdown/summary assets unless the user explicitly asks to delete them.
-- Historical translation classes and `translation-results.jsonl` fixtures may remain for old data analysis or isolated legacy tests, but they must not be reachable from `MeetingAgentViewModel`, `MeetingRecorder`, or the app subtitle UI during active recording.
+- Meeting transcript persistence uses `transcript.json` as a `CaptionDocument`. `transcript.txt` may be used only as an explicit export filename, not as an internal meeting artifact. Do not reintroduce old transcript file bridges, file-backed transcript sinks, redundant transcript artifacts, or translation result fixtures.
+- Preserve existing post-meeting markdown/summary assets unless the user explicitly asks to delete them.
 
 ## Realtime Caption Verification Requirements
 

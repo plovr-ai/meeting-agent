@@ -5,11 +5,11 @@
   "notes" : [
     "Multi-speaker dialogue from a Microsoft Teams interpreter demo.",
     "Speaker identifiers and labels are preserved in the transcript; the segment 'works very well. It works very, very well.' is attributed to User B/deepgram-speaker-1.",
-    "The fixture covers speaker interruption boundaries where translation units must not merge the same speaker across another participant.",
+    "The fixture covers speaker interruption boundaries where caption turns must not merge the same speaker across another participant.",
     "Final transcript segments have speechFinal=false."
   ],
   "purpose" : "golden",
-  "scenario" : "multi-speaker-speaker-attribution-translation-latency",
+  "scenario" : "multi-speaker-speaker-attribution-caption-boundaries",
   "sourceLocale" : "en-US",
   "sourceMeetingID" : "DF69D4F7-2F0E-4AE2-B633-592839B94D15",
   "targetLocale" : "zh-CN"
