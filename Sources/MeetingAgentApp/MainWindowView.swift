@@ -15,6 +15,8 @@ struct MainWindowView: View {
     @State private var destination: MainWindowDestination = .today
     @State private var workspaceReturnDestination: MainWindowDestination = .today
     @StateObject private var audioReplayController = MeetingAudioReplayController()
+    @AppStorage("knowledge.karpathyWikiEnabled") private var karpathyWikiEnabled = false
+    @AppStorage("knowledge.karpathyWikiRootPath") private var karpathyWikiRootPath = ""
 
     var body: some View {
         NavigationSplitView {
@@ -70,6 +72,8 @@ struct MainWindowView: View {
                     isRecording: viewModel.isRecording,
                     status: viewModel.speechConfigurationStatus,
                     primaryChainPreflightResult: viewModel.primaryChainPreflightResult,
+                    karpathyWikiEnabled: $karpathyWikiEnabled,
+                    karpathyWikiRootPath: $karpathyWikiRootPath,
                     save: { viewModel.saveSpeechConfiguration($0) }
                 )
             case .today, .meetings, .library:
@@ -173,6 +177,22 @@ struct MainWindowView: View {
                     exportKnowledgePackage: { meeting in
                         export("knowledge-package", for: meeting) { destination in
                             try viewModel.exportKnowledgePackage(for: meeting.id, to: destination)
+                        }
+                    },
+                    exportToKarpathyWiki: { meeting in
+                        guard karpathyWikiEnabled,
+                              !karpathyWikiRootPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        else {
+                            NSSound.beep()
+                            return
+                        }
+                        Task {
+                            do {
+                                let root = URL(fileURLWithPath: karpathyWikiRootPath)
+                                _ = try await viewModel.syncKnowledgeToKarpathyWiki(for: meeting.id, wikiRoot: root)
+                            } catch {
+                                NSSound.beep()
+                            }
                         }
                     },
                     retryTranscription: { meeting in
@@ -412,6 +432,7 @@ private struct MeetingDetailView: View {
     let exportSRT: (MeetingRecord) -> Void
     let exportVTT: (MeetingRecord) -> Void
     let exportKnowledgePackage: (MeetingRecord) -> Void
+    let exportToKarpathyWiki: (MeetingRecord) -> Void
     let retryTranscription: (MeetingRecord) -> Void
     let updateSpeakerLabel: (MeetingRecord, String, String) -> Void
 
@@ -448,6 +469,7 @@ private struct MeetingDetailView: View {
                     exportSRT: { exportSRT(meeting) },
                     exportVTT: { exportVTT(meeting) },
                     exportKnowledgePackage: { exportKnowledgePackage(meeting) },
+                    exportToKarpathyWiki: { exportToKarpathyWiki(meeting) },
                     retryTranscription: { retryTranscription(meeting) },
                     updateSpeakerLabel: { speakerID, label in
                         updateSpeakerLabel(meeting, speakerID, label)
@@ -586,6 +608,7 @@ private struct MeetingCommandCenterView: View {
     let exportSRT: () -> Void
     let exportVTT: () -> Void
     let exportKnowledgePackage: () -> Void
+    let exportToKarpathyWiki: () -> Void
     let retryTranscription: () -> Void
     let updateSpeakerLabel: (String, String) -> Void
     @State private var editAgendaTarget: MeetingRecord?
@@ -777,6 +800,13 @@ private struct MeetingCommandCenterView: View {
                 exportKnowledgePackage()
             } label: {
                 Label("Export Knowledge Package", systemImage: "brain")
+            }
+            .disabled(isRecording || meeting.transcriptJSONURL == nil)
+
+            Button {
+                exportToKarpathyWiki()
+            } label: {
+                Label("Export to Wiki", systemImage: "books.vertical")
             }
             .disabled(isRecording || meeting.transcriptJSONURL == nil)
 

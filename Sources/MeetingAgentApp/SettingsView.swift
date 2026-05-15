@@ -8,6 +8,8 @@ struct SettingsView: View {
     let status: SpeechConfigurationValidationStatus
     let primaryChainPreflightResult: PrimaryChainPreflightResult
     let save: (SpeechTranscriptionConfiguration) -> Void
+    @Binding var karpathyWikiEnabled: Bool
+    @Binding var karpathyWikiRootPath: String
 
     @State private var draft: SpeechTranscriptionConfiguration
 
@@ -17,6 +19,8 @@ struct SettingsView: View {
         isRecording: Bool,
         status: SpeechConfigurationValidationStatus,
         primaryChainPreflightResult: PrimaryChainPreflightResult,
+        karpathyWikiEnabled: Binding<Bool>,
+        karpathyWikiRootPath: Binding<String>,
         save: @escaping (SpeechTranscriptionConfiguration) -> Void
     ) {
         self.configuration = configuration
@@ -25,6 +29,8 @@ struct SettingsView: View {
         self.status = status
         self.primaryChainPreflightResult = primaryChainPreflightResult
         self.save = save
+        _karpathyWikiEnabled = karpathyWikiEnabled
+        _karpathyWikiRootPath = karpathyWikiRootPath
         _draft = State(initialValue: configuration)
     }
 
@@ -97,6 +103,18 @@ struct SettingsView: View {
                     SettingsCommandCenterPanel("Deepgram") {
                         SecureField("Deepgram API Key", text: deepgramAPIKeyBinding)
                     }
+                }
+
+                SettingsCommandCenterPanel("Knowledge Destinations") {
+                    Toggle("Export to Karpathy Wiki", isOn: $karpathyWikiEnabled)
+                        .toggleStyle(.checkbox)
+
+                    TextField("Wiki root", text: $karpathyWikiRootPath)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!karpathyWikiEnabled)
+
+                    Text("GBrain sync is planned")
+                        .commandCenterCaption(CommandCenterPalette.secondaryText)
                 }
 
                 SettingsCommandCenterPanel("Validation") {
