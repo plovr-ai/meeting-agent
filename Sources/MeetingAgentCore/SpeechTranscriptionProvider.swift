@@ -120,6 +120,15 @@ public struct LocalSpeechTranscriptionProvider: SpeechTranscriptionProvider {
             localeIdentifier: localeIdentifier
         )
     }
+
+    public func start(context: SpeechTranscriptionStreamContext) async throws -> AudioFrameTranscriber {
+        try await SystemSpeechTranscriber.start(
+            transcriptURL: context.transcriptURL,
+            localeIdentifier: context.localeIdentifier,
+            environment: .live,
+            transcriptUpdateSink: context.transcriptUpdateSink
+        )
+    }
 }
 
 public enum StreamingSpeechTranscriberFactory {

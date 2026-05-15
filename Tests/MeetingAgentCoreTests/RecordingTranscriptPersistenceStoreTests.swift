@@ -5,7 +5,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
     func testUpsertAppendsEventWithoutImmediateTextSnapshot() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -13,15 +13,15 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         try store.apply(.upsert(TranscriptSegment(id: "segment-1", text: "hello", isFinal: false)))
 
         XCTAssertEqual(store.currentDocument.segments.map(\.id), ["segment-1"])
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "")
-        XCTAssertEqual(try TranscriptFileWriter.readDocument(from: fixture.structuredURL), TranscriptDocument())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
+        XCTAssertTrue(try MeetingTranscriptStore.readDocument(from: fixture.structuredURL).turns.isEmpty)
         XCTAssertEqual(try fixture.eventLogLineCount(), 1)
     }
 
-    func testDebouncedSnapshotWritesCompleteArtifacts() throws {
+    func testDebouncedSnapshotWritesCaptionDocumentOnly() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 2,
             now: fixture.now
         )
@@ -30,15 +30,15 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         fixture.currentDate = Date(timeIntervalSince1970: 3)
         try store.apply(.upsert(TranscriptSegment(id: "segment-2", text: "world", isFinal: true)))
 
-        let document = try TranscriptFileWriter.readDocument(from: fixture.structuredURL)
-        XCTAssertEqual(document.segments.map(\.id), ["segment-1", "segment-2"])
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nhello world\n")
+        let document = try MeetingTranscriptStore.readDocument(from: fixture.structuredURL)
+        XCTAssertEqual(document.turns.map(\.id), ["segment-1", "segment-2"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
     }
 
     func testSnapshotWritesCaptionDocumentForRepositoryHydration() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -69,7 +69,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
     func testDraftTranslationPatchDoesNotSnapshotBeforeDebounce() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -83,14 +83,14 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         ))
 
         XCTAssertEqual(store.currentDocument.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
         XCTAssertEqual(try fixture.eventLogLineCount(), 2)
     }
 
     func testFinalTranslationPatchForcesSnapshot() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -103,21 +103,18 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
             isFinal: true
         ))
 
-        let document = try TranscriptFileWriter.readDocument(from: fixture.structuredURL)
-        XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
-        XCTAssertEqual(document.segments.first?.translationIsFinal, true)
         let captionDocument = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
         XCTAssertEqual(captionDocument.turns.first?.translatedText, "确认负责人。")
         XCTAssertEqual(captionDocument.turns.first?.translationTargetLocale, "zh-CN")
         XCTAssertEqual(captionDocument.turns.first?.translationIsFinal, true)
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nConfirm owner.\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
         XCTAssertEqual(try fixture.eventLogLineCount(), 2)
     }
 
     func testCloseFlushesFinalSnapshot() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -125,21 +122,26 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         try store.apply(.upsert(TranscriptSegment(id: "segment-1", text: "hello", isFinal: true)))
         try store.close()
 
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nhello\n")
         XCTAssertEqual(
-            try TranscriptFileWriter.readDocument(from: fixture.structuredURL).segments.map(\.id),
+            try MeetingTranscriptStore.readDocument(from: fixture.structuredURL).turns.map(\.id),
             ["segment-1"]
         )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
     }
 
     func testRecoversFromSnapshotPlusEventLog() throws {
         let fixture = try StoreFixture()
-        try TranscriptFileWriter(url: fixture.transcriptURL).replace(with: [
-            TranscriptSegment(id: "snapshot-segment", text: "from snapshot", isFinal: true)
-        ])
+        try FileTranscriptRepository().saveCaptionDocument(CaptionDocument(turns: [
+            CaptionTurn(
+                id: "snapshot-segment",
+                sections: [CaptionSection(id: "snapshot-segment-section", text: "from snapshot")],
+                state: .final,
+                source: CaptionTurnSource(providerID: "legacy")
+            )
+        ]), for: fixture.record)
         var currentDate = Date(timeIntervalSince1970: 0)
         let firstStore = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: { currentDate }
         )
@@ -147,7 +149,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
 
         currentDate = Date(timeIntervalSince1970: 1)
         let recovered = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: { currentDate }
         )
@@ -155,15 +157,16 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         XCTAssertEqual(recovered.currentDocument.segments.map(\.id), ["snapshot-segment", "event-segment"])
         try recovered.flushSnapshot()
         XCTAssertEqual(
-            try TranscriptFileWriter.readDocument(from: fixture.structuredURL).segments.map(\.id),
+            try MeetingTranscriptStore.readDocument(from: fixture.structuredURL).turns.map(\.id),
             ["snapshot-segment", "event-segment"]
         )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
     }
 
-    func testReplaceWithPlainTextForcesSnapshotAndClearsStructuredDocument() throws {
+    func testReplaceWithPlainTextForcesEmptyCaptionSnapshotWithoutTextArtifact() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -171,15 +174,14 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         try store.apply(.upsert(TranscriptSegment(id: "segment-1", text: "hello", isFinal: true)))
         try store.apply(.replaceWithPlainText("Speech recognition unavailable"))
 
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "Speech recognition unavailable\n")
-        XCTAssertTrue(try TranscriptFileWriter.readDocument(from: fixture.structuredURL).segments.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
         XCTAssertTrue(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.isEmpty)
     }
 
     func testReplaceAllForcesSnapshotAndCanBeReplayed() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -189,9 +191,9 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
             TranscriptSegment(id: "segment-2", text: "second", isFinal: true)
         ]))
 
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nfirst second\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
         let recovered = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -201,7 +203,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
     func testRecoveryReplaysTranslationPatchAndPlainTextReplacement() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -214,7 +216,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
             isFinal: true
         ))
         let recoveredTranslation = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -223,21 +225,21 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
 
         try store.apply(.replaceWithPlainText("Speech recognition unavailable"))
         let recoveredPlainText = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
         try recoveredPlainText.flushSnapshot()
 
         XCTAssertTrue(recoveredPlainText.currentDocument.segments.isEmpty)
-        XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "Speech recognition unavailable\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.transcriptURL.path))
         XCTAssertTrue(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.isEmpty)
     }
 
     func testTranslationPatchRejectsBlankInputs() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         )
@@ -268,7 +270,7 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         try #"{"type":"upsert"}"#.write(to: fixture.eventLogURL, atomically: true, encoding: .utf8)
 
         XCTAssertThrowsError(try RecordingTranscriptPersistenceStore(
-            transcriptURL: fixture.transcriptURL,
+            transcriptJSONURL: fixture.structuredURL,
             snapshotInterval: 10,
             now: fixture.now
         ))
@@ -298,7 +300,7 @@ private final class StoreFixture {
             startedAt: currentDate,
             endedAt: nil,
             audioURL: directory.appendingPathComponent("audio.wav"),
-            transcriptURL: transcriptURL,
+            transcriptURL: nil,
             transcriptJSONURL: structuredURL
         )
     }

@@ -286,7 +286,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertTrue(workspaceSource.contains("Label(\"Copy Summary\", systemImage: \"doc.on.clipboard\")"))
         XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.summaryURL == nil)"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Export Transcript\", systemImage: \"doc.text\")"))
-        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.transcriptURL == nil)"))
+        XCTAssertTrue(workspaceSource.contains(".disabled(isRecording || meeting.transcriptJSONURL == nil)"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Export Meeting JSON\", systemImage: \"curlybraces\")"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Export SRT\", systemImage: \"captions.bubble\")"))
         XCTAssertTrue(workspaceSource.contains("Label(\"Export VTT\", systemImage: \"captions.bubble\")"))

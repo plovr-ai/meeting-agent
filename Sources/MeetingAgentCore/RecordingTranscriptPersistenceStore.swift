@@ -1,7 +1,6 @@
 import Foundation
 
 final class RecordingTranscriptPersistenceStore {
-    private let transcriptURL: URL
     private let structuredURL: URL
     private let eventLogURL: URL
     private let snapshotInterval: TimeInterval
@@ -11,20 +10,18 @@ final class RecordingTranscriptPersistenceStore {
     private var plainTextReplacement: String?
 
     init(
-        transcriptURL: URL,
+        transcriptJSONURL: URL,
         snapshotInterval: TimeInterval = 2,
         now: @escaping () -> Date = Date.init
     ) throws {
-        self.transcriptURL = transcriptURL
-        self.structuredURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
-        self.eventLogURL = transcriptURL
+        self.structuredURL = transcriptJSONURL
+        self.eventLogURL = transcriptJSONURL
             .deletingLastPathComponent()
             .appendingPathComponent("transcript-events.jsonl")
         self.snapshotInterval = snapshotInterval
         self.now = now
         self.lastSnapshotAt = now()
-        let initialDocument = try TranscriptFileWriter.readDocument(from: structuredURL)
-        FileManager.default.createFile(atPath: transcriptURL.path, contents: Data())
+        let initialDocument = try MeetingTranscriptStore.readDocument(from: structuredURL).transcriptDocument
         self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
         try replayEvents()
     }
@@ -46,12 +43,12 @@ final class RecordingTranscriptPersistenceStore {
 
     func flushSnapshot() throws {
         if let plainTextReplacement {
-            try writeSnapshot(CaptionDocument(), renderedText: plainTextReplacement)
+            _ = plainTextReplacement
+            try writeSnapshot(CaptionDocument())
         } else {
-            let labeledSegments = TranscriptFileWriter.assignSpeakerLabels(to: accumulator.currentDocument.segments)
+            let labeledSegments = Self.assignSpeakerLabels(to: accumulator.currentDocument.segments)
             try writeSnapshot(
-                Self.captionDocument(from: labeledSegments, updatedAt: now()),
-                renderedText: TranscriptFormatter.render(labeledSegments)
+                Self.captionDocument(from: labeledSegments, updatedAt: now())
             )
         }
         lastSnapshotAt = now()
@@ -133,10 +130,13 @@ final class RecordingTranscriptPersistenceStore {
         }
     }
 
-    private func writeSnapshot(_ document: CaptionDocument, renderedText: String) throws {
+    private func writeSnapshot(_ document: CaptionDocument) throws {
         let data = try JSONEncoder.meetingAgent.encode(document)
+        try FileManager.default.createDirectory(
+            at: structuredURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         try data.write(to: structuredURL, options: .atomic)
-        try (renderedText + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
     }
 
     private static func captionDocument(from segments: [TranscriptSegment], updatedAt: Date) -> CaptionDocument {
@@ -200,6 +200,43 @@ final class RecordingTranscriptPersistenceStore {
         }
         let locales = Set(segments.compactMap(\.language).filter { !$0.isEmpty })
         return CaptionProviderInfo(id: providerID, locale: locales.count == 1 ? locales.first : nil)
+    }
+
+    private static func assignSpeakerLabels(to segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var mapper = SpeakerLabelMapper(speakers: segments.map(\.speaker))
+        var generatedIDsBySpeaker: [TranscriptSpeaker: String] = [:]
+        var nextSpeakerIndex = 1
+        return segments.map { segment in
+            let speaker = segment.speaker
+            let label = mapper.label(for: speaker)
+            let speakerID: String
+            if let existingID = speaker.identifier {
+                speakerID = existingID
+            } else if let generatedID = generatedIDsBySpeaker[speaker] {
+                speakerID = generatedID
+            } else {
+                speakerID = "speaker-\(nextSpeakerIndex)"
+                generatedIDsBySpeaker[speaker] = speakerID
+                nextSpeakerIndex += 1
+            }
+            return TranscriptSegment(
+                id: segment.id,
+                speaker: TranscriptSpeaker(identifier: speakerID, label: segment.speakerLabel ?? label),
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                text: segment.text,
+                language: segment.language,
+                sourceProvider: segment.sourceProvider,
+                isFinal: segment.isFinal,
+                speechFinal: segment.speechFinal,
+                confidence: segment.confidence,
+                createdAt: segment.createdAt,
+                timingSource: segment.timingSource,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal
+            )
+        }
     }
 
     private static var eventEncoder: JSONEncoder {

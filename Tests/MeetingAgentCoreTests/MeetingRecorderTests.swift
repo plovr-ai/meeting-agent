@@ -464,17 +464,17 @@ final class MeetingRecorderTests: XCTestCase {
 
         _ = fixture.recorder.drainTranscriptUpdates()
 
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "")
-        XCTAssertEqual(
-            try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).segments,
-            []
-        )
+        XCTAssertNil(record.transcriptURL)
+        XCTAssertTrue(try MeetingTranscriptStore.readDocument(from: XCTUnwrap(record.transcriptJSONURL)).turns.isEmpty)
 
         _ = try fixture.recorder.stopRecording(at: Date(timeIntervalSince1970: 200))
 
-        let document = try TranscriptFileWriter.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
-        XCTAssertEqual(document.segments.map(\.text), ["persist me"])
-        XCTAssertEqual(try String(contentsOf: XCTUnwrap(record.transcriptURL), encoding: .utf8), "User A:\npersist me\n")
+        let document = try MeetingTranscriptStore.readDocument(from: XCTUnwrap(record.transcriptJSONURL))
+        XCTAssertEqual(document.turns.map(\.text), ["persist me"])
+        let transcriptTextURL = try XCTUnwrap(record.transcriptJSONURL)
+            .deletingLastPathComponent()
+            .appendingPathComponent("transcript.txt")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptTextURL.path))
         XCTAssertEqual(try transcriptEventLogLineCount(for: record), 1)
     }
 
@@ -772,7 +772,7 @@ private func performanceEvents(at url: URL) throws -> [PerformanceEvent] {
 }
 
 private func transcriptEventLogLineCount(for record: MeetingRecord) throws -> Int {
-    let eventLogURL = try XCTUnwrap(record.transcriptURL)
+    let eventLogURL = try XCTUnwrap(record.transcriptJSONURL)
         .deletingLastPathComponent()
         .appendingPathComponent("transcript-events.jsonl")
     return try String(contentsOf: eventLogURL, encoding: .utf8)
