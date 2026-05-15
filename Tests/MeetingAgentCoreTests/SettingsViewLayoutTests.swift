@@ -53,7 +53,7 @@ final class SettingsViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("SettingsCommandCenterPanel(\"Knowledge Destinations\")"))
         XCTAssertTrue(source.contains("Toggle(\"Export to Karpathy Wiki\""))
-        XCTAssertTrue(source.contains("TextField(\"Wiki root\""))
+        XCTAssertTrue(source.contains("CommandCenterTextEditor(text: $karpathyWikiRootPath)"))
         XCTAssertTrue(source.contains("Text(\"GBrain sync is planned\")"))
     }
 

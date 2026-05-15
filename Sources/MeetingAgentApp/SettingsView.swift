@@ -109,8 +109,8 @@ struct SettingsView: View {
                     Toggle("Export to Karpathy Wiki", isOn: $karpathyWikiEnabled)
                         .toggleStyle(.checkbox)
 
-                    TextField("Wiki root", text: $karpathyWikiRootPath)
-                        .textFieldStyle(.roundedBorder)
+                    CommandCenterTextEditor(text: $karpathyWikiRootPath)
+                        .frame(minHeight: 44, maxHeight: 44)
                         .disabled(!karpathyWikiEnabled)
 
                     Text("GBrain sync is planned")
