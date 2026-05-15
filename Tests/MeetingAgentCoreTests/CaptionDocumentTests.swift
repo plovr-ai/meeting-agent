@@ -105,6 +105,10 @@ final class CaptionDocumentTests: XCTestCase {
             ],
             state: .final,
             source: CaptionTurnSource(providerID: "deepgram", streamID: "stream-1", resultIDs: ["r1"], utteranceIDs: ["utt-1", "utt-2"]),
+            language: "zh-CN",
+            translatedText: "First sentence. Second sentence.",
+            translationTargetLocale: "en-US",
+            translationIsFinal: true,
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_777_000_001)
         )
@@ -115,8 +119,12 @@ final class CaptionDocumentTests: XCTestCase {
         XCTAssertEqual(segment.speakerID, "speaker-1")
         XCTAssertEqual(segment.speakerLabel, "Alice")
         XCTAssertEqual(segment.text, "第一句。\n第二句。")
+        XCTAssertEqual(segment.language, "zh-CN")
         XCTAssertEqual(segment.sourceProvider, "deepgram")
         XCTAssertTrue(segment.isFinal)
         XCTAssertEqual(segment.timingSource, .precise)
+        XCTAssertEqual(segment.translatedText, "First sentence. Second sentence.")
+        XCTAssertEqual(segment.translationTargetLocale, "en-US")
+        XCTAssertEqual(segment.translationIsFinal, true)
     }
 }
