@@ -51,8 +51,8 @@ final class LiveCaptionStoreTests: XCTestCase {
         XCTAssertEqual(LiveCaptionFreezeReason.punctuation.boundaryStrength, .soft)
     }
 
-    func testSecondLanguageEnabledChecksLocalesAndExistingTranslation() {
-        XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(
+    func testSecondLanguageEnabledRequiresExistingTranslation() {
+        XCTAssertFalse(LiveCaptionDisplayState.isSecondLanguageEnabled(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
             hasTranslatedText: false
@@ -64,7 +64,7 @@ final class LiveCaptionStoreTests: XCTestCase {
         ))
         XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(
             sourceLocale: "en-US",
-            targetLocale: "en-US",
+            targetLocale: "zh-CN",
             hasTranslatedText: true
         ))
     }

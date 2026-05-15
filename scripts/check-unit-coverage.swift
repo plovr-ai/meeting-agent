@@ -26,16 +26,10 @@ private let excludedFiles: Set<String> = [
     "SpeechTranscriptionProvider.swift",
     "Models.swift",
     "BilingualProvider.swift",
-    // Realtime captions no longer call the legacy translation/backfill runtime.
-    // Keep these covered by their direct unit suites without counting them in
-    // the active caption architecture gate.
+    // Historical translation analysis helpers remain outside the active caption
+    // architecture gate and are covered by direct unit suites.
     "AccurateTranslationScheduler.swift",
-    "LiveTranslationScheduler.swift",
-    "ReplayTranslationBackfillPlanner.swift",
-    "ReplayTranslationBackfillScheduler.swift",
-    "TranslationExperiencePipeline.swift",
     "TranslationResultPersistenceStore.swift",
-    "TranslationRuntime.swift",
     "TranslationUnitBuilder.swift"
 ]
 

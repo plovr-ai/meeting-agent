@@ -127,9 +127,9 @@ final class LiveCaptionDisplayStateTests: XCTestCase {
         XCTAssertEqual(state, .failed(sourceText: "We need a launch owner.", message: "timeout"))
     }
 
-    func testSecondLanguageEnabledUsesLocaleDifferenceOrExistingTranslation() {
+    func testSecondLanguageEnabledRequiresExistingTranslation() {
         XCTAssertFalse(LiveCaptionDisplayState.isSecondLanguageEnabled(sourceLocale: "en-US", targetLocale: "en-US", hasTranslatedText: false))
-        XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(sourceLocale: "en-US", targetLocale: "zh-CN", hasTranslatedText: false))
+        XCTAssertFalse(LiveCaptionDisplayState.isSecondLanguageEnabled(sourceLocale: "en-US", targetLocale: "zh-CN", hasTranslatedText: false))
         XCTAssertTrue(LiveCaptionDisplayState.isSecondLanguageEnabled(sourceLocale: "en-US", targetLocale: "en-US", hasTranslatedText: true))
     }
 }

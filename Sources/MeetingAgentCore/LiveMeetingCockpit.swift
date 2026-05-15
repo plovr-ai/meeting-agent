@@ -425,12 +425,7 @@ public enum LiveCaptionDisplayState: Equatable {
         targetLocale: String,
         hasTranslatedText: Bool
     ) -> Bool {
-        if hasTranslatedText {
-            return true
-        }
-        let source = sourceLocale.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let target = targetLocale.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !source.isEmpty && !target.isEmpty && source != target
+        hasTranslatedText
     }
 }
 
@@ -914,43 +909,6 @@ private extension LiveCaptionTurn {
         } else {
             stableOriginalTextPrefix = ""
             unstableOriginalTextTail = originalText
-        }
-    }
-}
-
-public struct LiveCaptionTranslationAdapter {
-    private let provider: TextTranslationProvider
-
-    public init(provider: TextTranslationProvider) {
-        self.provider = provider
-    }
-
-    public func translate(turn: LiveCaptionTurn, in store: inout LiveCaptionStore) async throws {
-        guard turn.isFinal else { return }
-        let options = TranslationOptions(sourceLocale: turn.sourceLocale, targetLocale: turn.targetLocale)
-        if options.isSameLanguage {
-            store.markTranslationCompleteWithoutText(forTurnID: turn.id)
-            return
-        }
-        let segment = TranscriptSegment(
-            id: turn.sourceSegmentID,
-            speaker: turn.speaker,
-            text: turn.originalText,
-            language: turn.sourceLocale,
-            isFinal: turn.isFinal,
-            createdAt: turn.createdAt
-        )
-        do {
-            let translated = try await provider.translate(
-                transcript: TranscriptDocument(segments: [segment]),
-                options: options
-            )
-            let translatedText = translated.segments.first { $0.id == turn.sourceSegmentID }?.targetText ?? ""
-            store.attachTranslation(translatedText, toTurnID: turn.id)
-        } catch {
-            let nsError = error as NSError
-            store.markTranslationFailed(forTurnID: turn.id, message: "\(nsError.domain) error \(nsError.code)")
-            throw error
         }
     }
 }

@@ -41,7 +41,6 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let transcriptRepository: TranscriptRepository
     private let summaryRepository: SummaryRepository
     private var realtimeCaptionSession: RealtimeCaptionSession
-    private var realtimeCaptionSessionUsesCaptionTranslationProvider = false
     private var latestRealtimeCaptionSnapshot: LiveCaptionPipelineSnapshot?
     private var liveCaptionPipeline: LiveCaptionPipeline
     private var activeCaptionApplySequence = 0
@@ -1212,7 +1211,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         LiveCaptionPipeline(
             sourceLocale: configuration.localeIdentifier,
             targetLocale: configuration.localeIdentifier,
-            translationProvider: nil,
             performanceEventLogger: performanceEventLogger
         )
     }
@@ -1246,7 +1244,6 @@ public final class MeetingAgentViewModel: ObservableObject {
         clearLiveCaptionTurns()
         liveCaptionPipeline = makeLiveCaptionPipeline()
         realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline())
-        realtimeCaptionSessionUsesCaptionTranslationProvider = false
         invalidateActiveCaptionApplyTasks()
     }
 
@@ -1582,10 +1579,6 @@ public final class MeetingAgentViewModel: ObservableObject {
     ) async {
         guard let latest = results.last else { return }
         guard isCurrentActiveCaptionApply(context) else { return }
-        if !realtimeCaptionSessionUsesCaptionTranslationProvider {
-            realtimeCaptionSession.replacePipeline(makeLiveCaptionPipeline())
-            realtimeCaptionSessionUsesCaptionTranslationProvider = true
-        }
         activeCaptionDocumentSignature = Self.captionDocumentSignature(latest.document)
         activeTranscriptDocument = latest.document
         var latestSnapshot: LiveCaptionPipelineSnapshot?
@@ -2090,12 +2083,6 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     private func currentPerformanceEventLogger() -> PerformanceEventLogger? {
         selectedMeeting?.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
-    }
-
-    public nonisolated static func openRouterCaptionTranslationProvider(
-        for configuration: SpeechTranscriptionConfiguration
-    ) -> TextTranslationProvider? {
-        nil
     }
 
     private func configureMeetingProgressCoordinator() {

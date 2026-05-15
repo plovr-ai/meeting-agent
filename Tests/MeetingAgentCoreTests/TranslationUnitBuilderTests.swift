@@ -392,9 +392,7 @@ final class TranslationUnitBuilderTests: XCTestCase {
         let pipeline = LiveCaptionPipeline(
             sourceLocale: "en-US",
             targetLocale: "zh-CN",
-            translationProvider: nil,
-            performanceEventLogger: nil,
-            translationMode: .unitPipelineActiveRecording
+            performanceEventLogger: nil
         )
         _ = pipeline.replayCaptionsOnly(document)
         let captionSnapshot = pipeline.flushCaptionsOnly(reason: .manualStop)
