@@ -89,6 +89,43 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertEqual(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.map(\.text), live.turns.map(\.text))
     }
 
+    func testRecordWithoutAudioURLPreservesLiveTranscript() async throws {
+        let fixture = try RefinementFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var record = fixture.record
+        record.audioURL = nil
+
+        let result = await fixture.service.refineTranscript(
+            for: record,
+            liveDocument: liveDocument(),
+            configuration: fixture.configuration
+        )
+
+        XCTAssertNil(result.captionDocument)
+        XCTAssertEqual(result.record.transcriptRefinement?.status, .failed)
+        XCTAssertEqual(result.record.transcriptRefinement?.failureReason, "No saved audio is available for transcript refinement")
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+    }
+
+    func testUnsupportedBatchProviderPreservesLiveTranscript() async throws {
+        let fixture = try RefinementFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var configuration = fixture.configuration
+        configuration.batchTranscriptionProviderID = "future-batch-provider"
+
+        let result = await fixture.service.refineTranscript(
+            for: fixture.record,
+            liveDocument: liveDocument(),
+            configuration: configuration
+        )
+
+        XCTAssertNil(result.captionDocument)
+        XCTAssertEqual(result.record.transcriptRefinement?.status, .failed)
+        XCTAssertEqual(result.record.transcriptRefinement?.providerID, "future-batch-provider")
+        XCTAssertEqual(result.record.transcriptRefinement?.failureReason, "Batch transcript provider is not supported")
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+    }
+
     func testEmptyBatchResultPreservesLiveTranscript() async throws {
         let fixture = try RefinementFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -110,6 +147,48 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertEqual(result.record.transcriptRefinement?.status, .failed)
         XCTAssertEqual(result.record.transcriptRefinement?.failureReason, "Batch transcript refinement returned no usable transcript")
         XCTAssertEqual(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.map(\.text), live.turns.map(\.text))
+    }
+
+    func testCaptionDocumentPreservesExplicitAndRepeatedSpeakerLabels() {
+        let createdAt = Date(timeIntervalSince1970: 10)
+        let updatedAt = Date(timeIntervalSince1970: 20)
+
+        let document = PostMeetingTranscriptRefinementService.captionDocument(
+            from: [
+                TranscriptSegment(
+                    id: "utt-1",
+                    speaker: TranscriptSpeaker(identifier: "speaker-a", label: "Alice"),
+                    text: "First turn.",
+                    language: nil
+                ),
+                TranscriptSegment(
+                    id: "utt-2",
+                    speaker: TranscriptSpeaker(identifier: "speaker-a"),
+                    text: "Second turn.",
+                    language: nil
+                ),
+                TranscriptSegment(
+                    id: "utt-3",
+                    speaker: TranscriptSpeaker(identifier: nil, label: "Unassigned"),
+                    text: "Speakerless turn.",
+                    language: nil
+                )
+            ],
+            providerID: "deepgram-batch-transcribe",
+            modelID: "nova-3",
+            localeIdentifier: "zh-CN",
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+
+        XCTAssertEqual(document.speakers, [
+            CaptionSpeaker(id: "speaker-a", label: "Alice", providerSpeakerID: "speaker-a")
+        ])
+        XCTAssertEqual(document.turns.map(\.speakerLabel), ["Alice", "Alice", "Unassigned"])
+        XCTAssertEqual(document.turns.map(\.language), ["zh-CN", "zh-CN", "zh-CN"])
+        XCTAssertEqual(document.createdAt, createdAt)
+        XCTAssertEqual(document.updatedAt, updatedAt)
+        XCTAssertEqual(document.finalizedAt, updatedAt)
     }
 
     private func liveDocument() -> CaptionDocument {
@@ -175,8 +254,10 @@ private final class FakeBatchAudioTranscriptionProvider: AudioTranscriptionProvi
 
     var document = TranscriptDocument()
     var error: Error?
+    private(set) var requests: [AudioInput] = []
 
     func transcribe(audio: AudioInput, options: TranscriptionOptions) async throws -> TranscriptDocument {
+        requests.append(audio)
         if let error {
             throw error
         }
