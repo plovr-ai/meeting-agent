@@ -759,7 +759,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             isFinal: false
         )))
         if let transcriptJSONURL = viewModel.selectedMeeting?.transcriptJSONURL {
-            try FileManager.default.removeItem(at: transcriptJSONURL)
+            try? FileManager.default.removeItem(at: transcriptJSONURL)
         }
         viewModel.drainRecordingFrames()
 

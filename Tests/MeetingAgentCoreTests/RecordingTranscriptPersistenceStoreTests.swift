@@ -35,6 +35,37 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nhello world\n")
     }
 
+    func testSnapshotWritesCaptionDocumentForRepositoryHydration() throws {
+        let fixture = try StoreFixture()
+        let store = try RecordingTranscriptPersistenceStore(
+            transcriptURL: fixture.transcriptURL,
+            snapshotInterval: 10,
+            now: fixture.now
+        )
+
+        try store.apply(.upsert(TranscriptSegment(
+            id: "segment-1",
+            speaker: TranscriptSpeaker(identifier: "speaker-0", label: "Alice"),
+            startTimeSeconds: 1,
+            endTimeSeconds: 2,
+            text: "hello",
+            language: "en-US",
+            sourceProvider: "whisper",
+            isFinal: true,
+            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            timingSource: .precise
+        )), forceSnapshot: true)
+
+        let document = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
+
+        XCTAssertEqual(document.turns.map(\.id), ["segment-1"])
+        XCTAssertEqual(document.turns.first?.speakerID, "speaker-0")
+        XCTAssertEqual(document.turns.first?.speakerLabel, "Alice")
+        XCTAssertEqual(document.turns.first?.text, "hello")
+        XCTAssertEqual(document.turns.first?.state, .final)
+        XCTAssertEqual(document.turns.first?.source.providerID, "whisper")
+    }
+
     func testDraftTranslationPatchDoesNotSnapshotBeforeDebounce() throws {
         let fixture = try StoreFixture()
         let store = try RecordingTranscriptPersistenceStore(
@@ -75,6 +106,10 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         let document = try TranscriptFileWriter.readDocument(from: fixture.structuredURL)
         XCTAssertEqual(document.segments.first?.translatedText, "确认负责人。")
         XCTAssertEqual(document.segments.first?.translationIsFinal, true)
+        let captionDocument = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
+        XCTAssertEqual(captionDocument.turns.first?.translatedText, "确认负责人。")
+        XCTAssertEqual(captionDocument.turns.first?.translationTargetLocale, "zh-CN")
+        XCTAssertEqual(captionDocument.turns.first?.translationIsFinal, true)
         XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "User A:\nConfirm owner.\n")
         XCTAssertEqual(try fixture.eventLogLineCount(), 2)
     }
@@ -137,7 +172,8 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         try store.apply(.replaceWithPlainText("Speech recognition unavailable"))
 
         XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "Speech recognition unavailable\n")
-        XCTAssertEqual(try TranscriptFileWriter.readDocument(from: fixture.structuredURL), TranscriptDocument())
+        XCTAssertTrue(try TranscriptFileWriter.readDocument(from: fixture.structuredURL).segments.isEmpty)
+        XCTAssertTrue(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.isEmpty)
     }
 
     func testReplaceAllForcesSnapshotAndCanBeReplayed() throws {
@@ -193,8 +229,9 @@ final class RecordingTranscriptPersistenceStoreTests: XCTestCase {
         )
         try recoveredPlainText.flushSnapshot()
 
-        XCTAssertEqual(recoveredPlainText.currentDocument, TranscriptDocument())
+        XCTAssertTrue(recoveredPlainText.currentDocument.segments.isEmpty)
         XCTAssertEqual(try String(contentsOf: fixture.transcriptURL, encoding: .utf8), "Speech recognition unavailable\n")
+        XCTAssertTrue(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.isEmpty)
     }
 
     func testTranslationPatchRejectsBlankInputs() throws {
@@ -243,6 +280,7 @@ private final class StoreFixture {
     let transcriptURL: URL
     let structuredURL: URL
     let eventLogURL: URL
+    let record: MeetingRecord
     var currentDate = Date(timeIntervalSince1970: 0)
 
     init() throws {
@@ -254,6 +292,15 @@ private final class StoreFixture {
         transcriptURL = directory.appendingPathComponent("transcript.txt")
         structuredURL = directory.appendingPathComponent("transcript.json")
         eventLogURL = directory.appendingPathComponent("transcript-events.jsonl")
+        record = MeetingRecord(
+            id: UUID(),
+            name: "Fixture",
+            startedAt: currentDate,
+            endedAt: nil,
+            audioURL: directory.appendingPathComponent("audio.wav"),
+            transcriptURL: transcriptURL,
+            transcriptJSONURL: structuredURL
+        )
     }
 
     deinit {

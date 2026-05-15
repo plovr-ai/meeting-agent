@@ -2,8 +2,8 @@ import Foundation
 
 final class RecordingTranscriptPersistenceStore {
     private let transcriptURL: URL
+    private let structuredURL: URL
     private let eventLogURL: URL
-    private let writer: TranscriptFileWriter
     private let snapshotInterval: TimeInterval
     private let now: () -> Date
     private var accumulator: TranscriptSegmentAccumulator
@@ -16,15 +16,15 @@ final class RecordingTranscriptPersistenceStore {
         now: @escaping () -> Date = Date.init
     ) throws {
         self.transcriptURL = transcriptURL
+        self.structuredURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
         self.eventLogURL = transcriptURL
             .deletingLastPathComponent()
             .appendingPathComponent("transcript-events.jsonl")
         self.snapshotInterval = snapshotInterval
         self.now = now
         self.lastSnapshotAt = now()
-        let structuredURL = transcriptURL.deletingPathExtension().appendingPathExtension("json")
         let initialDocument = try TranscriptFileWriter.readDocument(from: structuredURL)
-        self.writer = try TranscriptFileWriter(url: transcriptURL, structuredURL: structuredURL)
+        FileManager.default.createFile(atPath: transcriptURL.path, contents: Data())
         self.accumulator = TranscriptSegmentAccumulator(document: initialDocument)
         try replayEvents()
     }
@@ -46,16 +46,19 @@ final class RecordingTranscriptPersistenceStore {
 
     func flushSnapshot() throws {
         if let plainTextReplacement {
-            try writer.replace(with: plainTextReplacement)
+            try writeSnapshot(CaptionDocument(), renderedText: plainTextReplacement)
         } else {
-            try writer.replace(with: accumulator.currentDocument.segments)
+            let labeledSegments = TranscriptFileWriter.assignSpeakerLabels(to: accumulator.currentDocument.segments)
+            try writeSnapshot(
+                Self.captionDocument(from: labeledSegments, updatedAt: now()),
+                renderedText: TranscriptFormatter.render(labeledSegments)
+            )
         }
         lastSnapshotAt = now()
     }
 
     func close() throws {
         try flushSnapshot()
-        try writer.close()
     }
 
     private func replayEvents() throws {
@@ -128,6 +131,75 @@ final class RecordingTranscriptPersistenceStore {
         case .upsert, .replaceAll, .replaceWithPlainText:
             return
         }
+    }
+
+    private func writeSnapshot(_ document: CaptionDocument, renderedText: String) throws {
+        let data = try JSONEncoder.meetingAgent.encode(document)
+        try data.write(to: structuredURL, options: .atomic)
+        try (renderedText + "\n").write(to: transcriptURL, atomically: true, encoding: .utf8)
+    }
+
+    private static func captionDocument(from segments: [TranscriptSegment], updatedAt: Date) -> CaptionDocument {
+        let speakers = captionSpeakers(from: segments)
+        let turns = segments.map { segment in
+            CaptionTurn(
+                id: segment.id,
+                speakerID: segment.speakerID,
+                speakerLabel: segment.speakerLabel,
+                startTimeSeconds: segment.startTimeSeconds,
+                endTimeSeconds: segment.endTimeSeconds,
+                sections: [
+                    CaptionSection(
+                        id: "\(segment.id)-section",
+                        text: segment.text,
+                        utteranceIDs: [segment.id],
+                        startTimeSeconds: segment.startTimeSeconds,
+                        endTimeSeconds: segment.endTimeSeconds
+                    )
+                ],
+                state: segment.isFinal ? .final : .draft,
+                source: CaptionTurnSource(
+                    providerID: segment.sourceProvider,
+                    resultIDs: [segment.id],
+                    utteranceIDs: [segment.id]
+                ),
+                language: segment.language,
+                translatedText: segment.translatedText,
+                translationTargetLocale: segment.translationTargetLocale,
+                translationIsFinal: segment.translationIsFinal,
+                createdAt: segment.createdAt,
+                updatedAt: updatedAt
+            )
+        }
+        let provider = captionProvider(from: segments)
+        return CaptionDocument(
+            speakers: speakers,
+            turns: turns,
+            provider: provider,
+            createdAt: segments.map(\.createdAt).min() ?? updatedAt,
+            updatedAt: updatedAt,
+            finalizedAt: turns.isEmpty || turns.contains(where: { $0.state != .final }) ? nil : updatedAt
+        )
+    }
+
+    private static func captionSpeakers(from segments: [TranscriptSegment]) -> [CaptionSpeaker] {
+        var speakers: [CaptionSpeaker] = []
+        var seen = Set<String>()
+        for segment in segments {
+            guard let speakerID = segment.speakerID, !seen.contains(speakerID) else { continue }
+            speakers.append(CaptionSpeaker(id: speakerID, label: segment.speakerLabel))
+            seen.insert(speakerID)
+        }
+        return speakers
+    }
+
+    private static func captionProvider(from segments: [TranscriptSegment]) -> CaptionProviderInfo? {
+        let providerIDs = Set(segments.map(\.sourceProvider).filter { !$0.isEmpty && $0 != "unknown" })
+        guard providerIDs.count == 1, let providerID = providerIDs.first else {
+            return nil
+        }
+        let locales = Set(segments.compactMap(\.language).filter { !$0.isEmpty })
+        return CaptionProviderInfo(id: providerID, locale: locales.count == 1 ? locales.first : nil)
     }
 
     private static var eventEncoder: JSONEncoder {

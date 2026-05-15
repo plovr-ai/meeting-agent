@@ -87,6 +87,10 @@ public struct CaptionTurn: Codable, Equatable, Identifiable, Sendable {
     public var sections: [CaptionSection]
     public var state: CaptionTurnState
     public var source: CaptionTurnSource
+    public var language: String?
+    public var translatedText: String?
+    public var translationTargetLocale: String?
+    public var translationIsFinal: Bool?
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -109,11 +113,15 @@ public struct CaptionTurn: Codable, Equatable, Identifiable, Sendable {
             startTimeSeconds: startTimeSeconds,
             endTimeSeconds: endTimeSeconds,
             text: text,
+            language: language,
             sourceProvider: source.providerID.isEmpty ? "unknown" : source.providerID,
             isFinal: state == .final,
             speechFinal: state == .final,
             createdAt: createdAt,
-            timingSource: startTimeSeconds == nil && endTimeSeconds == nil ? .unavailable : .precise
+            timingSource: startTimeSeconds == nil && endTimeSeconds == nil ? .unavailable : .precise,
+            translatedText: translatedText,
+            translationTargetLocale: translationTargetLocale,
+            translationIsFinal: translationIsFinal
         )
     }
 
@@ -126,6 +134,10 @@ public struct CaptionTurn: Codable, Equatable, Identifiable, Sendable {
         sections: [CaptionSection],
         state: CaptionTurnState,
         source: CaptionTurnSource,
+        language: String? = nil,
+        translatedText: String? = nil,
+        translationTargetLocale: String? = nil,
+        translationIsFinal: Bool? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -137,6 +149,10 @@ public struct CaptionTurn: Codable, Equatable, Identifiable, Sendable {
         self.sections = sections
         self.state = state
         self.source = source
+        self.language = language.nilIfBlank
+        self.translatedText = translatedText.nilIfBlank
+        self.translationTargetLocale = translationTargetLocale.nilIfBlank
+        self.translationIsFinal = translationIsFinal
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
