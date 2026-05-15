@@ -12,6 +12,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let defaultHostedSummaryModelID = "openai/gpt-4.1-mini"
     public static let defaultDeepgramTranscriptionProviderID = "deepgram-transcribe"
     public static let defaultDeepgramModelID = "nova-3"
+    public static let defaultBatchTranscriptionProviderID = "deepgram-batch-transcribe"
+    public static let defaultBatchTranscriptionModelID = "nova-3"
     public static let defaultOpenAIRealtimeTranscriptionProviderID = "openai-realtime-transcribe"
     public static let defaultOpenAIRealtimeTranscriptionModelID = "gpt-4o-transcribe"
     public static let defaultAliyunRealtimeTranscriptionProviderID = "aliyun-paraformer-realtime-transcribe"
@@ -32,6 +34,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public var deepgramModelID: String
     public var dashScopeAPIKey: String?
     public var aliyunRealtimeModelID: String
+    public var batchTranscriptionProviderID: String
+    public var batchTranscriptionModelID: String
 
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
@@ -48,7 +52,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         deepgramAPIKey: nil,
         deepgramModelID: defaultDeepgramModelID,
         dashScopeAPIKey: nil,
-        aliyunRealtimeModelID: defaultAliyunRealtimeTranscriptionModelID
+        aliyunRealtimeModelID: defaultAliyunRealtimeTranscriptionModelID,
+        batchTranscriptionProviderID: defaultBatchTranscriptionProviderID,
+        batchTranscriptionModelID: defaultBatchTranscriptionModelID
     )
 
     public init(
@@ -66,7 +72,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         deepgramAPIKey: String? = nil,
         deepgramModelID: String = defaultDeepgramModelID,
         dashScopeAPIKey: String? = nil,
-        aliyunRealtimeModelID: String = defaultAliyunRealtimeTranscriptionModelID
+        aliyunRealtimeModelID: String = defaultAliyunRealtimeTranscriptionModelID,
+        batchTranscriptionProviderID: String = defaultBatchTranscriptionProviderID,
+        batchTranscriptionModelID: String = defaultBatchTranscriptionModelID
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
@@ -99,6 +107,14 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             aliyunRealtimeModelID,
             fallback: Self.defaultAliyunRealtimeTranscriptionModelID
         ) ?? Self.defaultAliyunRealtimeTranscriptionModelID
+        self.batchTranscriptionProviderID = Self.normalized(
+            batchTranscriptionProviderID,
+            fallback: Self.defaultBatchTranscriptionProviderID
+        ) ?? Self.defaultBatchTranscriptionProviderID
+        self.batchTranscriptionModelID = Self.normalized(
+            batchTranscriptionModelID,
+            fallback: Self.defaultBatchTranscriptionModelID
+        ) ?? Self.defaultBatchTranscriptionModelID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -119,6 +135,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         case deepgramModelID
         case dashScopeAPIKey
         case aliyunRealtimeModelID
+        case batchTranscriptionProviderID
+        case batchTranscriptionModelID
     }
 
     public init(from decoder: Decoder) throws {
@@ -142,7 +160,9 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
             deepgramModelID: try container.decodeIfPresent(String.self, forKey: .deepgramModelID) ?? Self.defaultDeepgramModelID,
             dashScopeAPIKey: try container.decodeIfPresent(String.self, forKey: .dashScopeAPIKey),
             aliyunRealtimeModelID: try container.decodeIfPresent(String.self, forKey: .aliyunRealtimeModelID)
-                ?? Self.defaultAliyunRealtimeTranscriptionModelID
+                ?? Self.defaultAliyunRealtimeTranscriptionModelID,
+            batchTranscriptionProviderID: try container.decodeIfPresent(String.self, forKey: .batchTranscriptionProviderID) ?? Self.defaultBatchTranscriptionProviderID,
+            batchTranscriptionModelID: try container.decodeIfPresent(String.self, forKey: .batchTranscriptionModelID) ?? Self.defaultBatchTranscriptionModelID
         )
     }
 
@@ -163,6 +183,8 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         try container.encode(deepgramModelID, forKey: .deepgramModelID)
         try container.encodeIfPresent(dashScopeAPIKey, forKey: .dashScopeAPIKey)
         try container.encode(aliyunRealtimeModelID, forKey: .aliyunRealtimeModelID)
+        try container.encode(batchTranscriptionProviderID, forKey: .batchTranscriptionProviderID)
+        try container.encode(batchTranscriptionModelID, forKey: .batchTranscriptionModelID)
     }
 
     public func validationStatus(
@@ -263,6 +285,10 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public var effectiveTranscriptionProviderID: String {
         transcriptionExecutionMode == .hosted ? hostedTranscriptionProviderID : localTranscriptionProviderID
+    }
+
+    public var usesDeepgramBatchRefinement: Bool {
+        batchTranscriptionProviderID == Self.defaultBatchTranscriptionProviderID
     }
 
     public static func normalized(_ value: String?, fallback: String? = nil) -> String? {

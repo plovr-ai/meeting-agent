@@ -32,6 +32,13 @@ final class MeetingRecordTests: XCTestCase {
             summaryMarkdownURL: URL(fileURLWithPath: "/tmp/summary.md"),
             transcriptionStatus: .transcribed,
             transcriptionFailureReason: nil,
+            transcriptRefinement: TranscriptRefinementMetadata(
+                providerID: "deepgram-batch-transcribe",
+                modelID: "nova-3",
+                status: .refined,
+                durationSeconds: 1.5,
+                updatedAt: Date(timeIntervalSince1970: 1_777_000_601)
+            ),
             speechProvider: .whisper,
             transcriptionProviderID: "deepgram-transcribe",
             speechLocaleIdentifier: "zh-CN",

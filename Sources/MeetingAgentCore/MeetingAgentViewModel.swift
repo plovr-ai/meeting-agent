@@ -40,6 +40,7 @@ public final class MeetingAgentViewModel: ObservableObject {
     private let exportService: MeetingExportService
     private let transcriptRepository: TranscriptRepository
     private let summaryRepository: SummaryRepository
+    private let postMeetingTranscriptRefiner: PostMeetingTranscriptRefining
     private var realtimeCaptionSession: RealtimeCaptionSession
     private var latestRealtimeCaptionSnapshot: LiveCaptionPipelineSnapshot?
     private var liveCaptionPipeline: LiveCaptionPipeline
@@ -124,6 +125,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         exportService: MeetingExportService = MeetingExportService(),
         transcriptRepository: TranscriptRepository = FileTranscriptRepository(),
         summaryRepository: SummaryRepository = FileSummaryRepository(),
+        postMeetingTranscriptRefiner: PostMeetingTranscriptRefining? = nil,
         summaryProviderFactory: ((SpeechTranscriptionConfiguration) -> MeetingSummaryProvider)? = nil,
         liveCaptionSnapshotDebounceNanoseconds: UInt64 = 0,
         draftCaptionInputThrottleNanoseconds: UInt64 = 200_000_000,
@@ -135,6 +137,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         self.exportService = exportService
         self.transcriptRepository = transcriptRepository
         self.summaryRepository = summaryRepository
+        self.postMeetingTranscriptRefiner = postMeetingTranscriptRefiner ?? PostMeetingTranscriptRefinementService(
+            store: store,
+            saveCaptionDocument: { document, record in
+                try transcriptRepository.saveCaptionDocument(document, for: record)
+            }
+        )
         self.summaryProviderFactory = summaryProviderFactory ?? { configuration in
             Self.summaryProvider(for: configuration)
         }
@@ -253,7 +261,9 @@ public final class MeetingAgentViewModel: ObservableObject {
             deepgramAPIKey: configuration.deepgramAPIKey,
             deepgramModelID: configuration.deepgramModelID,
             dashScopeAPIKey: configuration.dashScopeAPIKey,
-            aliyunRealtimeModelID: configuration.aliyunRealtimeModelID
+            aliyunRealtimeModelID: configuration.aliyunRealtimeModelID,
+            batchTranscriptionProviderID: configuration.batchTranscriptionProviderID,
+            batchTranscriptionModelID: configuration.batchTranscriptionModelID
         )
         persistSpeechConfiguration()
         statusText = "Settings saved"
@@ -498,7 +508,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         case .stopped(let stopped):
             if let stopped,
                let index = meetings.firstIndex(where: { $0.id == stopped.id }) {
-                meetings[index] = stopped
+                var mergedStopped = stopped
+                if mergedStopped.transcriptRefinement == nil {
+                    mergedStopped.transcriptRefinement = meetings[index].transcriptRefinement
+                }
+                meetings[index] = mergedStopped
                 recentlyStoppedLiveMeetingID = stopped.id
                 if selectedMeetingID == stopped.id {
                     refreshSelectedMeetingArtifactSnapshot()
@@ -572,6 +586,11 @@ public final class MeetingAgentViewModel: ObservableObject {
         invalidateActiveCaptionApplyTasks()
         flushLiveCaptionPipeline(reason: .manualStop)
         persistSelectedSessionTranscriptIfNeeded(for: stoppedID)
+        if let stoppedID {
+            Task { [weak self] in
+                await self?.refineStoppedTranscriptIfPossible(for: stoppedID)
+            }
+        }
         stopRealtimeSpeakerIdentificationRuntime()
         allowActiveTargetReprompt()
         activeSource = nil
@@ -608,7 +627,43 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
 
+        await refineStoppedTranscriptIfPossible(for: stoppedID)
         try await generateSummary(for: stoppedID, generatedAt: generatedAt)
+    }
+
+    private func refineStoppedTranscriptIfPossible(for meetingID: UUID) async {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else { return }
+        let liveDocument: CaptionDocument
+        if selectedMeetingSessionState?.meetingID == meetingID {
+            liveDocument = selectedMeetingSessionState?.transcript.captionDocument ?? CaptionDocument()
+        } else {
+            liveDocument = (try? transcriptRepository.loadCaptionDocument(for: record)) ?? CaptionDocument()
+        }
+        let result = await postMeetingTranscriptRefiner.refineTranscript(
+            for: record,
+            liveDocument: liveDocument,
+            configuration: speechConfiguration
+        )
+        applyPostMeetingTranscriptRefinementResult(result)
+    }
+
+    private func applyPostMeetingTranscriptRefinementResult(_ result: PostMeetingTranscriptRefinementResult) {
+        if let index = meetings.firstIndex(where: { $0.id == result.record.id }) {
+            meetings[index] = result.record
+        }
+        guard selectedMeetingID == result.record.id else { return }
+        refreshSelectedMeetingArtifactSnapshot()
+        guard let captionDocument = result.captionDocument else { return }
+        selectedMeetingSessionState = MeetingSessionState(
+            meetingID: result.record.id,
+            transcript: TranscriptState(
+                meetingID: result.record.id,
+                captionDocument: captionDocument,
+                source: .hydratedFromPersistence
+            ),
+            summary: selectedMeetingSessionState?.summary ?? .missing
+        )
+        liveCaptionTurns = selectedMeetingSessionState?.transcript.visibleTurns ?? []
     }
 
     public func generateSummary(for meetingID: UUID, generatedAt: Date = Date()) async throws {

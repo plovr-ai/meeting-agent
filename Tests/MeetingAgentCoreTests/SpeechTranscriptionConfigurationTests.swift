@@ -11,7 +11,42 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
         XCTAssertEqual(SpeechProviderCatalog.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
+        XCTAssertEqual(configuration.batchTranscriptionProviderID, "deepgram-batch-transcribe")
+        XCTAssertEqual(configuration.batchTranscriptionModelID, "nova-3")
         XCTAssertEqual(Set(SpeechProviderCatalog.builtInProviderDescriptors.map(\.capability)), [.audioTranscription])
+    }
+
+    func testBatchTranscriptionSettingsRoundTripAndDefaultFromLegacyPayload() throws {
+        let configuration = SpeechTranscriptionConfiguration(
+            provider: .whisper,
+            localeIdentifier: "zh-CN",
+            whisperBinaryPath: nil,
+            whisperModelPath: nil,
+            batchTranscriptionProviderID: "deepgram-batch-transcribe",
+            batchTranscriptionModelID: "nova-2"
+        )
+
+        let data = try JSONEncoder.meetingAgent.encode(configuration)
+        let decoded = try JSONDecoder.meetingAgent.decode(SpeechTranscriptionConfiguration.self, from: data)
+
+        XCTAssertEqual(decoded.batchTranscriptionProviderID, "deepgram-batch-transcribe")
+        XCTAssertEqual(decoded.batchTranscriptionModelID, "nova-2")
+
+        let legacy = """
+        {
+          "provider" : "whisper",
+          "localeIdentifier" : "en-US",
+          "transcriptionExecutionMode" : "hosted",
+          "localTranscriptionProviderID" : "whisper-local",
+          "hostedTranscriptionProviderID" : "deepgram-transcribe",
+          "hostedTranscriptionModelID" : "nova-3",
+          "hostedSummaryModelID" : "openai/gpt-4.1-mini",
+          "deepgramModelID" : "nova-3"
+        }
+        """
+        let legacyDecoded = try JSONDecoder.meetingAgent.decode(SpeechTranscriptionConfiguration.self, from: Data(legacy.utf8))
+        XCTAssertEqual(legacyDecoded.batchTranscriptionProviderID, "deepgram-batch-transcribe")
+        XCTAssertEqual(legacyDecoded.batchTranscriptionModelID, "nova-3")
     }
 
     func testReliableMVPDefaultsUseDeepgramHostedTranscription() {

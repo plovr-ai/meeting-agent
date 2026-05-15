@@ -45,6 +45,17 @@ public enum DeepgramTranscriptionConfiguration: Equatable {
             language: configuration.localeIdentifier
         )
     }
+
+    public static func batch(
+        _ configuration: SpeechTranscriptionConfiguration,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Self {
+        DeepgramTranscriptionConfiguration(
+            apiKey: configuration.deepgramAPIKey ?? environment["MEETING_AGENT_DEEPGRAM_API_KEY"],
+            model: configuration.batchTranscriptionModelID,
+            language: configuration.localeIdentifier
+        )
+    }
 }
 
 public enum DeepgramRawResponseTransport: String, Equatable {
