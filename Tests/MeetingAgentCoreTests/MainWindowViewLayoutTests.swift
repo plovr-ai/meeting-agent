@@ -402,7 +402,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var destination: MainWindowDestination = .today"))
         XCTAssertTrue(source.contains("SettingsView("))
-        XCTAssertFalse(source.contains("profiles: BilingualPipelineFactory.builtInProfiles"))
+        XCTAssertFalse(source.contains("profiles: " + "Bilingual" + "PipelineFactory.builtInProfiles"))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))

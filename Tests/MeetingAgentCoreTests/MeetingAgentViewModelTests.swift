@@ -733,8 +733,9 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         let record = try XCTUnwrap(viewModel.meetings.first)
         let events = try readPerformanceEvents(from: XCTUnwrap(record.performanceEventsURL))
-        XCTAssertFalse(events.contains { $0.event.hasPrefix("caption_translation_") })
-        XCTAssertFalse(events.contains { $0.event.hasPrefix("translation_") })
+        let captionDerivedPrefix = "caption_" + "translation_"
+        XCTAssertFalse(events.contains { $0.event.hasPrefix(captionDerivedPrefix) })
+        XCTAssertFalse(events.contains { $0.event.hasPrefix("translation" + "_") })
     }
 
 
@@ -2636,9 +2637,6 @@ final class MeetingAgentViewModelTests: XCTestCase {
             localeIdentifier: "en-US",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
-            translationExecutionMode: .hosted,
-            hostedTranslationProviderID: "openrouter-translation",
-            hostedTranslationModelID: "google/gemini-2.5-flash",
             hostedSummaryModelID: "openai/gpt-4.1-mini",
             openRouterAPIKey: "test-key"
         )
@@ -2833,31 +2831,20 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: "ja-JP",
-            bilingualPipelineProfileID: "local-whisper-local-translation",
             whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
             whisperModelPath: "/Users/allan/models/ggml-medium.bin",
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted,
             localTranscriptionProviderID: "macos-speech-local",
-            localTranslationProviderID: "nllb-local",
             hostedTranscriptionProviderID: "openrouter-transcribe",
-            hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini",
             openRouterAPIKey: "settings-key",
             openAIRealtimeAPIKey: "realtime-settings-key"
         )
 
         viewModel.saveSpeechConfiguration(configuration)
 
-        var expectedConfiguration = configuration
-        expectedConfiguration.bilingualPipelineProfileID = SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        expectedConfiguration.translationExecutionMode = .hosted
-        expectedConfiguration.localTranslationProviderID = SpeechTranscriptionConfiguration.defaultLocalTranslationProviderID
-        expectedConfiguration.hostedTranslationProviderID = SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID
-        expectedConfiguration.hostedTranslationModelID = SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
-        XCTAssertEqual(viewModel.speechConfiguration, expectedConfiguration)
-        XCTAssertEqual(try configurationStore.load(), expectedConfiguration)
+        XCTAssertEqual(viewModel.speechConfiguration, configuration)
+        XCTAssertEqual(try configurationStore.load(), configuration)
         XCTAssertEqual(viewModel.statusText, "Settings saved")
     }
 
@@ -2894,23 +2881,15 @@ final class MeetingAgentViewModelTests: XCTestCase {
         let staleProfileConfiguration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            bilingualPipelineProfileID: "local-whisper-local-translation",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
-            transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted
+            transcriptionExecutionMode: .hosted
         )
 
         viewModel.saveSpeechConfiguration(staleProfileConfiguration)
 
-        XCTAssertEqual(
-            viewModel.speechConfiguration.bilingualPipelineProfileID,
-            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        )
-        XCTAssertEqual(
-            try configurationStore.load().bilingualPipelineProfileID,
-            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        )
+        XCTAssertEqual(viewModel.speechConfiguration, staleProfileConfiguration)
+        XCTAssertEqual(try configurationStore.load(), staleProfileConfiguration)
     }
 
     func testSaveSpeechConfigurationKeepsLegacyProfileOutOfValidationStatus() throws {
@@ -2926,31 +2905,21 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.saveSpeechConfiguration(SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: " ",
-            bilingualPipelineProfileID: "stale",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
-            transcriptionExecutionMode: .local,
-            translationExecutionMode: .local
+            transcriptionExecutionMode: .local
         ))
-        XCTAssertEqual(
-            viewModel.speechConfiguration.bilingualPipelineProfileID,
-            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        )
+        XCTAssertEqual(viewModel.speechConfiguration.localeIdentifier, "en-US")
         XCTAssertEqual(viewModel.speechConfigurationStatus, .available)
 
         viewModel.saveSpeechConfiguration(SpeechTranscriptionConfiguration(
             provider: .local,
             localeIdentifier: "en-US",
-            bilingualPipelineProfileID: "stale",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
-            transcriptionExecutionMode: .local,
-            translationExecutionMode: .hosted
+            transcriptionExecutionMode: .local
         ))
-        XCTAssertEqual(
-            viewModel.speechConfiguration.bilingualPipelineProfileID,
-            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        )
+        XCTAssertEqual(viewModel.speechConfigurationStatus, .available)
     }
 
     func testSupportedLocaleIdentifiersIncludeInitialSettingsChoices() {

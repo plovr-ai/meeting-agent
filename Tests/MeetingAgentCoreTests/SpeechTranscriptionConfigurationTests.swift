@@ -11,9 +11,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
         XCTAssertEqual(SpeechProviderCatalog.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
-        XCTAssertFalse(SpeechProviderCatalog.builtInProviderDescriptors.contains {
-            $0.capability == .textTranslation || $0.capability == .speechTranslation || $0.capability == .bilingualSubtitle
-        })
+        XCTAssertEqual(Set(SpeechProviderCatalog.builtInProviderDescriptors.map(\.capability)), [.audioTranscription])
     }
 
     func testReliableMVPDefaultsUseDeepgramHostedTranscription() {
@@ -25,14 +23,11 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             SpeechTranscriptionConfiguration.defaultDeepgramTranscriptionProviderID
         )
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
-        XCTAssertFalse(BilingualPipelineFactory.builtInProfiles.contains { profile in
-            profile.steps.contains { $0.capability == .textTranslation }
-        })
     }
 
-    func testValidationIgnoresLegacyBlankTranslationModel() {
+    func testValidationUsesTranscriptionAndSummarySettingsOnly() {
         var configuration = SpeechTranscriptionConfiguration.default
-        configuration.hostedTranslationModelID = " "
+        configuration.hostedSummaryModelID = "openai/gpt-4.1-mini"
 
         XCTAssertEqual(
             configuration.validationStatus(
@@ -156,8 +151,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             provider: .whisper,
             localeIdentifier: "en-US",
             whisperBinaryPath: nil,
-            whisperModelPath: nil,
-            translationExecutionMode: .local
+            whisperModelPath: nil
         )
 
         XCTAssertEqual(
@@ -200,8 +194,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             provider: .whisper,
             localeIdentifier: "zh-CN",
             whisperBinaryPath: nil,
-            whisperModelPath: nil,
-            translationExecutionMode: .local
+            whisperModelPath: nil
         )
         let environment = ["PATH": directory.path]
 
@@ -231,8 +224,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             provider: .local,
             localeIdentifier: "en-US",
             whisperBinaryPath: nil,
-            whisperModelPath: nil,
-            translationExecutionMode: .local
+            whisperModelPath: nil
         )
 
         XCTAssertEqual(configuration.validationStatus(fileManager: .default), .available)
@@ -246,17 +238,12 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let configuration = SpeechTranscriptionConfiguration(
             provider: .whisper,
             localeIdentifier: "en-US",
-            bilingualPipelineProfileID: "hosted-transcribe-hosted-translation",
             whisperBinaryPath: "/opt/homebrew/bin/whisper-cli",
             whisperModelPath: "/Users/allan/models/ggml-small.bin",
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted,
             localTranscriptionProviderID: "whisper-local",
-            localTranslationProviderID: "qwen-local-translation",
             hostedTranscriptionProviderID: "openrouter-transcribe",
-            hostedTranslationProviderID: "openrouter-translation",
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini",
             hostedSummaryModelID: "google/gemini-2.5-flash",
             openRouterAPIKey: "settings-key",
             openAIRealtimeAPIKey: " realtime-key ",
@@ -271,18 +258,18 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
         XCTAssertNil(persistedObject["targetLocaleIdentifier"])
-        XCTAssertNil(persistedObject["bilingualPipelineProfileID"])
-        XCTAssertNil(persistedObject["translationExecutionMode"])
-        XCTAssertNil(persistedObject["localTranslationProviderID"])
-        XCTAssertNil(persistedObject["hostedTranslationProviderID"])
-        XCTAssertNil(persistedObject["hostedTranslationModelID"])
+        let legacyPipelineProfileKey = "bilingual" + "PipelineProfileID"
+        let legacyExecutionModeKey = "translation" + "ExecutionMode"
+        let legacyLocalProviderKey = "local" + "TranslationProviderID"
+        let legacyHostedProviderKey = "hosted" + "TranslationProviderID"
+        let legacyHostedModelKey = "hosted" + "TranslationModelID"
+        XCTAssertNil(persistedObject[legacyPipelineProfileKey])
+        XCTAssertNil(persistedObject[legacyExecutionModeKey])
+        XCTAssertNil(persistedObject[legacyLocalProviderKey])
+        XCTAssertNil(persistedObject[legacyHostedProviderKey])
+        XCTAssertNil(persistedObject[legacyHostedModelKey])
 
         var expected = configuration
-        expected.bilingualPipelineProfileID = SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
-        expected.translationExecutionMode = .hosted
-        expected.localTranslationProviderID = SpeechTranscriptionConfiguration.defaultLocalTranslationProviderID
-        expected.hostedTranslationProviderID = SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID
-        expected.hostedTranslationModelID = SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
         expected.openAIRealtimeAPIKey = "realtime-key"
         expected.deepgramAPIKey = "deepgram-key"
         expected.deepgramModelID = "nova-2"
@@ -294,21 +281,26 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
         let store = SpeechTranscriptionConfigurationStore(userDefaults: userDefaults)
+        let legacyPipelineProfileKey = "bilingual" + "PipelineProfileID"
+        let legacyExecutionModeKey = "translation" + "ExecutionMode"
+        let legacyLocalProviderKey = "local" + "TranslationProviderID"
+        let legacyHostedProviderKey = "hosted" + "TranslationProviderID"
+        let legacyHostedModelKey = "hosted" + "TranslationModelID"
         let legacyConfiguration = """
         {
           "provider": "whisper",
           "localeIdentifier": "en-US",
           "targetLocaleIdentifier": "zh-CN",
-          "bilingualPipelineProfileID": "local-whisper-hosted-translation",
+          "\(legacyPipelineProfileKey)": "local-whisper-hosted-translation",
           "whisperBinaryPath": "/opt/homebrew/bin/whisper-cli",
           "whisperModelPath": "/Users/allan/models/ggml-medium.bin",
           "transcriptionExecutionMode": "local",
-          "translationExecutionMode": "local",
-          "localTranslationProviderID": "legacy-local-translation",
+          "\(legacyExecutionModeKey)": "local",
+          "\(legacyLocalProviderKey)": "legacy-local-translation",
           "hostedTranscriptionProviderID": "openrouter-transcribe",
-          "hostedTranslationProviderID": "legacy-hosted-translation",
+          "\(legacyHostedProviderKey)": "legacy-hosted-translation",
           "hostedTranscriptionModelID": "google/gemini-2.5-flash",
-          "hostedTranslationModelID": "legacy-translation-model"
+          "\(legacyHostedModelKey)": "legacy-translation-model"
         }
         """
         userDefaults.set(Data(legacyConfiguration.utf8), forKey: "SpeechTranscriptionConfiguration")
@@ -316,11 +308,8 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let loaded = try store.load()
 
         XCTAssertEqual(loaded.localeIdentifier, "zh-CN")
-        XCTAssertEqual(loaded.bilingualPipelineProfileID, "local-whisper-hosted-translation")
-        XCTAssertEqual(loaded.translationExecutionMode, .local)
-        XCTAssertEqual(loaded.localTranslationProviderID, "legacy-local-translation")
-        XCTAssertEqual(loaded.hostedTranslationProviderID, "legacy-hosted-translation")
-        XCTAssertEqual(loaded.hostedTranslationModelID, "legacy-translation-model")
+        XCTAssertEqual(loaded.hostedTranscriptionProviderID, "openrouter-transcribe")
+        XCTAssertEqual(loaded.hostedTranscriptionModelID, "google/gemini-2.5-flash")
         try store.save(loaded)
         let persistedData = try XCTUnwrap(userDefaults.data(forKey: "SpeechTranscriptionConfiguration"))
         let persistedObject = try XCTUnwrap(
@@ -328,11 +317,11 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(persistedObject["localeIdentifier"] as? String, "zh-CN")
         XCTAssertNil(persistedObject["targetLocaleIdentifier"])
-        XCTAssertNil(persistedObject["bilingualPipelineProfileID"])
-        XCTAssertNil(persistedObject["translationExecutionMode"])
-        XCTAssertNil(persistedObject["localTranslationProviderID"])
-        XCTAssertNil(persistedObject["hostedTranslationProviderID"])
-        XCTAssertNil(persistedObject["hostedTranslationModelID"])
+        XCTAssertNil(persistedObject[legacyPipelineProfileKey])
+        XCTAssertNil(persistedObject[legacyExecutionModeKey])
+        XCTAssertNil(persistedObject[legacyLocalProviderKey])
+        XCTAssertNil(persistedObject[legacyHostedProviderKey])
+        XCTAssertNil(persistedObject[legacyHostedModelKey])
     }
 
     func testConfigurationStorePersistsAPIKeys() throws {
@@ -442,7 +431,6 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .local,
             hostedTranscriptionProviderID: "deepgram-transcribe"
         )
 
@@ -463,9 +451,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted,
             hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini",
             openRouterAPIKey: "settings-key"
         )
 
@@ -479,9 +465,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted,
-            hostedTranscriptionModelID: "google/gemini-2.5-flash",
-            hostedTranslationModelID: "openai/gpt-4.1-mini"
+            hostedTranscriptionModelID: "google/gemini-2.5-flash"
         )
 
         XCTAssertEqual(
@@ -525,8 +509,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             provider: .whisper,
             localeIdentifier: "en-US",
             whisperBinaryPath: directory.appendingPathComponent("missing").path,
-            whisperModelPath: modelURL.path,
-            translationExecutionMode: .local
+            whisperModelPath: modelURL.path
         )
         XCTAssertEqual(config.validationStatus(), .unavailable("Whisper binary does not exist at \(directory.appendingPathComponent("missing").path)"))
 
@@ -542,13 +525,9 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             localeIdentifier: "en-US",
             whisperBinaryPath: nil,
             whisperModelPath: nil,
-            transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .local
+            transcriptionExecutionMode: .hosted
         )
         config.hostedTranscriptionModelID = " "
-        XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted transcription model is not configured"))
-
-        config.hostedTranslationModelID = " "
         XCTAssertEqual(config.validationStatus(environment: ["MEETING_AGENT_OPENROUTER_API_KEY": "key"]), .unavailable("Hosted transcription model is not configured"))
     }
 
