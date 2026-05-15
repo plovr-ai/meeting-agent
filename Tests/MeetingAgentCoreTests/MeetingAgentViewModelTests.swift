@@ -136,7 +136,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
             ),
             currentTarget
         ])
-        XCTAssertEqual(fixture.transcriberFactory.requests.count, 2)
+        XCTAssertEqual(fixture.transcriberFactory.requests.count, 4)
     }
 
     func testStartOfflineMicrophoneRecordingCreatesMeetingWithoutCandidate() async throws {
@@ -154,7 +154,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedMeeting?.name, "New Meeting")
         XCTAssertEqual(viewModel.activeMeetingID, viewModel.selectedMeeting?.id)
         XCTAssertEqual(viewModel.statusText, "Recording New Meeting")
-        XCTAssertEqual(fixture.session.startedSources, [.microphone(displayName: "Computer Microphone")])
+        XCTAssertEqual(fixture.microphoneSession.startedSources, [.microphone(displayName: "Computer Microphone")])
     }
 
     func testStartOfflineMicrophoneRecordingUsesConfiguredSpeechLocale() async throws {
@@ -227,7 +227,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         )
 
         try await viewModel.startOfflineMicrophoneRecording(startedAt: Date(timeIntervalSince1970: 100))
-        fixture.session.frameBuffer.push(AudioFrame(
+        fixture.microphoneSession.frameBuffer.push(AudioFrame(
             pcm: Data([0, 64]),
             sampleRate: 16_000,
             channelCount: 1,
@@ -412,6 +412,23 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.meetings.first?.name, "zoom.us")
         XCTAssertEqual(fixture.session.startedTargets, [target])
         XCTAssertEqual(fixture.transcriberFactory.requests.first?.localeIdentifier, "zh-CN")
+    }
+
+    func testOnlineMeetingStartUsesProcessWithMicrophoneSource() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let target = AudioCaptureTarget(processID: 42, displayName: "Zoom", bundleIdentifier: "us.zoom.xos")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            processTargetsProvider: { [] }
+        )
+
+        try await viewModel.startRecording(for: target)
+
+        XCTAssertEqual(fixture.processSession.startedSources.first, .processWithMicrophone(target))
+        XCTAssertEqual(fixture.microphoneSession.startedSources.first, .microphone(displayName: "Computer Microphone"))
+        XCTAssertEqual(viewModel.selectedMeeting?.captureMode, .processWithMicrophone)
     }
 
     func testStartRecordingExistingMeetingUsesMeetingLocaleOverride() async throws {
@@ -3173,6 +3190,8 @@ final class MeetingAgentViewModelTests: XCTestCase {
 private struct ViewModelRecorderFixture {
     let root: URL
     let store: MeetingStore
+    let processSession: ViewModelFakeCaptureSession
+    let microphoneSession: ViewModelFakeCaptureSession
     let session: ViewModelFakeCaptureSession
     let writer: ViewModelFakeAudioFrameWriter
     let transcriber: ViewModelFakeAudioFrameTranscriber
@@ -3182,19 +3201,23 @@ private struct ViewModelRecorderFixture {
     init() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-recorder-\(UUID().uuidString)", isDirectory: true)
         let store = MeetingStore(baseDirectory: root)
-        let session = ViewModelFakeCaptureSession(sampleRate: 16_000, channelCount: 1)
+        let processSession = ViewModelFakeCaptureSession(sampleRate: 16_000, channelCount: 1)
+        let microphoneSession = ViewModelFakeCaptureSession(sampleRate: 16_000, channelCount: 1)
         let writer = ViewModelFakeAudioFrameWriter()
         let transcriber = ViewModelFakeAudioFrameTranscriber()
         let transcriberFactory = ViewModelFakeTranscriberFactory(transcriber: transcriber)
         self.root = root
         self.store = store
-        self.session = session
+        self.processSession = processSession
+        self.microphoneSession = microphoneSession
+        self.session = processSession
         self.writer = writer
         self.transcriber = transcriber
         self.transcriberFactory = transcriberFactory
         recorder = MeetingRecorder(
             store: store,
-            captureSessionFactory: { session },
+            processCaptureSessionFactory: { processSession },
+            microphoneCaptureSessionFactory: { microphoneSession },
             wavWriterFactory: { _, _, _ in writer },
             transcriberFactory: transcriberFactory.startTranscriber
         )
@@ -3304,7 +3327,8 @@ private final class ViewModelFakeTranscriberFactory {
         sampleRate: Double,
         channelCount: Int,
         performanceEventLogger: PerformanceEventLogger?,
-        transcriptUpdateSink: TranscriptUpdateSink?
+        transcriptUpdateSink: TranscriptUpdateSink?,
+        speechEventSink: SpeechRecognitionEventSink?
     ) async throws -> AudioFrameTranscriber {
         requests.append(Request(localeIdentifier: configuration.localeIdentifier))
         transcriber.transcriptUpdateSink = transcriptUpdateSink

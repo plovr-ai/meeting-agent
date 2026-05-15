@@ -2,6 +2,17 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class MeetingRecordTests: XCTestCase {
+    func testProcessWithMicrophoneSourcePreservesTargetAndKind() {
+        let target = AudioCaptureTarget(processID: 42, displayName: "Zoom", bundleIdentifier: "us.zoom.xos")
+        let source = AudioCaptureSource.processWithMicrophone(target, microphoneDisplayName: "Studio Mic")
+
+        XCTAssertEqual(source.kind, .processWithMicrophone)
+        XCTAssertEqual(source.displayName, "Zoom")
+        XCTAssertEqual(source.processID, 42)
+        XCTAssertEqual(source.processTarget, target)
+        XCTAssertEqual(source.microphoneDisplayName, "Studio Mic")
+    }
+
     func testMeetingRecordEncodesAndDecodes() throws {
         let id = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let startedAt = Date(timeIntervalSince1970: 1_777_000_000)
@@ -12,6 +23,7 @@ final class MeetingRecordTests: XCTestCase {
             startedAt: startedAt,
             endedAt: endedAt,
             audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
+            microphoneAudioURL: URL(fileURLWithPath: "/tmp/audio-microphone.wav"),
             transcriptURL: URL(fileURLWithPath: "/tmp/transcript.txt"),
             transcriptJSONURL: URL(fileURLWithPath: "/tmp/transcript.json"),
             meetingProgressJSONURL: URL(fileURLWithPath: "/tmp/meeting-progress.json"),
@@ -23,6 +35,7 @@ final class MeetingRecordTests: XCTestCase {
             speechProvider: .whisper,
             transcriptionProviderID: "deepgram-transcribe",
             speechLocaleIdentifier: "zh-CN",
+            captureMode: .processWithMicrophone,
             meetingGoal: MeetingGoal(
                 id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
                 title: "Confirm launch plan",
@@ -231,6 +244,8 @@ final class MeetingRecordTests: XCTestCase {
         XCTAssertEqual(decoded.speechProvider, .whisper)
         XCTAssertEqual(decoded.transcriptionProviderID, "whisper")
         XCTAssertEqual(decoded.speechLocaleIdentifier, "en-US")
+        XCTAssertNil(decoded.microphoneAudioURL)
+        XCTAssertEqual(decoded.captureMode, .process)
     }
 
     func testDecodesMetadataWithoutSummaryURL() throws {

@@ -46,6 +46,7 @@ public final class MeetingStore {
             startedAt: startedAt,
             endedAt: nil,
             audioURL: directory.appendingPathComponent("audio.wav"),
+            microphoneAudioURL: directory.appendingPathComponent("audio-microphone.wav"),
             transcriptURL: nil,
             transcriptJSONURL: directory.appendingPathComponent("transcript.json"),
             meetingProgressJSONURL: directory.appendingPathComponent("meeting-progress.json"),

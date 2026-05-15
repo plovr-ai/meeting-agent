@@ -75,4 +75,27 @@ final class TranscriptConsumptionViewTests: XCTestCase {
         XCTAssertEqual(view.quality.emptyFinalTurnCount, 0)
         XCTAssertEqual(view.quality.unknownSpeakerTurnCount, 1)
     }
+
+    func testProjectorPreservesMeSpeakerLabel() {
+        let document = CaptionDocument(turns: [
+            CaptionTurn(
+                id: "turn-me",
+                speakerID: "local-user",
+                speakerLabel: "Me",
+                startTimeSeconds: 1,
+                endTimeSeconds: 3,
+                sections: [
+                    CaptionSection(id: "me-section", text: "I will follow up.", utteranceIDs: ["mic-utt-1"])
+                ],
+                state: .final,
+                source: CaptionTurnSource(providerID: "deepgram-transcribe", utteranceIDs: ["mic-utt-1"])
+            )
+        ])
+
+        let view = TranscriptConsumptionView.project(meetingID: UUID(), document: document)
+
+        XCTAssertEqual(view.finalTurns.first?.speakerID, "local-user")
+        XCTAssertEqual(view.finalTurns.first?.speakerLabel, "Me")
+        XCTAssertEqual(view.quality.unknownSpeakerTurnCount, 0)
+    }
 }

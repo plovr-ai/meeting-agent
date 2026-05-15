@@ -40,17 +40,42 @@ public enum MeetingRecorderEvent: Equatable {
     case stopped(MeetingRecord?)
 }
 
+private extension MeetingCaptureMode {
+    init(_ sourceKind: AudioCaptureSourceKind) {
+        switch sourceKind {
+        case .process:
+            self = .process
+        case .microphone:
+            self = .microphone
+        case .processWithMicrophone:
+            self = .processWithMicrophone
+        }
+    }
+}
+
 public final class MeetingRecorder {
     private let store: MeetingStore
     private var activeRecord: MeetingRecord?
     private let processCaptureSessionFactory: () -> AudioCaptureSessionManaging
     private let microphoneCaptureSessionFactory: () -> AudioCaptureSessionManaging
     private let wavWriterFactory: (URL, UInt32, UInt16) throws -> AudioFrameWriting
-    private let transcriberFactory: (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber
+    private let transcriberFactory: (
+        SpeechTranscriptionConfiguration,
+        URL,
+        Double,
+        Int,
+        PerformanceEventLogger?,
+        TranscriptUpdateSink?,
+        SpeechRecognitionEventSink?
+    ) async throws -> AudioFrameTranscriber
     private let silenceDetector: AudioSilenceDetector
     private var captureSession: AudioCaptureSessionManaging?
     private var writer: AudioFrameWriting?
     private var transcriber: AudioFrameTranscriber?
+    private var microphoneCaptureSession: AudioCaptureSessionManaging?
+    private var microphoneWriter: AudioFrameWriting?
+    private var microphoneTranscriber: AudioFrameTranscriber?
+    private var microphoneTranscriptAttributionSink: MicrophoneSpeakerAttributionSink?
     private var transcriptUpdateSink: RecordingTranscriptUpdateSink?
     private var performanceEventLogger: PerformanceEventLogger?
     private var diagnosticsTracker: CaptureDiagnosticsTracker?
@@ -58,6 +83,7 @@ public final class MeetingRecorder {
     private var audioDrainTelemetry = RecorderAudioDrainTelemetry()
     private var isStartingTranscriber = false
     private var processingTask: Task<Void, Never>?
+    private var microphoneProcessingTask: Task<Void, Never>?
     private let processingLock = NSLock()
     private let eventLock = NSLock()
     private var eventContinuations: [UUID: AsyncStream<MeetingRecorderEvent>.Continuation] = [:]
@@ -88,7 +114,7 @@ public final class MeetingRecorder {
             wavWriterFactory: { url, sampleRate, channelCount in
                 try WavFileWriter(url: url, sampleRate: sampleRate, channelCount: channelCount)
             },
-            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount, performanceEventLogger, transcriptUpdateSink in
+            transcriberFactory: { configuration, transcriptURL, sampleRate, channelCount, performanceEventLogger, transcriptUpdateSink, speechEventSink in
                 try await StreamingSpeechTranscriberFactory.startTranscriber(
                     configuration: configuration,
                     transcriptURL: transcriptURL,
@@ -96,7 +122,7 @@ public final class MeetingRecorder {
                     channelCount: channelCount,
                     performanceEventLogger: performanceEventLogger,
                     transcriptUpdateSink: transcriptUpdateSink,
-                    speechEventSink: transcriptUpdateSink as? SpeechRecognitionEventSink
+                    speechEventSink: speechEventSink ?? transcriptUpdateSink as? SpeechRecognitionEventSink
                 )
             }
         )
@@ -106,7 +132,15 @@ public final class MeetingRecorder {
         store: MeetingStore,
         captureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
-        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber,
+        transcriberFactory: @escaping (
+            SpeechTranscriptionConfiguration,
+            URL,
+            Double,
+            Int,
+            PerformanceEventLogger?,
+            TranscriptUpdateSink?,
+            SpeechRecognitionEventSink?
+        ) async throws -> AudioFrameTranscriber,
         silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
     ) {
         self.init(
@@ -124,7 +158,15 @@ public final class MeetingRecorder {
         processCaptureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         microphoneCaptureSessionFactory: @escaping () -> AudioCaptureSessionManaging,
         wavWriterFactory: @escaping (URL, UInt32, UInt16) throws -> AudioFrameWriting,
-        transcriberFactory: @escaping (SpeechTranscriptionConfiguration, URL, Double, Int, PerformanceEventLogger?, TranscriptUpdateSink?) async throws -> AudioFrameTranscriber,
+        transcriberFactory: @escaping (
+            SpeechTranscriptionConfiguration,
+            URL,
+            Double,
+            Int,
+            PerformanceEventLogger?,
+            TranscriptUpdateSink?,
+            SpeechRecognitionEventSink?
+        ) async throws -> AudioFrameTranscriber,
         silenceDetector: AudioSilenceDetector = AudioSilenceDetector()
     ) {
         self.store = store
@@ -155,19 +197,22 @@ public final class MeetingRecorder {
             name: name,
             startedAt: startedAt
         )
-        activeRecord = stored.record
+        var record = stored.record
+        record.captureMode = MeetingCaptureMode(source.kind)
+        activeRecord = record
         performanceEventLogger = stored.record.performanceEventsURL.map { PerformanceEventLogger(url: $0) }
         performanceEventLogger?.log(
             "meeting_prepared",
             metadata: [
-                "meetingID": stored.record.id.uuidString,
+                "meetingID": record.id.uuidString,
                 "captureSourceKind": source.kind.rawValue,
                 "sourceDisplayName": source.displayName
             ]
         )
         diagnosticsTracker = CaptureDiagnosticsTracker(source: source)
-        state = .prepared(stored.record.id)
-        return stored.record
+        state = .prepared(record.id)
+        try store.save(record)
+        return record
     }
 
     public func prepareRecord(
@@ -237,7 +282,7 @@ public final class MeetingRecorder {
 
         let session: AudioCaptureSessionManaging
         switch source.kind {
-        case .process:
+        case .process, .processWithMicrophone:
             session = processCaptureSessionFactory()
         case .microphone:
             session = microphoneCaptureSessionFactory()
@@ -298,11 +343,21 @@ public final class MeetingRecorder {
                     session.outputSampleRate,
                     session.outputChannelCount,
                     performanceEventLogger,
+                    updateSink,
                     updateSink
                 )
                 transcriber = startedTranscriber
                 isStartingTranscriber = false
                 try flushPendingTranscriptionFrames()
+                if source.kind == .processWithMicrophone {
+                    await startMicrophonePipeline(
+                        source: source,
+                        record: updatedRecord,
+                        configuration: effectiveConfiguration,
+                        updateSink: updateSink,
+                        transcriptJSONURL: transcriptJSONURL
+                    )
+                }
             } catch {
                 isStartingTranscriber = false
                 pendingTranscriptionFrames = []
@@ -348,6 +403,18 @@ public final class MeetingRecorder {
         )
     }
 
+    private func drainMicrophoneFrames() throws {
+        guard let session = microphoneCaptureSession else { return }
+        let bufferBacklog = session.frameBuffer.count
+        let droppedFrameCount = session.frameBuffer.droppedFrameCount
+        let frames = session.frameBuffer.drain()
+        try processMicrophoneFrames(
+            frames,
+            bufferBacklog: bufferBacklog,
+            droppedFrameCount: droppedFrameCount
+        )
+    }
+
     private func processFrames(
         _ frames: [AudioFrame],
         bufferBacklog: Int,
@@ -384,6 +451,94 @@ public final class MeetingRecorder {
         }
     }
 
+    private func processMicrophoneFrames(
+        _ frames: [AudioFrame],
+        bufferBacklog: Int,
+        droppedFrameCount: Int
+    ) throws {
+        processingLock.lock()
+        defer { processingLock.unlock() }
+
+        performanceEventLogger?.log(
+            "microphone_audio_frames_drained",
+            metadata: [
+                "frameCount": String(frames.count),
+                "bufferBacklog": String(bufferBacklog),
+                "droppedFrameCount": String(droppedFrameCount)
+            ]
+        )
+        for frame in frames {
+            try microphoneWriter?.append(frame)
+            guard !silenceDetector.isSilent(frame) else { continue }
+            do {
+                try microphoneTranscriber?.append(frame)
+            } catch {
+                performanceEventLogger?.log(
+                    "microphone_transcriber_append_failed",
+                    metadata: ["error": String(describing: error)]
+                )
+                microphoneTranscriber?.finish()
+                microphoneTranscriber = nil
+            }
+        }
+    }
+
+    private func startMicrophonePipeline(
+        source: AudioCaptureSource,
+        record: MeetingRecord,
+        configuration: SpeechTranscriptionConfiguration,
+        updateSink: RecordingTranscriptUpdateSink,
+        transcriptJSONURL: URL
+    ) async {
+        let microphoneSource = AudioCaptureSource.microphone(displayName: source.microphoneDisplayName)
+        let session = microphoneCaptureSessionFactory()
+        do {
+            try session.start(source: microphoneSource)
+        } catch {
+            performanceEventLogger?.log(
+                "microphone_capture_start_failed",
+                metadata: ["error": String(describing: error)]
+            )
+            return
+        }
+
+        microphoneCaptureSession = session
+        if let microphoneAudioURL = record.microphoneAudioURL {
+            do {
+                microphoneWriter = try wavWriterFactory(
+                    microphoneAudioURL,
+                    UInt32(session.outputSampleRate.rounded()),
+                    UInt16(session.outputChannelCount)
+                )
+            } catch {
+                performanceEventLogger?.log(
+                    "microphone_writer_start_failed",
+                    metadata: ["error": String(describing: error)]
+                )
+            }
+        }
+
+        let attributionSink = MicrophoneSpeakerAttributionSink(downstream: updateSink)
+        microphoneTranscriptAttributionSink = attributionSink
+        startMicrophoneAudioProcessing(session: session)
+        do {
+            microphoneTranscriber = try await transcriberFactory(
+                configuration,
+                transcriptJSONURL,
+                session.outputSampleRate,
+                session.outputChannelCount,
+                performanceEventLogger,
+                attributionSink,
+                attributionSink
+            )
+        } catch {
+            performanceEventLogger?.log(
+                "microphone_transcriber_start_failed",
+                metadata: ["error": String(describing: error)]
+            )
+        }
+    }
+
     public func drainTranscriptUpdates() -> [TranscriptSegmentAccumulationResult] {
         transcriptUpdateSink?.drainResults() ?? []
     }
@@ -406,12 +561,19 @@ public final class MeetingRecorder {
     ) throws -> MeetingRecord? {
         processingTask?.cancel()
         processingTask = nil
+        microphoneProcessingTask?.cancel()
+        microphoneProcessingTask = nil
         captureSession?.frameBuffer.finish()
+        microphoneCaptureSession?.frameBuffer.finish()
         try drainFrames()
+        try drainMicrophoneFrames()
         flushAudioDrainTelemetry()
         try writer?.close()
+        try microphoneWriter?.close()
         let activeTranscriber = transcriber
+        let activeMicrophoneTranscriber = microphoneTranscriber
         activeTranscriber?.finish()
+        activeMicrophoneTranscriber?.finish()
         performanceEventLogger?.log(
             "recording_stopping",
             metadata: ["endedReason": endedReason.rawValue]
@@ -420,12 +582,17 @@ public final class MeetingRecorder {
             try markTranscriptionFailed(failureReason)
         }
         captureSession?.stop()
+        microphoneCaptureSession?.stop()
         diagnosticsTracker?.finish(endedReason: endedReason)
         writer = nil
+        microphoneWriter = nil
         transcriber = nil
+        microphoneTranscriber = nil
+        microphoneTranscriptAttributionSink = nil
         transcriptUpdateSink?.close()
         transcriptUpdateSink = nil
         captureSession = nil
+        microphoneCaptureSession = nil
         let stopped = try markStopped(at: endedAt, endedReason: endedReason)
         emit(.stopped(stopped))
         return stopped
@@ -489,6 +656,28 @@ public final class MeetingRecorder {
                 let droppedFrameCount = session.frameBuffer.droppedFrameCount
                 do {
                     try self.processFrames(
+                        frames,
+                        bufferBacklog: bufferBacklog,
+                        droppedFrameCount: droppedFrameCount
+                    )
+                } catch {
+                    self.emit(.failed(MeetingRecorderFailure(message: String(describing: error))))
+                }
+            }
+        }
+    }
+
+    private func startMicrophoneAudioProcessing(session: AudioCaptureSessionManaging) {
+        microphoneProcessingTask?.cancel()
+        microphoneProcessingTask = Task { [weak self, weak session] in
+            guard let session else { return }
+            for await frames in session.frameBuffer.batches {
+                if Task.isCancelled { break }
+                guard let self else { break }
+                let bufferBacklog = session.frameBuffer.count
+                let droppedFrameCount = session.frameBuffer.droppedFrameCount
+                do {
+                    try self.processMicrophoneFrames(
                         frames,
                         bufferBacklog: bufferBacklog,
                         droppedFrameCount: droppedFrameCount
