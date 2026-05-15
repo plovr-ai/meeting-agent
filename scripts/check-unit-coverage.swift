@@ -12,7 +12,6 @@ private let excludedFiles: Set<String> = [
     "AudioTapManager.swift",
     "DeepgramTranscriptionProvider.swift",
     "OpenAIRealtimeTranscriptionProvider.swift",
-    "OpenRouterBilingualProviders.swift",
     "OpenRouterMeetingSummaryProvider.swift",
     "RunningProcessDiscovery.swift",
     "SystemSpeechTranscriber.swift",
@@ -24,13 +23,7 @@ private let excludedFiles: Set<String> = [
     "MicrophoneCaptureSession.swift",
     "MeetingExportService.swift",
     "SpeechTranscriptionProvider.swift",
-    "Models.swift",
-    "BilingualProvider.swift",
-    // Historical translation analysis helpers remain outside the active caption
-    // architecture gate and are covered by direct unit suites.
-    "AccurateTranslationScheduler.swift",
-    "TranslationResultPersistenceStore.swift",
-    "TranslationUnitBuilder.swift"
+    "Models.swift"
 ]
 
 struct CoverageReport: Decodable {

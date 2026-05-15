@@ -564,7 +564,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
-        invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
+        invalidateActiveCaptionApplyTasks()
         flushLiveCaptionPipeline(reason: .manualStop)
         persistSelectedSessionTranscriptIfNeeded(for: stoppedID)
         stopRealtimeSpeakerIdentificationRuntime()
@@ -590,7 +590,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         } else {
             stoppedID = nil
         }
-        invalidateActiveCaptionApplyTasks(cancelTranslationExperience: false)
+        invalidateActiveCaptionApplyTasks()
         flushLiveCaptionPipeline(reason: .manualStop)
         persistSelectedSessionTranscriptIfNeeded(for: stoppedID)
         stopRealtimeSpeakerIdentificationRuntime()
@@ -1640,7 +1640,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         )
     }
 
-    private func invalidateActiveCaptionApplyTasks(cancelTranslationExperience: Bool = true) {
+    private func invalidateActiveCaptionApplyTasks() {
         activeCaptionApplySequence += 1
         activeCaptionApplyTask?.cancel()
         activeCaptionApplyTask = nil

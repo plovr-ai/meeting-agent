@@ -49,19 +49,6 @@ struct CaptionSection: Codable {
     var text: String
 }
 
-struct TranslationRecord: Codable {
-    var sourceSegmentIDs: [String]
-    var sourceText: String
-    var translatedText: String
-    var displayState: String
-    var laneID: TranslationLane
-}
-
-struct TranslationLane: Codable {
-    var sourceLocale: String
-    var targetLocale: String
-}
-
 struct ExpectedUI: Codable {
     var displayModes: [String: [ExpectedUIRow]]
 }
@@ -71,7 +58,6 @@ struct ExpectedUIRow: Codable {
     var primaryText: String
     var sourceText: String?
     var isFinal: Bool?
-    var translationState: String?
 }
 
 let requiredFiles = [
@@ -80,7 +66,6 @@ let requiredFiles = [
     "diagnostics.json",
     "transcript-events.jsonl",
     "transcript.json",
-    "translation-results.jsonl",
     "performance-events.jsonl"
 ]
 
@@ -192,28 +177,17 @@ func runAnalyzer(fixtureURL: URL) -> (status: String, failures: [String]) {
     return process.terminationStatus == 0 ? ("pass", []) : ("fail", failures)
 }
 
-func expectedUI(transcript: TranscriptDocument, translations: [TranslationRecord]) -> ExpectedUI {
-    let segmentText = Dictionary(uniqueKeysWithValues: transcript.segments.map { ($0.id, $0.text) })
-    let rows = translations.map { record in
+func expectedUI(transcript: TranscriptDocument) -> ExpectedUI {
+    let rows = transcript.segments.map { segment in
         ExpectedUIRow(
-            sourceSegmentIDs: record.sourceSegmentIDs,
-            primaryText: record.translatedText,
-            sourceText: record.sourceSegmentIDs.compactMap { segmentText[$0] }.joined(separator: " "),
-            isFinal: true,
-            translationState: record.displayState == "stableFinal" ? "final" : record.displayState
+            sourceSegmentIDs: [segment.id],
+            primaryText: segment.text,
+            sourceText: nil,
+            isFinal: segment.isFinal
         )
     }
     return ExpectedUI(displayModes: [
-        "both": rows,
-        "translationOnly": rows.map {
-            ExpectedUIRow(
-                sourceSegmentIDs: $0.sourceSegmentIDs,
-                primaryText: $0.primaryText,
-                sourceText: nil,
-                isFinal: $0.isFinal,
-                translationState: $0.translationState
-            )
-        }
+        "captions": rows
     ])
 }
 
@@ -237,18 +211,16 @@ do {
 
     let metadata = try decodeJSON(Metadata.self, from: destination.appendingPathComponent("metadata.json"))
     let transcript = try loadTranscript(from: destination.appendingPathComponent("transcript.json"))
-    let translations = try decodeJSONLLines(TranslationRecord.self, from: destination.appendingPathComponent("translation-results.jsonl"))
-    try writeJSON(expectedUI(transcript: transcript, translations: translations), to: destination.appendingPathComponent("expected-ui.json"))
+    try writeJSON(expectedUI(transcript: transcript), to: destination.appendingPathComponent("expected-ui.json"))
 
     let analyzer = runAnalyzer(fixtureURL: destination)
-    let sourceLocale = translations.first?.laneID.sourceLocale ?? metadata.speechLocaleIdentifier ?? "en-US"
-    let targetLocale = translations.first?.laneID.targetLocale ?? "zh-CN"
+    let sourceLocale = metadata.speechLocaleIdentifier ?? "en-US"
     let manifest = Manifest(
         id: arguments.name,
         sourceMeetingID: metadata.id,
         scenario: arguments.scenario,
         sourceLocale: sourceLocale,
-        targetLocale: targetLocale,
+        targetLocale: sourceLocale,
         purpose: analyzer.status == "pass" ? "golden" : "knownFailure",
         expectedAnalyzerStatus: analyzer.status,
         expectedFailures: analyzer.failures,
@@ -263,7 +235,6 @@ do {
     print("fixture=\(arguments.name)")
     print("scenario=\(arguments.scenario)")
     print("segments=\(transcript.segments.count)")
-    print("translation_records=\(translations.count)")
     print("analyzer_status=\(analyzer.status)")
 } catch {
     fputs("\(error.localizedDescription)\n", stderr)

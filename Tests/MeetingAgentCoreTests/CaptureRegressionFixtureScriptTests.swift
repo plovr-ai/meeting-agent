@@ -16,7 +16,12 @@ final class CaptureRegressionFixtureScriptTests: XCTestCase {
             .write(to: meetingURL.appendingPathComponent("metadata.json"))
         try Data(#"{"warnings":[]}"#.utf8).write(to: meetingURL.appendingPathComponent("diagnostics.json"))
         try Data().write(to: meetingURL.appendingPathComponent("transcript-events.jsonl"))
-        try Data().write(to: meetingURL.appendingPathComponent("performance-events.jsonl"))
+        try [
+            #"{"event":"recording_started","wallTime":"2026-05-01T00:00:00Z"}"#,
+            #"{"event":"deepgram_audio_frame_sent","wallTime":"2026-05-01T00:00:00Z"}"#,
+            #"{"event":"caption_turn_visible","wallTime":"2026-05-01T00:00:01Z","audioTime":0.5,"segmentID":"turn-1","isFinal":true,"metadata":{"path":"realtime"}}"#
+        ].joined(separator: "\n").appending("\n")
+            .write(to: meetingURL.appendingPathComponent("performance-events.jsonl"), atomically: true, encoding: .utf8)
 
         let captionDocument = CaptionDocument(turns: [
             CaptionTurn(
@@ -33,9 +38,6 @@ final class CaptureRegressionFixtureScriptTests: XCTestCase {
         ])
         try JSONEncoder.meetingAgent.encode(captionDocument)
             .write(to: meetingURL.appendingPathComponent("transcript.json"))
-        try Data(#"""
-        {"sourceSegmentIDs":["turn-1"],"sourceText":"你好。\n我们开始。","translatedText":"Hello. Let's begin.","displayState":"stableFinal","laneID":{"sourceLocale":"zh-CN","targetLocale":"en-US"}}
-        """#.utf8).write(to: meetingURL.appendingPathComponent("translation-results.jsonl"))
 
         let result = try runCaptureScript(
             arguments: [
@@ -55,8 +57,8 @@ final class CaptureRegressionFixtureScriptTests: XCTestCase {
             RegressionExpectedUI.self,
             from: Data(contentsOf: expectedUIURL)
         )
-        XCTAssertEqual(expectedUI.displayModes["both"]?.first?.sourceSegmentIDs, ["turn-1"])
-        XCTAssertEqual(expectedUI.displayModes["both"]?.first?.sourceText, "你好。\n我们开始。")
+        XCTAssertEqual(expectedUI.displayModes["captions"]?.first?.sourceSegmentIDs, ["turn-1"])
+        XCTAssertEqual(expectedUI.displayModes["captions"]?.first?.primaryText, "你好。\n我们开始。")
     }
 
     private func runCaptureScript(arguments: [String]) throws -> (status: Int32, stdout: String, stderr: String) {

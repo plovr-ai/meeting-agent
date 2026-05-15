@@ -2,9 +2,6 @@ import Foundation
 
 public enum ProviderCapability: String, Codable, Equatable {
     case audioTranscription
-    case textTranslation
-    case speechTranslation
-    case bilingualSubtitle
 }
 
 public enum ProviderExecutionMode: String, Codable, Equatable, Hashable {
@@ -90,65 +87,7 @@ public struct TranscriptionOptions: Equatable {
     }
 }
 
-public struct TranslationOptions: Equatable {
-    public var sourceLocale: String
-    public var targetLocale: String
-
-    public init(sourceLocale: String, targetLocale: String) {
-        self.sourceLocale = sourceLocale
-        self.targetLocale = targetLocale
-    }
-}
-
-public extension TranslationOptions {
-    var isSameLanguage: Bool {
-        LocaleLanguageMatcher.isSameLanguage(sourceLocale, targetLocale)
-    }
-}
-
-enum LocaleLanguageMatcher {
-    static func isSameLanguage(_ lhs: String, _ rhs: String) -> Bool {
-        guard let left = languageCode(from: lhs),
-              let right = languageCode(from: rhs)
-        else {
-            return false
-        }
-        return left == right
-    }
-
-    private static func languageCode(from localeIdentifier: String) -> String? {
-        let normalized = localeIdentifier
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "_", with: "-")
-            .lowercased()
-        guard let language = normalized.split(separator: "-").first,
-              !language.isEmpty
-        else {
-            return nil
-        }
-        return String(language)
-    }
-}
-
-public typealias SpeechTranslationOptions = TranslationOptions
-public typealias BilingualSubtitleOptions = TranslationOptions
-
 public protocol AudioTranscriptionProvider {
     var descriptor: ProviderDescriptor { get }
     func transcribe(audio: AudioInput, options: TranscriptionOptions) async throws -> TranscriptDocument
-}
-
-public protocol TextTranslationProvider {
-    var descriptor: ProviderDescriptor { get }
-    func translate(transcript: TranscriptDocument, options: TranslationOptions) async throws -> TranslatedTranscript
-}
-
-public protocol SpeechTranslationProvider {
-    var descriptor: ProviderDescriptor { get }
-    func translateSpeech(audio: AudioInput, options: SpeechTranslationOptions) async throws -> TranslatedTranscript
-}
-
-public protocol DirectBilingualSubtitleProvider {
-    var descriptor: ProviderDescriptor { get }
-    func generate(audio: AudioInput, options: BilingualSubtitleOptions) async throws -> BilingualTranscript
 }

@@ -23,9 +23,7 @@ final class PrimaryChainPreflightTests: XCTestCase {
             whisperBinaryPath: nil,
             whisperModelPath: nil,
             transcriptionExecutionMode: .hosted,
-            translationExecutionMode: .hosted,
             hostedTranscriptionProviderID: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID,
-            hostedTranslationProviderID: SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID,
             hostedTranscriptionModelID: SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionModelID,
             openRouterAPIKey: "openrouter-key",
             openAIRealtimeAPIKey: "openai-key"

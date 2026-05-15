@@ -6,13 +6,9 @@ public enum SpeechConfigurationValidationStatus: Equatable {
 }
 
 public struct SpeechTranscriptionConfiguration: Codable, Equatable {
-    public static let defaultBilingualPipelineProfileID = "deepgram-stt"
     public static let defaultLocalTranscriptionProviderID = "whisper-local"
-    public static let defaultLocalTranslationProviderID = "qwen-local-translation"
     public static let defaultHostedTranscriptionProviderID = "openrouter-transcribe"
-    public static let defaultHostedTranslationProviderID = "openrouter-translation"
     public static let defaultHostedTranscriptionModelID = "google/gemini-2.5-flash"
-    public static let defaultHostedTranslationModelID = "google/gemini-2.5-flash"
     public static let defaultHostedSummaryModelID = "openai/gpt-4.1-mini"
     public static let defaultDeepgramTranscriptionProviderID = "deepgram-transcribe"
     public static let defaultDeepgramModelID = "nova-3"
@@ -21,22 +17,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public var provider: SpeechProvider
     public var localeIdentifier: String
-    // Legacy migration-only fields kept so older user defaults decode safely.
-    public var bilingualPipelineProfileID: String
     public var whisperBinaryPath: String?
     public var whisperModelPath: String?
     public var transcriptionExecutionMode: ProviderExecutionMode
-    // Legacy migration-only fields kept out of active UI and new persisted settings.
-    public var translationExecutionMode: ProviderExecutionMode
     public var localTranscriptionProviderID: String
-    // Legacy migration-only fields kept out of active UI and new persisted settings.
-    public var localTranslationProviderID: String
     public var hostedTranscriptionProviderID: String
-    // Legacy migration-only fields kept out of active UI and new persisted settings.
-    public var hostedTranslationProviderID: String
     public var hostedTranscriptionModelID: String
-    // Legacy migration-only fields kept out of active UI and new persisted settings.
-    public var hostedTranslationModelID: String
     public var hostedSummaryModelID: String
     public var openRouterAPIKey: String?
     public var openAIRealtimeAPIKey: String?
@@ -46,17 +32,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public static let `default` = SpeechTranscriptionConfiguration(
         provider: .whisper,
         localeIdentifier: "en-US",
-        bilingualPipelineProfileID: defaultBilingualPipelineProfileID,
         whisperBinaryPath: nil,
         whisperModelPath: nil,
         transcriptionExecutionMode: .hosted,
-        translationExecutionMode: .hosted,
         localTranscriptionProviderID: defaultLocalTranscriptionProviderID,
-        localTranslationProviderID: defaultLocalTranslationProviderID,
         hostedTranscriptionProviderID: defaultDeepgramTranscriptionProviderID,
-        hostedTranslationProviderID: defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: defaultHostedTranscriptionModelID,
-        hostedTranslationModelID: defaultHostedTranslationModelID,
         hostedSummaryModelID: defaultHostedSummaryModelID,
         openRouterAPIKey: nil,
         openAIRealtimeAPIKey: nil,
@@ -67,17 +48,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     public init(
         provider: SpeechProvider,
         localeIdentifier: String,
-        bilingualPipelineProfileID: String = defaultBilingualPipelineProfileID,
         whisperBinaryPath: String?,
         whisperModelPath: String?,
         transcriptionExecutionMode: ProviderExecutionMode = .local,
-        translationExecutionMode: ProviderExecutionMode = .hosted,
         localTranscriptionProviderID: String = defaultLocalTranscriptionProviderID,
-        localTranslationProviderID: String = defaultLocalTranslationProviderID,
         hostedTranscriptionProviderID: String = defaultHostedTranscriptionProviderID,
-        hostedTranslationProviderID: String = defaultHostedTranslationProviderID,
         hostedTranscriptionModelID: String = defaultHostedTranscriptionModelID,
-        hostedTranslationModelID: String = defaultHostedTranslationModelID,
         hostedSummaryModelID: String = defaultHostedSummaryModelID,
         openRouterAPIKey: String? = nil,
         openAIRealtimeAPIKey: String? = nil,
@@ -86,38 +62,21 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
     ) {
         self.provider = provider
         self.localeIdentifier = Self.normalized(localeIdentifier, fallback: "en-US") ?? "en-US"
-        self.bilingualPipelineProfileID = Self.normalized(
-            bilingualPipelineProfileID,
-            fallback: Self.defaultBilingualPipelineProfileID
-        ) ?? Self.defaultBilingualPipelineProfileID
         self.whisperBinaryPath = Self.normalized(whisperBinaryPath)
         self.whisperModelPath = Self.normalized(whisperModelPath)
         self.transcriptionExecutionMode = transcriptionExecutionMode
-        self.translationExecutionMode = translationExecutionMode
         self.localTranscriptionProviderID = Self.normalized(
             localTranscriptionProviderID,
             fallback: Self.defaultLocalTranscriptionProviderID
         ) ?? Self.defaultLocalTranscriptionProviderID
-        self.localTranslationProviderID = Self.normalized(
-            localTranslationProviderID,
-            fallback: Self.defaultLocalTranslationProviderID
-        ) ?? Self.defaultLocalTranslationProviderID
         self.hostedTranscriptionProviderID = Self.normalized(
             hostedTranscriptionProviderID,
             fallback: Self.defaultHostedTranscriptionProviderID
         ) ?? Self.defaultHostedTranscriptionProviderID
-        self.hostedTranslationProviderID = Self.normalized(
-            hostedTranslationProviderID,
-            fallback: Self.defaultHostedTranslationProviderID
-        ) ?? Self.defaultHostedTranslationProviderID
         self.hostedTranscriptionModelID = Self.normalized(
             hostedTranscriptionModelID,
             fallback: Self.defaultHostedTranscriptionModelID
         ) ?? Self.defaultHostedTranscriptionModelID
-        self.hostedTranslationModelID = Self.normalized(
-            hostedTranslationModelID,
-            fallback: Self.defaultHostedTranslationModelID
-        ) ?? Self.defaultHostedTranslationModelID
         self.hostedSummaryModelID = Self.normalized(
             hostedSummaryModelID,
             fallback: Self.defaultHostedSummaryModelID
@@ -134,17 +93,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         case localeIdentifier
         // Legacy key used when translation had a separate target language setting.
         case targetLocaleIdentifier
-        case bilingualPipelineProfileID
         case whisperBinaryPath
         case whisperModelPath
         case transcriptionExecutionMode
-        case translationExecutionMode
         case localTranscriptionProviderID
-        case localTranslationProviderID
         case hostedTranscriptionProviderID
-        case hostedTranslationProviderID
         case hostedTranscriptionModelID
-        case hostedTranslationModelID
         case hostedSummaryModelID
         case openRouterAPIKey
         case openAIRealtimeAPIKey
@@ -160,17 +114,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         self.init(
             provider: try container.decode(SpeechProvider.self, forKey: .provider),
             localeIdentifier: localeIdentifier,
-            bilingualPipelineProfileID: try container.decodeIfPresent(String.self, forKey: .bilingualPipelineProfileID) ?? Self.defaultBilingualPipelineProfileID,
             whisperBinaryPath: try container.decodeIfPresent(String.self, forKey: .whisperBinaryPath),
             whisperModelPath: try container.decodeIfPresent(String.self, forKey: .whisperModelPath),
             transcriptionExecutionMode: try container.decodeIfPresent(ProviderExecutionMode.self, forKey: .transcriptionExecutionMode) ?? .local,
-            translationExecutionMode: try container.decodeIfPresent(ProviderExecutionMode.self, forKey: .translationExecutionMode) ?? .hosted,
             localTranscriptionProviderID: try container.decodeIfPresent(String.self, forKey: .localTranscriptionProviderID) ?? Self.defaultLocalTranscriptionProviderID,
-            localTranslationProviderID: try container.decodeIfPresent(String.self, forKey: .localTranslationProviderID) ?? Self.defaultLocalTranslationProviderID,
             hostedTranscriptionProviderID: try container.decodeIfPresent(String.self, forKey: .hostedTranscriptionProviderID) ?? Self.defaultHostedTranscriptionProviderID,
-            hostedTranslationProviderID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationProviderID) ?? Self.defaultHostedTranslationProviderID,
             hostedTranscriptionModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranscriptionModelID) ?? Self.defaultHostedTranscriptionModelID,
-            hostedTranslationModelID: try container.decodeIfPresent(String.self, forKey: .hostedTranslationModelID) ?? Self.defaultHostedTranslationModelID,
             hostedSummaryModelID: try container.decodeIfPresent(String.self, forKey: .hostedSummaryModelID) ?? Self.defaultHostedSummaryModelID,
             openRouterAPIKey: try container.decodeIfPresent(String.self, forKey: .openRouterAPIKey),
             openAIRealtimeAPIKey: try container.decodeIfPresent(String.self, forKey: .openAIRealtimeAPIKey),

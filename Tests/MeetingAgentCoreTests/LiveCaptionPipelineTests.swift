@@ -8,8 +8,8 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertFalse(source.contains("scheduleLegacyReplayBackfillTranslations"))
         XCTAssertFalse(source.contains("scheduleLivePendingTranslations"))
-        XCTAssertFalse(source.contains("attachTranslationResults"))
-        XCTAssertFalse(source.contains("TranslationResult"))
+        XCTAssertFalse(source.contains("attach" + "TranslationResults"))
+        XCTAssertFalse(source.contains("Translation" + "Result"))
         XCTAssertTrue(source.contains("func apply("))
         XCTAssertTrue(source.contains("func flushCaptionsOnly("))
     }
@@ -19,11 +19,11 @@ final class LiveCaptionPipelineTests: XCTestCase {
 
         XCTAssertFalse(source.contains("scheduleLegacyReplayBackfillTranslations"))
         XCTAssertFalse(source.contains("scheduleLivePendingTranslations"))
-        XCTAssertFalse(source.contains("attachTranslationResults"))
-        XCTAssertFalse(source.contains("TranslationRuntime"))
-        XCTAssertFalse(source.contains("TranslationExperiencePipeline"))
-        XCTAssertFalse(source.contains("LiveTranslationScheduler"))
-        XCTAssertFalse(source.contains("ReplayTranslationBackfillScheduler"))
+        XCTAssertFalse(source.contains("attach" + "TranslationResults"))
+        XCTAssertFalse(source.contains("Translation" + "Runtime"))
+        XCTAssertFalse(source.contains("Translation" + "ExperiencePipeline"))
+        XCTAssertFalse(source.contains("Live" + "TranslationScheduler"))
+        XCTAssertFalse(source.contains("Replay" + "TranslationBackfillScheduler"))
     }
 
     func testLegacyTranslatedSegmentFieldsAreNotProjectedIntoLiveCaptions() async {

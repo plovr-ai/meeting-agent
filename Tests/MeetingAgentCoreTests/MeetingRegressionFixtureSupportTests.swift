@@ -12,7 +12,7 @@ final class MeetingRegressionFixtureSupportTests: XCTestCase {
           "targetLocale": "zh-CN",
           "purpose": "knownFailure",
           "expectedAnalyzerStatus": "fail",
-          "expectedFailures": ["stable translations did not cover realtime final caption turns"]
+          "expectedFailures": []
         }
         """#.utf8)
 
@@ -22,7 +22,7 @@ final class MeetingRegressionFixtureSupportTests: XCTestCase {
         XCTAssertEqual(manifest.scenario, "single-speaker-long-no-speech-final")
         XCTAssertEqual(manifest.purpose, .knownFailure)
         XCTAssertEqual(manifest.expectedAnalyzerStatus, .fail)
-        XCTAssertEqual(manifest.expectedFailures, ["stable translations did not cover realtime final caption turns"])
+        XCTAssertEqual(manifest.expectedFailures, [])
     }
 
     func testExpectedUIDecodesDisplayModeRows() throws {
@@ -32,16 +32,15 @@ final class MeetingRegressionFixtureSupportTests: XCTestCase {
             "both": [
               {
                 "sourceSegmentIDs": ["segment-1", "segment-2"],
-                "primaryText": "译文",
+                "primaryText": "source",
                 "sourceText": "source",
-                "isFinal": true,
-                "translationState": "final"
+                "isFinal": true
               }
             ],
-            "translationOnly": [
+            "captions": [
               {
                 "sourceSegmentIDs": ["segment-1", "segment-2"],
-                "primaryText": "译文"
+                "primaryText": "source"
               }
             ]
           }
@@ -51,35 +50,9 @@ final class MeetingRegressionFixtureSupportTests: XCTestCase {
         let expected = try JSONDecoder.meetingAgent.decode(RegressionExpectedUI.self, from: data)
 
         XCTAssertEqual(expected.displayModes["both"]?.first?.sourceSegmentIDs, ["segment-1", "segment-2"])
-        XCTAssertEqual(expected.displayModes["both"]?.first?.primaryText, "译文")
+        XCTAssertEqual(expected.displayModes["both"]?.first?.primaryText, "source")
         XCTAssertEqual(expected.displayModes["both"]?.first?.sourceText, "source")
-        XCTAssertEqual(expected.displayModes["translationOnly"]?.first?.primaryText, "译文")
-    }
-
-    func testTranslationLookupRequiresExactSourceSegmentSet() throws {
-        let record = TranslationResultPersistenceRecord(
-            meetingID: UUID(uuidString: "D5C47AEC-4E86-4C66-9B61-FEE3D151006C")!,
-            resultID: "stable-1",
-            sourceID: "block-1",
-            laneID: TranslationLaneID(
-                speaker: TranscriptSpeaker(identifier: "speaker-1", label: "User A"),
-                sourceLocale: "en-US",
-                targetLocale: "zh-CN"
-            ),
-            sourceSegmentIDs: ["segment-1", "segment-2"],
-            sourceTextHash: "hash-1",
-            sourceText: "source text",
-            translatedText: "译文",
-            displayState: .stableFinal,
-            boundaryReason: .maxLength,
-            providerID: "fixture",
-            createdAt: Date(timeIntervalSince1970: 1),
-            finalizedAt: Date(timeIntervalSince1970: 2)
-        )
-        let lookup = RegressionFixtureTranslationLookup(records: [record])
-
-        XCTAssertEqual(try lookup.translation(forSourceSegmentIDs: ["segment-2", "segment-1"]), "译文")
-        XCTAssertThrowsError(try lookup.translation(forSourceSegmentIDs: ["segment-1"]))
+        XCTAssertEqual(expected.displayModes["captions"]?.first?.primaryText, "source")
     }
 
     func testLoadTranscriptProjectsCaptionDocumentFixtures() throws {
