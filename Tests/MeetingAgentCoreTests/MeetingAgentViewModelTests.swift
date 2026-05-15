@@ -2265,6 +2265,40 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: knowledgePackageDestination.appendingPathComponent("knowledge.md").path))
     }
 
+    func testSyncKnowledgeToKarpathyWikiWritesPackageAndUpdatesStatus() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MeetingStore(baseDirectory: root)
+        let stored = try store.createMeeting(
+            name: "Japan GTM Sync",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000)
+        )
+        try FileTranscriptRepository().saveCaptionDocument(summaryCaptionDocument([
+            TranscriptSegment(
+                id: "segment-1",
+                speaker: TranscriptSpeaker(identifier: "a", label: "Alice"),
+                startTimeSeconds: 12,
+                endTimeSeconds: 15,
+                text: "Let's start with Tokyo.",
+                language: "en-US"
+            )
+        ]), for: stored.record)
+        let viewModel = MeetingAgentViewModel(store: store, processTargetsProvider: { [] })
+        try viewModel.loadMeetings()
+        let wikiRoot = root.appendingPathComponent("wiki", isDirectory: true)
+
+        let result = try await viewModel.syncKnowledgeToKarpathyWiki(for: stored.record.id, wikiRoot: wikiRoot)
+
+        XCTAssertEqual(result.status, .succeeded)
+        XCTAssertEqual(viewModel.statusText, "Knowledge exported to Karpathy Wiki")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wikiRoot
+            .appendingPathComponent("raw", isDirectory: true)
+            .appendingPathComponent("meetings", isDirectory: true)
+            .appendingPathComponent("2026-04-24-japan-gtm-sync", isDirectory: true)
+            .appendingPathComponent("ingest.md")
+            .path))
+    }
+
     func testExportAndClipboardReportMissingMeetingAndSuccess() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -818,6 +818,46 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
     }
 
+    public func syncKnowledgeToKarpathyWiki(for meetingID: UUID, wikiRoot: URL) async throws -> KnowledgeSyncResult {
+        guard let record = meetings.first(where: { $0.id == meetingID }) else {
+            let error = MeetingExportError.missingArtifact("meeting")
+            statusText = "Karpathy Wiki export failed: \(Self.errorMessage(error))"
+            throw error
+        }
+
+        do {
+            let session = try sessionState(for: record)
+            let document = session.transcript.captionDocument.transcriptDocument
+            let summary = session.summary.summary
+            let knowledge: MeetingKnowledge
+            if let summary {
+                knowledge = MeetingKnowledgeExtractor.fromSummary(summary, segments: document.segments)
+            } else {
+                knowledge = MeetingKnowledge(failureReason: "Knowledge extraction was not available.")
+            }
+            let package = MeetingKnowledgePackage(
+                record: record,
+                summary: summary,
+                segments: document.segments,
+                knowledge: knowledge
+            )
+            let configuration = KnowledgeConnectorConfiguration(
+                kind: .karpathyWiki,
+                isEnabled: true,
+                rootURL: wikiRoot,
+                commandPath: nil,
+                autoSyncEnabled: false,
+                requireReviewBeforeSync: true
+            )
+            let result = try await KarpathyWikiConnector().sync(package: package, configuration: configuration)
+            statusText = "Knowledge exported to Karpathy Wiki"
+            return result
+        } catch {
+            statusText = "Karpathy Wiki export failed: \(Self.errorMessage(error))"
+            throw error
+        }
+    }
+
     public func summaryTextForClipboard(for meetingID: UUID) throws -> String {
         guard let record = meetings.first(where: { $0.id == meetingID }) else {
             let error = MeetingExportError.missingArtifact("meeting")
