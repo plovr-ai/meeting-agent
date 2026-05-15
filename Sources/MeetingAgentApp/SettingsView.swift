@@ -123,9 +123,6 @@ struct SettingsView: View {
                     CommandCenterTextEditor(text: $karpathyWikiRootPath)
                         .frame(minHeight: 44, maxHeight: 44)
                         .disabled(!karpathyWikiEnabled)
-
-                    Text("GBrain sync is planned")
-                        .commandCenterCaption(CommandCenterPalette.secondaryText)
                 }
 
                 SettingsCommandCenterPanel("Validation") {
