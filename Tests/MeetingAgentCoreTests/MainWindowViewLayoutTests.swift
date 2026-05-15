@@ -402,6 +402,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var destination: MainWindowDestination = .today"))
         XCTAssertTrue(source.contains("SettingsView("))
+        XCTAssertFalse(source.contains("profiles: BilingualPipelineFactory.builtInProfiles"))
         XCTAssertFalse(source.contains("\"Whisper Binary Path\""))
         XCTAssertFalse(source.contains("\"Whisper Model Path\""))
         XCTAssertFalse(source.contains("\"STT Locale\""))
@@ -539,7 +540,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         let source = try String(contentsOf: sourceURL)
 
         XCTAssertTrue(source.contains("UnifiedTranscriptView("))
-        XCTAssertTrue(source.contains("BilingualTranscriptBlock("))
+        XCTAssertTrue(source.contains("CaptionTranscriptBlock("))
         XCTAssertTrue(source.contains("ScrollViewReader"))
         XCTAssertTrue(source.contains("LazyVStack"))
         XCTAssertTrue(source.contains("Text(turn.originalText)"))
@@ -551,7 +552,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         guard let unifiedRange = source.range(of: "private struct UnifiedTranscriptView") else {
             return XCTFail("UnifiedTranscriptView is missing")
         }
-        guard let groupRange = source.range(of: "private struct BilingualTranscriptGroup", range: unifiedRange.upperBound..<source.endIndex) else {
+        guard let groupRange = source.range(of: "private struct CaptionTranscriptGroup", range: unifiedRange.upperBound..<source.endIndex) else {
             return XCTFail("UnifiedTranscriptView boundary is missing")
         }
         let unifiedSource = source[unifiedRange.lowerBound..<groupRange.lowerBound]
@@ -576,14 +577,14 @@ final class MainWindowViewLayoutTests: XCTestCase {
 
         XCTAssertTrue(source.contains("LiveCaptionSpeakerGroup.groups(from: turns)"))
         XCTAssertTrue(source.contains("ForEach(group.turns)"))
-        XCTAssertTrue(source.contains("BilingualTranscriptBlock"))
+        XCTAssertTrue(source.contains("CaptionTranscriptBlock"))
     }
 
     func testTranscriptBlocksRenderOriginalTextOnly() throws {
         let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
 
-        guard let blockRange = source.range(of: "private struct BilingualTranscriptBlock") else {
-            return XCTFail("BilingualTranscriptBlock is missing")
+        guard let blockRange = source.range(of: "private struct CaptionTranscriptBlock") else {
+            return XCTFail("CaptionTranscriptBlock is missing")
         }
         let blockSource = source[blockRange.lowerBound..<source.endIndex]
 
@@ -602,7 +603,7 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains(".id(group.turns.last?.id ?? group.id)"))
     }
 
-    func testBilingualTranscriptBlockDoesNotReserveBlankEditControlSpace() throws {
+    func testCaptionTranscriptBlockDoesNotReserveBlankEditControlSpace() throws {
         let source = try String(contentsOfFile: "Sources/MeetingAgentApp/MainWindowView.swift")
 
         XCTAssertTrue(source.contains("transcriptText\n            .frame(maxWidth: .infinity, alignment: .leading)"))

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct SettingsView: View {
     let configuration: SpeechTranscriptionConfiguration
-    let profiles: [BilingualPipelineProfile]
     let localeIdentifiers: [String]
     let isRecording: Bool
     let status: SpeechConfigurationValidationStatus
@@ -14,7 +13,6 @@ struct SettingsView: View {
 
     init(
         configuration: SpeechTranscriptionConfiguration,
-        profiles: [BilingualPipelineProfile],
         localeIdentifiers: [String],
         isRecording: Bool,
         status: SpeechConfigurationValidationStatus,
@@ -22,7 +20,6 @@ struct SettingsView: View {
         save: @escaping (SpeechTranscriptionConfiguration) -> Void
     ) {
         self.configuration = configuration
-        self.profiles = profiles
         self.localeIdentifiers = localeIdentifiers
         self.isRecording = isRecording
         self.status = status
@@ -76,7 +73,7 @@ struct SettingsView: View {
                             }
                         } else {
                             Picker("Hosted Transcription Model", selection: $draft.hostedTranscriptionModelID) {
-                                ForEach(BilingualPipelineFactory.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
+                                ForEach(SpeechProviderCatalog.hostedTranscriptionModelOptions.filter { $0.id != "nova-3" }) { model in
                                     Text(model.displayName).tag(model.id)
                                 }
                             }
@@ -89,7 +86,7 @@ struct SettingsView: View {
                         SecureField("OpenRouter API Key", text: openRouterAPIKeyBinding)
 
                         Picker("Hosted Summary Model", selection: $draft.hostedSummaryModelID) {
-                            ForEach(BilingualPipelineFactory.hostedSummaryModelOptions) { model in
+                            ForEach(SpeechProviderCatalog.hostedSummaryModelOptions) { model in
                                 Text(model.displayName).tag(model.id)
                             }
                         }
@@ -206,10 +203,10 @@ struct SettingsView: View {
             draft.deepgramModelID = SpeechTranscriptionConfiguration.defaultDeepgramModelID
             return
         }
-        if BilingualPipelineFactory.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
+        if SpeechProviderCatalog.hostedTranscriptionModelOptions.contains(where: { $0.id == draft.hostedTranscriptionModelID }) {
             return
         }
-        draft.hostedTranscriptionModelID = BilingualPipelineFactory.hostedTranscriptionModelOptions.first?.id
+        draft.hostedTranscriptionModelID = SpeechProviderCatalog.hostedTranscriptionModelOptions.first?.id
             ?? SpeechTranscriptionConfiguration.defaultHostedTranscriptionModelID
     }
 

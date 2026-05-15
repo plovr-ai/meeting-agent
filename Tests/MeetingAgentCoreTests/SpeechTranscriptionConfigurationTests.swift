@@ -9,9 +9,9 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.localTranscriptionProviderID, "whisper-local")
         XCTAssertEqual(configuration.hostedTranscriptionProviderID, "deepgram-transcribe")
         XCTAssertEqual(configuration.hostedSummaryModelID, "openai/gpt-4.1-mini")
-        XCTAssertEqual(BilingualPipelineFactory.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
+        XCTAssertEqual(SpeechProviderCatalog.hostedSummaryModelOptions.first?.id, "openai/gpt-4.1-mini")
         XCTAssertEqual(configuration.deepgramModelID, "nova-3")
-        XCTAssertFalse(BilingualPipelineFactory.builtInProviderDescriptors.contains {
+        XCTAssertFalse(SpeechProviderCatalog.builtInProviderDescriptors.contains {
             $0.capability == .textTranslation || $0.capability == .speechTranslation || $0.capability == .bilingualSubtitle
         })
     }
@@ -238,7 +238,7 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.validationStatus(fileManager: .default), .available)
     }
 
-    func testConfigurationRoundTripsStepLevelProviderAndModelSettings() throws {
+    func testConfigurationPersistsActiveProviderAndModelSettingsOnly() throws {
         let suiteName = "meeting-agent-tests-\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
@@ -271,8 +271,18 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
         XCTAssertNil(persistedObject["targetLocaleIdentifier"])
+        XCTAssertNil(persistedObject["bilingualPipelineProfileID"])
+        XCTAssertNil(persistedObject["translationExecutionMode"])
+        XCTAssertNil(persistedObject["localTranslationProviderID"])
+        XCTAssertNil(persistedObject["hostedTranslationProviderID"])
+        XCTAssertNil(persistedObject["hostedTranslationModelID"])
 
         var expected = configuration
+        expected.bilingualPipelineProfileID = SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        expected.translationExecutionMode = .hosted
+        expected.localTranslationProviderID = SpeechTranscriptionConfiguration.defaultLocalTranslationProviderID
+        expected.hostedTranslationProviderID = SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID
+        expected.hostedTranslationModelID = SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
         expected.openAIRealtimeAPIKey = "realtime-key"
         expected.deepgramAPIKey = "deepgram-key"
         expected.deepgramModelID = "nova-2"
@@ -293,7 +303,12 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
           "whisperBinaryPath": "/opt/homebrew/bin/whisper-cli",
           "whisperModelPath": "/Users/allan/models/ggml-medium.bin",
           "transcriptionExecutionMode": "local",
-          "translationExecutionMode": "hosted"
+          "translationExecutionMode": "local",
+          "localTranslationProviderID": "legacy-local-translation",
+          "hostedTranscriptionProviderID": "openrouter-transcribe",
+          "hostedTranslationProviderID": "legacy-hosted-translation",
+          "hostedTranscriptionModelID": "google/gemini-2.5-flash",
+          "hostedTranslationModelID": "legacy-translation-model"
         }
         """
         userDefaults.set(Data(legacyConfiguration.utf8), forKey: "SpeechTranscriptionConfiguration")
@@ -301,6 +316,11 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         let loaded = try store.load()
 
         XCTAssertEqual(loaded.localeIdentifier, "zh-CN")
+        XCTAssertEqual(loaded.bilingualPipelineProfileID, "local-whisper-hosted-translation")
+        XCTAssertEqual(loaded.translationExecutionMode, .local)
+        XCTAssertEqual(loaded.localTranslationProviderID, "legacy-local-translation")
+        XCTAssertEqual(loaded.hostedTranslationProviderID, "legacy-hosted-translation")
+        XCTAssertEqual(loaded.hostedTranslationModelID, "legacy-translation-model")
         try store.save(loaded)
         let persistedData = try XCTUnwrap(userDefaults.data(forKey: "SpeechTranscriptionConfiguration"))
         let persistedObject = try XCTUnwrap(
@@ -308,6 +328,11 @@ final class SpeechTranscriptionConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(persistedObject["localeIdentifier"] as? String, "zh-CN")
         XCTAssertNil(persistedObject["targetLocaleIdentifier"])
+        XCTAssertNil(persistedObject["bilingualPipelineProfileID"])
+        XCTAssertNil(persistedObject["translationExecutionMode"])
+        XCTAssertNil(persistedObject["localTranslationProviderID"])
+        XCTAssertNil(persistedObject["hostedTranslationProviderID"])
+        XCTAssertNil(persistedObject["hostedTranslationModelID"])
     }
 
     func testConfigurationStorePersistsAPIKeys() throws {

@@ -21,16 +21,21 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
 
     public var provider: SpeechProvider
     public var localeIdentifier: String
+    // Legacy migration-only fields kept so older user defaults decode safely.
     public var bilingualPipelineProfileID: String
     public var whisperBinaryPath: String?
     public var whisperModelPath: String?
     public var transcriptionExecutionMode: ProviderExecutionMode
+    // Legacy migration-only fields kept out of active UI and new persisted settings.
     public var translationExecutionMode: ProviderExecutionMode
     public var localTranscriptionProviderID: String
+    // Legacy migration-only fields kept out of active UI and new persisted settings.
     public var localTranslationProviderID: String
     public var hostedTranscriptionProviderID: String
+    // Legacy migration-only fields kept out of active UI and new persisted settings.
     public var hostedTranslationProviderID: String
     public var hostedTranscriptionModelID: String
+    // Legacy migration-only fields kept out of active UI and new persisted settings.
     public var hostedTranslationModelID: String
     public var hostedSummaryModelID: String
     public var openRouterAPIKey: String?
@@ -178,17 +183,12 @@ public struct SpeechTranscriptionConfiguration: Codable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(provider, forKey: .provider)
         try container.encode(localeIdentifier, forKey: .localeIdentifier)
-        try container.encode(bilingualPipelineProfileID, forKey: .bilingualPipelineProfileID)
         try container.encodeIfPresent(whisperBinaryPath, forKey: .whisperBinaryPath)
         try container.encodeIfPresent(whisperModelPath, forKey: .whisperModelPath)
         try container.encode(transcriptionExecutionMode, forKey: .transcriptionExecutionMode)
-        try container.encode(translationExecutionMode, forKey: .translationExecutionMode)
         try container.encode(localTranscriptionProviderID, forKey: .localTranscriptionProviderID)
-        try container.encode(localTranslationProviderID, forKey: .localTranslationProviderID)
         try container.encode(hostedTranscriptionProviderID, forKey: .hostedTranscriptionProviderID)
-        try container.encode(hostedTranslationProviderID, forKey: .hostedTranslationProviderID)
         try container.encode(hostedTranscriptionModelID, forKey: .hostedTranscriptionModelID)
-        try container.encode(hostedTranslationModelID, forKey: .hostedTranslationModelID)
         try container.encode(hostedSummaryModelID, forKey: .hostedSummaryModelID)
         try container.encodeIfPresent(openRouterAPIKey, forKey: .openRouterAPIKey)
         try container.encodeIfPresent(openAIRealtimeAPIKey, forKey: .openAIRealtimeAPIKey)
