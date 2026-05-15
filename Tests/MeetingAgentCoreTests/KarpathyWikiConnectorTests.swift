@@ -2,6 +2,24 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class KarpathyWikiConnectorTests: XCTestCase {
+    func testValidationSucceedsForWritableRoot() async throws {
+        let fixture = try KarpathyWikiConnectorFixture()
+        defer { fixture.cleanup() }
+        let connector = KarpathyWikiConnector()
+        let configuration = KnowledgeConnectorConfiguration(
+            kind: .karpathyWiki,
+            isEnabled: true,
+            rootURL: fixture.wikiRoot,
+            commandPath: nil,
+            autoSyncEnabled: false,
+            requireReviewBeforeSync: true
+        )
+
+        let validation = await connector.validate(configuration: configuration)
+
+        XCTAssertEqual(validation, .available("Karpathy Wiki root is available."))
+    }
+
     func testValidationFailsWhenRootMissing() async {
         let connector = KarpathyWikiConnector()
         let configuration = KnowledgeConnectorConfiguration(
@@ -17,6 +35,33 @@ final class KarpathyWikiConnectorTests: XCTestCase {
 
         XCTAssertEqual(validation.status, .unavailable)
         XCTAssertEqual(validation.message, "Karpathy Wiki root is not configured.")
+    }
+
+    func testValidationFailsWhenRootIsAFileOrWrongKind() async throws {
+        let fixture = try KarpathyWikiConnectorFixture()
+        defer { fixture.cleanup() }
+        let fileRoot = fixture.root.appendingPathComponent("wiki-file")
+        try "file".write(to: fileRoot, atomically: true, encoding: .utf8)
+
+        let fileValidation = await KarpathyWikiConnector().validate(configuration: KnowledgeConnectorConfiguration(
+            kind: .karpathyWiki,
+            isEnabled: true,
+            rootURL: fileRoot,
+            commandPath: nil,
+            autoSyncEnabled: false,
+            requireReviewBeforeSync: true
+        ))
+        let wrongKindValidation = await KarpathyWikiConnector().validate(configuration: KnowledgeConnectorConfiguration(
+            kind: .gbrain,
+            isEnabled: true,
+            rootURL: fixture.wikiRoot,
+            commandPath: nil,
+            autoSyncEnabled: false,
+            requireReviewBeforeSync: true
+        ))
+
+        XCTAssertEqual(fileValidation, .unavailable("Karpathy Wiki root is a file."))
+        XCTAssertEqual(wrongKindValidation, .unavailable("Configuration is not for Karpathy Wiki."))
     }
 
     func testSyncWritesPackageUnderRawMeetingsSlug() async throws {
@@ -75,6 +120,59 @@ final class KarpathyWikiConnectorTests: XCTestCase {
             XCTAssertEqual(error as? KnowledgeConnectorError, .destinationAlreadyExists(packageURL.path))
         }
     }
+
+    func testSyncRejectsMissingRootAndWrongKind() async throws {
+        let fixture = try KarpathyWikiConnectorFixture()
+        defer { fixture.cleanup() }
+        let connector = KarpathyWikiConnector()
+
+        do {
+            _ = try await connector.sync(package: fixture.package, configuration: KnowledgeConnectorConfiguration(
+                kind: .karpathyWiki,
+                isEnabled: true,
+                rootURL: nil,
+                commandPath: nil,
+                autoSyncEnabled: false,
+                requireReviewBeforeSync: true
+            ))
+            XCTFail("Expected missing root to fail")
+        } catch {
+            XCTAssertEqual(error as? KnowledgeConnectorError, .missingRoot)
+        }
+
+        do {
+            _ = try await connector.sync(package: fixture.package, configuration: KnowledgeConnectorConfiguration(
+                kind: .gbrain,
+                isEnabled: true,
+                rootURL: fixture.wikiRoot,
+                commandPath: nil,
+                autoSyncEnabled: false,
+                requireReviewBeforeSync: true
+            ))
+            XCTFail("Expected wrong connector kind to fail")
+        } catch {
+            XCTAssertEqual(error as? KnowledgeConnectorError, .invalidConnectorKind(.gbrain))
+        }
+    }
+
+    func testSlugFallsBackToMeetingIDForPunctuationOnlyTitle() throws {
+        let fixture = try KarpathyWikiConnectorFixture(name: " - ! ")
+        defer { fixture.cleanup() }
+
+        XCTAssertEqual(KarpathyWikiConnector.slug(for: fixture.package), "2026-04-24-77777777")
+    }
+
+    func testKnowledgeConnectorErrorDescriptions() {
+        XCTAssertEqual(KnowledgeConnectorError.missingRoot.errorDescription, "Karpathy Wiki root is not configured.")
+        XCTAssertEqual(
+            KnowledgeConnectorError.invalidConnectorKind(.gbrain).errorDescription,
+            "Invalid knowledge connector kind: gbrain"
+        )
+        XCTAssertEqual(
+            KnowledgeConnectorError.destinationAlreadyExists("/tmp/wiki").errorDescription,
+            "Knowledge destination already exists: /tmp/wiki"
+        )
+    }
 }
 
 private struct KarpathyWikiConnectorFixture {
@@ -82,14 +180,14 @@ private struct KarpathyWikiConnectorFixture {
     let wikiRoot: URL
     let package: MeetingKnowledgePackage
 
-    init() throws {
+    init(name: String = "Japan GTM Sync") throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("karpathy-wiki-connector-\(UUID().uuidString)", isDirectory: true)
         wikiRoot = root.appendingPathComponent("wiki", isDirectory: true)
         try FileManager.default.createDirectory(at: wikiRoot, withIntermediateDirectories: true)
         let record = MeetingRecord(
             id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
-            name: "Japan GTM Sync",
+            name: name,
             startedAt: Date(timeIntervalSince1970: 1_777_000_000),
             endedAt: Date(timeIntervalSince1970: 1_777_000_600),
             audioURL: root.appendingPathComponent("audio.wav"),
