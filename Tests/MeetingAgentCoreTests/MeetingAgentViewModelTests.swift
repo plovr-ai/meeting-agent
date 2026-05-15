@@ -2820,7 +2820,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.statusText, "Summary generated")
     }
 
-    func testSaveSpeechConfigurationPersistsBilingualSettings() throws {
+    func testSaveSpeechConfigurationPersistsCaptionOnlySettings() throws {
         let suiteName = "meeting-vm-settings-save-\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
@@ -2851,7 +2851,11 @@ final class MeetingAgentViewModelTests: XCTestCase {
         viewModel.saveSpeechConfiguration(configuration)
 
         var expectedConfiguration = configuration
-        expectedConfiguration.bilingualPipelineProfileID = "hosted-transcribe-hosted-translation"
+        expectedConfiguration.bilingualPipelineProfileID = SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        expectedConfiguration.translationExecutionMode = .hosted
+        expectedConfiguration.localTranslationProviderID = SpeechTranscriptionConfiguration.defaultLocalTranslationProviderID
+        expectedConfiguration.hostedTranslationProviderID = SpeechTranscriptionConfiguration.defaultHostedTranslationProviderID
+        expectedConfiguration.hostedTranslationModelID = SpeechTranscriptionConfiguration.defaultHostedTranslationModelID
         XCTAssertEqual(viewModel.speechConfiguration, expectedConfiguration)
         XCTAssertEqual(try configurationStore.load(), expectedConfiguration)
         XCTAssertEqual(viewModel.statusText, "Settings saved")
@@ -2878,7 +2882,7 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryChainPreflightSummary, "Primary chain ready")
     }
 
-    func testSaveSpeechConfigurationDerivesPipelineProfileFromStepModes() throws {
+    func testSaveSpeechConfigurationDropsLegacyPipelineProfileFromActiveSettings() throws {
         let suiteName = "meeting-vm-derived-profile-\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
@@ -2899,11 +2903,17 @@ final class MeetingAgentViewModelTests: XCTestCase {
 
         viewModel.saveSpeechConfiguration(staleProfileConfiguration)
 
-        XCTAssertEqual(viewModel.speechConfiguration.bilingualPipelineProfileID, "hosted-transcribe-hosted-translation")
-        XCTAssertEqual(try configurationStore.load().bilingualPipelineProfileID, "hosted-transcribe-hosted-translation")
+        XCTAssertEqual(
+            viewModel.speechConfiguration.bilingualPipelineProfileID,
+            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        )
+        XCTAssertEqual(
+            try configurationStore.load().bilingualPipelineProfileID,
+            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        )
     }
 
-    func testSaveSpeechConfigurationDerivesLocalAndMixedProfilesAndValidationStatus() throws {
+    func testSaveSpeechConfigurationKeepsLegacyProfileOutOfValidationStatus() throws {
         let suiteName = "meeting-vm-derived-profile-more-\(UUID().uuidString)"
         let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { userDefaults.removePersistentDomain(forName: suiteName) }
@@ -2922,7 +2932,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
             transcriptionExecutionMode: .local,
             translationExecutionMode: .local
         ))
-        XCTAssertEqual(viewModel.speechConfiguration.bilingualPipelineProfileID, "local-whisper-local-translation")
+        XCTAssertEqual(
+            viewModel.speechConfiguration.bilingualPipelineProfileID,
+            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        )
         XCTAssertEqual(viewModel.speechConfigurationStatus, .available)
 
         viewModel.saveSpeechConfiguration(SpeechTranscriptionConfiguration(
@@ -2934,7 +2947,10 @@ final class MeetingAgentViewModelTests: XCTestCase {
             transcriptionExecutionMode: .local,
             translationExecutionMode: .hosted
         ))
-        XCTAssertEqual(viewModel.speechConfiguration.bilingualPipelineProfileID, "local-whisper-hosted-translation")
+        XCTAssertEqual(
+            viewModel.speechConfiguration.bilingualPipelineProfileID,
+            SpeechTranscriptionConfiguration.defaultBilingualPipelineProfileID
+        )
     }
 
     func testSupportedLocaleIdentifiersIncludeInitialSettingsChoices() {

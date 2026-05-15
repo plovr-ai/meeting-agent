@@ -241,20 +241,12 @@ public final class MeetingAgentViewModel: ObservableObject {
         speechConfiguration = SpeechTranscriptionConfiguration(
             provider: configuration.provider,
             localeIdentifier: configuration.localeIdentifier,
-            bilingualPipelineProfileID: Self.derivedBilingualPipelineProfileID(
-                transcriptionExecutionMode: configuration.transcriptionExecutionMode,
-                translationExecutionMode: configuration.translationExecutionMode
-            ),
             whisperBinaryPath: configuration.whisperBinaryPath,
             whisperModelPath: configuration.whisperModelPath,
             transcriptionExecutionMode: configuration.transcriptionExecutionMode,
-            translationExecutionMode: configuration.translationExecutionMode,
             localTranscriptionProviderID: configuration.localTranscriptionProviderID,
-            localTranslationProviderID: configuration.localTranslationProviderID,
             hostedTranscriptionProviderID: configuration.hostedTranscriptionProviderID,
-            hostedTranslationProviderID: configuration.hostedTranslationProviderID,
             hostedTranscriptionModelID: configuration.hostedTranscriptionModelID,
-            hostedTranslationModelID: configuration.hostedTranslationModelID,
             hostedSummaryModelID: configuration.hostedSummaryModelID,
             openRouterAPIKey: configuration.openRouterAPIKey,
             openAIRealtimeAPIKey: configuration.openAIRealtimeAPIKey,
@@ -1192,20 +1184,6 @@ public final class MeetingAgentViewModel: ObservableObject {
             sourceGoals = []
         }
         return sourceGoals.compactMap(normalizedMeetingGoal)
-    }
-
-    private static func derivedBilingualPipelineProfileID(
-        transcriptionExecutionMode: ProviderExecutionMode,
-        translationExecutionMode: ProviderExecutionMode
-    ) -> String {
-        switch (transcriptionExecutionMode, translationExecutionMode) {
-        case (.hosted, .hosted):
-            return "hosted-transcribe-hosted-translation"
-        case (.local, .local):
-            return "local-whisper-local-translation"
-        default:
-            return "local-whisper-hosted-translation"
-        }
     }
 
     nonisolated static func summaryProvider(

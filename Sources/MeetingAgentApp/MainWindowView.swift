@@ -66,7 +66,6 @@ struct MainWindowView: View {
             case .settings:
                 SettingsView(
                     configuration: viewModel.speechConfiguration,
-                    profiles: BilingualPipelineFactory.builtInProfiles,
                     localeIdentifiers: MeetingAgentViewModel.supportedLocaleIdentifiers,
                     isRecording: viewModel.isRecording,
                     status: viewModel.speechConfigurationStatus,
@@ -423,7 +422,7 @@ private struct MeetingDetailView: View {
                 MeetingCommandCenterView(
                     meeting: meeting,
                     backToMeetings: backToMeetings,
-                    pipelineDisplayName: pipelineDisplayName(for: speechConfiguration),
+                    pipelineDisplayName: transcriptionChainDisplayName(for: speechConfiguration),
                     transcriptionLinkText: transcriptionLinkText(for: speechConfiguration),
                     transcriptionModelText: transcriptionModelText(for: speechConfiguration),
                     preflightText: preflightText,
@@ -468,10 +467,14 @@ private struct MeetingDetailView: View {
         }
     }
 
-    private func pipelineDisplayName(for configuration: SpeechTranscriptionConfiguration) -> String {
-        BilingualPipelineFactory.builtInProfiles
-            .first { $0.id == configuration.bilingualPipelineProfileID }?
-            .displayName ?? configuration.bilingualPipelineProfileID
+    private func transcriptionChainDisplayName(for configuration: SpeechTranscriptionConfiguration) -> String {
+        if configuration.usesDeepgram {
+            return "Deepgram Transcription"
+        }
+        if configuration.transcriptionExecutionMode == .hosted {
+            return "Hosted Transcription"
+        }
+        return "Local Transcription"
     }
 
     private func transcriptionLinkText(for configuration: SpeechTranscriptionConfiguration) -> String {
@@ -483,7 +486,7 @@ private struct MeetingDetailView: View {
 
     private func transcriptionModelText(for configuration: SpeechTranscriptionConfiguration) -> String {
         if configuration.usesDeepgram {
-            return modelDisplayName(configuration.deepgramModelID, in: BilingualPipelineFactory.hostedTranscriptionModelOptions)
+            return modelDisplayName(configuration.deepgramModelID, in: SpeechProviderCatalog.hostedTranscriptionModelOptions)
         }
         if configuration.hostedTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultOpenAIRealtimeTranscriptionProviderID {
             return openAIRealtimeTranscriptionModelDisplayName(configuration.hostedTranscriptionModelID)
@@ -491,7 +494,7 @@ private struct MeetingDetailView: View {
         if configuration.transcriptionExecutionMode == .hosted {
             return modelDisplayName(
                 configuration.hostedTranscriptionModelID,
-                in: BilingualPipelineFactory.hostedTranscriptionModelOptions
+                in: SpeechProviderCatalog.hostedTranscriptionModelOptions
             )
         }
         if configuration.localTranscriptionProviderID == SpeechTranscriptionConfiguration.defaultLocalTranscriptionProviderID {
@@ -519,10 +522,10 @@ private struct MeetingDetailView: View {
     }
 
     private func providerDisplayName(_ providerID: String) -> String {
-        BilingualPipelineFactory.builtInRegistry.descriptor(id: providerID)?.displayName ?? providerID
+        SpeechProviderCatalog.builtInRegistry.descriptor(id: providerID)?.displayName ?? providerID
     }
 
-    private func modelDisplayName(_ modelID: String, in options: [BilingualPipelineFactory.ModelOption]) -> String {
+    private func modelDisplayName(_ modelID: String, in options: [SpeechProviderCatalog.ModelOption]) -> String {
         options.first { $0.id == modelID }?.displayName ?? modelID
     }
 
@@ -1361,7 +1364,7 @@ private struct UnifiedTranscriptView: View {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     let groups = LiveCaptionSpeakerGroup.groups(from: turns)
                     ForEach(groups) { group in
-                        BilingualTranscriptGroup(
+                        CaptionTranscriptGroup(
                             group: group,
                             editSpeaker: group.speaker.identifier == nil ? nil : {
                                 if let firstTurn = group.turns.first {
@@ -1402,7 +1405,7 @@ private struct UnifiedTranscriptView: View {
 
 }
 
-private struct BilingualTranscriptGroup: View {
+private struct CaptionTranscriptGroup: View {
     let group: LiveCaptionSpeakerGroup
     var editSpeaker: (() -> Void)? = nil
 
@@ -1410,7 +1413,7 @@ private struct BilingualTranscriptGroup: View {
         VStack(alignment: .leading, spacing: 6) {
             speakerLabel
             ForEach(group.turns) { turn in
-                BilingualTranscriptBlock(
+                CaptionTranscriptBlock(
                     turn: turn
                 )
                 .id(turn.id)
@@ -1463,7 +1466,7 @@ private struct BilingualTranscriptGroup: View {
     }
 }
 
-private struct BilingualTranscriptBlock: View {
+private struct CaptionTranscriptBlock: View {
     let turn: LiveCaptionTurn
 
     var body: some View {
