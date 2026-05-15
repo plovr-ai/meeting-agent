@@ -116,6 +116,18 @@ struct SettingsView: View {
                     }
                 }
 
+                SettingsCommandCenterPanel("Post-Meeting Refinement") {
+                    Picker("Batch Transcript Provider", selection: $draft.batchTranscriptionProviderID) {
+                        Text("Deepgram").tag("deepgram-batch-transcribe")
+                    }
+
+                    Picker("Batch Transcript Model", selection: $draft.batchTranscriptionModelID) {
+                        ForEach(SpeechProviderCatalog.batchTranscriptionModelOptions) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+                }
+
                 SettingsCommandCenterPanel("Knowledge Destinations") {
                     Toggle("Export to Karpathy Wiki", isOn: $karpathyWikiEnabled)
                         .toggleStyle(.checkbox)
@@ -175,6 +187,9 @@ struct SettingsView: View {
         }
         .onChange(of: draft.hostedTranscriptionProviderID) { _, _ in
             ensureHostedTranscriptionModel()
+        }
+        .onChange(of: draft.batchTranscriptionProviderID) { _, _ in
+            ensureBatchTranscriptionModel()
         }
     }
 
@@ -263,6 +278,13 @@ struct SettingsView: View {
         }
         draft.hostedTranscriptionModelID = SpeechProviderCatalog.hostedTranscriptionModelOptions.first?.id
             ?? SpeechTranscriptionConfiguration.defaultHostedTranscriptionModelID
+    }
+
+    private func ensureBatchTranscriptionModel() {
+        if SpeechProviderCatalog.batchTranscriptionModelOptions.contains(where: { $0.id == draft.batchTranscriptionModelID }) {
+            return
+        }
+        draft.batchTranscriptionModelID = SpeechTranscriptionConfiguration.defaultBatchTranscriptionModelID
     }
 
     private var configurationStatusText: String {

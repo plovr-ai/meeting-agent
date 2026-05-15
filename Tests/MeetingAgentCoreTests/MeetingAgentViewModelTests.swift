@@ -3056,6 +3056,81 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.meetings.first?.transcriptionStatus, .notStarted)
     }
 
+    func testStopRecordingAndGenerateSummaryUsesRefinedTranscript() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let summaryProvider = CapturingSummaryProvider(providerName: "test-summary")
+        let refiner = FakePostMeetingTranscriptRefiner()
+        refiner.document = summaryCaptionDocument([
+            TranscriptSegment(
+                id: "refined-final",
+                speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0", label: "Speaker 1"),
+                text: "We decided to launch with refined transcript.",
+                language: "en-US",
+                sourceProvider: "deepgram-batch-transcribe"
+            )
+        ])
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                transcriptionExecutionMode: .hosted,
+                hostedTranscriptionProviderID: "deepgram-transcribe",
+                deepgramAPIKey: "key"
+            ),
+            postMeetingTranscriptRefiner: refiner,
+            summaryProviderFactory: { _ in summaryProvider },
+            processTargetsProvider: { [target] }
+        )
+
+        try await viewModel.startRecording(for: target)
+        try await viewModel.stopRecordingAndGenerateSummary(at: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(refiner.requests.count, 1)
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.map(\.id), ["refined-final"])
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcript.finalTurns.map(\.turnID), ["refined-final"])
+        XCTAssertEqual(viewModel.meetings.first?.transcriptRefinement?.status, .refined)
+    }
+
+    func testStopRecordingRefinementFailureKeepsLiveTranscript() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let refiner = FakePostMeetingTranscriptRefiner()
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            postMeetingTranscriptRefiner: refiner,
+            processTargetsProvider: { [target] }
+        )
+
+        try await viewModel.startRecording(for: target)
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "live-final",
+            text: "Live transcript should remain.",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe"
+        )))
+        try await waitFor { viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.map(\.id) == ["live-final"] }
+        refiner.document = nil
+        viewModel.stopRecording(at: Date(timeIntervalSince1970: 200))
+        try await waitFor { refiner.requests.count == 1 }
+
+        XCTAssertEqual(viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.map(\.id), ["live-final"])
+        XCTAssertEqual(viewModel.meetings.first?.transcriptRefinement?.status, .failed)
+    }
+
     func testInvalidateDownstreamArtifactsAfterTranscriptChangeRemovesProgressSnapshot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-vm-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3367,6 +3442,39 @@ private final class ViewModelFakeTranscriberFactory {
         requests.append(Request(localeIdentifier: configuration.localeIdentifier))
         transcriber.transcriptUpdateSink = transcriptUpdateSink
         return transcriber
+    }
+}
+
+private final class FakePostMeetingTranscriptRefiner: PostMeetingTranscriptRefining {
+    var document: CaptionDocument?
+    private(set) var requests: [MeetingRecord] = []
+
+    func refineTranscript(
+        for record: MeetingRecord,
+        liveDocument: CaptionDocument,
+        configuration: SpeechTranscriptionConfiguration
+    ) async -> PostMeetingTranscriptRefinementResult {
+        requests.append(record)
+        var updatedRecord = record
+        if let document {
+            updatedRecord.transcriptRefinement = TranscriptRefinementMetadata(
+                providerID: configuration.batchTranscriptionProviderID,
+                modelID: configuration.batchTranscriptionModelID,
+                status: .refined,
+                durationSeconds: 0.1,
+                updatedAt: Date(timeIntervalSince1970: 200)
+            )
+            return PostMeetingTranscriptRefinementResult(record: updatedRecord, captionDocument: document)
+        }
+        updatedRecord.transcriptRefinement = TranscriptRefinementMetadata(
+            providerID: configuration.batchTranscriptionProviderID,
+            modelID: configuration.batchTranscriptionModelID,
+            status: .failed,
+            failureReason: "fake failure",
+            durationSeconds: 0.1,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        return PostMeetingTranscriptRefinementResult(record: updatedRecord, captionDocument: nil)
     }
 }
 

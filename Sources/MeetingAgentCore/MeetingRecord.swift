@@ -14,6 +14,38 @@ public enum MeetingCaptureMode: String, Codable, Equatable {
     case processWithMicrophone
 }
 
+public enum TranscriptRefinementStatus: String, Codable, Equatable {
+    case notStarted
+    case running
+    case refined
+    case failed
+}
+
+public struct TranscriptRefinementMetadata: Codable, Equatable {
+    public var providerID: String
+    public var modelID: String
+    public var status: TranscriptRefinementStatus
+    public var failureReason: String?
+    public var durationSeconds: Double?
+    public var updatedAt: Date
+
+    public init(
+        providerID: String,
+        modelID: String,
+        status: TranscriptRefinementStatus,
+        failureReason: String? = nil,
+        durationSeconds: Double? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.providerID = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.status = status
+        self.failureReason = SpeechTranscriptionConfiguration.normalized(failureReason)
+        self.durationSeconds = durationSeconds
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct MeetingAttendee: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String
@@ -87,6 +119,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
     public var performanceEventsURL: URL?
     public var transcriptionStatus: TranscriptionStatus
     public var transcriptionFailureReason: String?
+    public var transcriptRefinement: TranscriptRefinementMetadata?
     public var speechProvider: SpeechProvider
     public var transcriptionProviderID: String
     public var speechLocaleIdentifier: String
@@ -115,6 +148,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         performanceEventsURL: URL? = nil,
         transcriptionStatus: TranscriptionStatus = .notStarted,
         transcriptionFailureReason: String? = nil,
+        transcriptRefinement: TranscriptRefinementMetadata? = nil,
         speechProvider: SpeechProvider = .whisper,
         transcriptionProviderID: String? = nil,
         speechLocaleIdentifier: String = "en-US",
@@ -142,6 +176,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         self.performanceEventsURL = performanceEventsURL
         self.transcriptionStatus = transcriptionStatus
         self.transcriptionFailureReason = transcriptionFailureReason
+        self.transcriptRefinement = transcriptRefinement
         self.speechProvider = speechProvider
         self.transcriptionProviderID = SpeechTranscriptionConfiguration.normalized(
             transcriptionProviderID,
@@ -180,6 +215,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         case performanceEventsURL
         case transcriptionStatus
         case transcriptionFailureReason
+        case transcriptRefinement
         case speechProvider
         case transcriptionProviderID
         case speechLocaleIdentifier
@@ -210,6 +246,7 @@ public struct MeetingRecord: Codable, Identifiable, Equatable {
         performanceEventsURL = try container.decodeIfPresent(URL.self, forKey: .performanceEventsURL)
         transcriptionStatus = try container.decodeIfPresent(TranscriptionStatus.self, forKey: .transcriptionStatus) ?? .notStarted
         transcriptionFailureReason = try container.decodeIfPresent(String.self, forKey: .transcriptionFailureReason)
+        transcriptRefinement = try container.decodeIfPresent(TranscriptRefinementMetadata.self, forKey: .transcriptRefinement)
         speechProvider = try container.decodeIfPresent(SpeechProvider.self, forKey: .speechProvider) ?? .whisper
         transcriptionProviderID = try container.decodeIfPresent(String.self, forKey: .transcriptionProviderID)
             ?? speechProvider.rawValue

@@ -52,6 +52,10 @@ final class DeepgramTranscriptionProviderTests: XCTestCase {
             XCTAssertEqual(request.httpBodyStreamData(), Data([0, 1, 2]))
             XCTAssertEqual(request.url?.query?.contains("model=nova-3"), true)
             XCTAssertEqual(request.url?.query?.contains("language=zh-CN"), true)
+            XCTAssertEqual(request.url?.query?.contains("diarize=true"), true)
+            XCTAssertEqual(request.url?.query?.contains("utterances=true"), true)
+            XCTAssertEqual(request.url?.query?.contains("smart_format=true"), true)
+            XCTAssertEqual(request.url?.query?.contains("punctuate=true"), true)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
