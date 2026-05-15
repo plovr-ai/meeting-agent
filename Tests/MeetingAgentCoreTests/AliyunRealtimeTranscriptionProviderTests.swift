@@ -79,6 +79,7 @@ final class AliyunRealtimeTranscriptionProviderTests: XCTestCase {
         XCTAssertEqual(segment.text, "大家好")
         XCTAssertEqual(segment.language, "zh-CN")
         XCTAssertEqual(segment.sourceProvider, SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID)
+        XCTAssertEqual(segment.speakerID, "aliyun-paraformer-realtime-speaker-0")
         XCTAssertEqual(segment.startTimeSeconds, 0.1)
         XCTAssertEqual(segment.endTimeSeconds, 0.8)
         XCTAssertTrue(segment.isFinal)

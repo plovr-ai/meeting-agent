@@ -111,6 +111,8 @@ protocol AliyunRealtimeWebSocketTransport: AnyObject {
 }
 
 public struct AliyunRealtimeTranscriptionProvider {
+    static let syntheticSpeakerID = "aliyun-paraformer-realtime-speaker-0"
+
     private let apiKey: String?
     private let model: String
     private let transportFactory: (URL, String) -> AliyunRealtimeWebSocketTransport
@@ -325,6 +327,7 @@ final class AliyunRealtimeTranscriber: AudioFrameTranscriber {
             id: sentenceEnd
                 ? "\(SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID)-stream-\(index)"
                 : "\(SpeechTranscriptionConfiguration.defaultAliyunRealtimeTranscriptionProviderID)-stream-active",
+            speaker: TranscriptSpeaker(identifier: AliyunRealtimeTranscriptionProvider.syntheticSpeakerID),
             startTimeSeconds: beginTimeMilliseconds.map { Double($0) / 1000 },
             endTimeSeconds: endTimeMilliseconds.map { Double($0) / 1000 },
             text: text,
