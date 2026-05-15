@@ -24,24 +24,6 @@ public struct MeetingArtifactSnapshot: Equatable {
         self.transcriptLatencyText = transcriptLatencyText
     }
 
-    public static func load(for meeting: MeetingRecord) -> MeetingArtifactSnapshot {
-        let captionDocument = try? FileTranscriptRepository().loadCaptionDocument(for: meeting)
-        let document = captionDocument?.transcriptDocument
-        let transcriptText = document.flatMap(renderedTranscript(from:))
-            ?? "Transcript will appear here while recording."
-        let summary = try? FileSummaryRepository().loadSummary(for: meeting)
-        let providers = Array(Set(document?.segments.map(\.sourceProvider) ?? [])).sorted()
-
-        return MeetingArtifactSnapshot(
-            meetingID: meeting.id,
-            transcriptText: transcriptText,
-            transcriptSegments: document?.segments ?? [],
-            summary: summary,
-            actualTranscriptionSourceText: providers.isEmpty ? meeting.transcriptionProviderID : providers.joined(separator: ", "),
-            transcriptLatencyText: Self.transcriptLatencyText(for: meeting)
-        )
-    }
-
     public static func make(meeting: MeetingRecord, session: MeetingSessionState) -> MeetingArtifactSnapshot {
         let document = session.transcript.captionDocument.transcriptDocument
         let transcriptText = renderedTranscript(from: document)

@@ -5,13 +5,13 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsRenderedStructuredTranscript() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let session = fixture.session(segments: [
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "Hello"),
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "Next step")
         ])
         let destination = fixture.root.appendingPathComponent("transcript-export.txt")
 
-        try MeetingExportService().exportTranscript(for: fixture.record, to: destination)
+        try MeetingExportService().exportTranscript(for: fixture.record, session: session, to: destination)
 
         XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "Allan:\nHello Next step")
     }
@@ -19,12 +19,12 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsSummaryMarkdownWhenPresent() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try "# Summary\n\n- Decision made\n".write(to: fixture.record.summaryURL!, atomically: true, encoding: .utf8)
+        let summary = fixture.summary(overview: "Decision made")
         let destination = fixture.root.appendingPathComponent("summary-export.md")
 
-        try MeetingExportService().exportSummary(for: fixture.record, to: destination)
+        try MeetingExportService().exportSummary(summary, to: destination)
 
-        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "# Summary\n\n- Decision made\n")
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), MeetingSummaryMarkdownRenderer.render(summary))
     }
 
     func testSummaryExportFailsWhenSummaryMissing() throws {
@@ -32,7 +32,7 @@ final class MeetingExportServiceTests: XCTestCase {
         defer { fixture.cleanup() }
 
         XCTAssertThrowsError(try MeetingExportService().exportSummary(
-            for: fixture.record,
+            nil,
             to: fixture.root.appendingPathComponent("summary-export.md")
         )) { error in
             XCTAssertEqual(error as? MeetingExportError, .missingArtifact("summary"))
@@ -55,7 +55,7 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsStructuredTranscriptAsSRT() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let session = fixture.session(segments: [
             TranscriptSegment(
                 speaker: TranscriptSpeaker(identifier: "a", label: "Allan"),
                 startTimeSeconds: 1.25,
@@ -73,7 +73,7 @@ final class MeetingExportServiceTests: XCTestCase {
         ])
         let destination = fixture.root.appendingPathComponent("captions.srt")
 
-        try MeetingExportService().exportSubtitles(for: fixture.record, format: .srt, to: destination)
+        try MeetingExportService().exportSubtitles(for: fixture.record, session: session, format: .srt, to: destination)
 
         XCTAssertEqual(
             try String(contentsOf: destination, encoding: .utf8),
@@ -93,13 +93,13 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsStructuredTranscriptAsVTTWithApproximateFallbackTiming() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let session = fixture.session(segments: [
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "First line."),
             TranscriptSegment(speaker: TranscriptSpeaker(identifier: "a", label: "Allan"), text: "Second line.")
         ])
         let destination = fixture.root.appendingPathComponent("captions.vtt")
 
-        try MeetingExportService().exportSubtitles(for: fixture.record, format: .vtt, to: destination)
+        try MeetingExportService().exportSubtitles(for: fixture.record, session: session, format: .vtt, to: destination)
 
         XCTAssertEqual(
             try String(contentsOf: destination, encoding: .utf8),
@@ -119,20 +119,22 @@ final class MeetingExportServiceTests: XCTestCase {
     func testSubtitleExportFailsWhenStructuredTranscriptMissing() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
+        let session = fixture.session(segments: [])
 
         XCTAssertThrowsError(try MeetingExportService().exportSubtitles(
             for: fixture.record,
+            session: session,
             format: .srt,
             to: fixture.root.appendingPathComponent("captions.srt")
         )) { error in
-            XCTAssertEqual(error as? MeetingExportError, .missingArtifact("structured transcript"))
+            XCTAssertEqual(error as? MeetingExportError, .missingArtifact("timed transcript"))
         }
     }
 
     func testExportsReadinessMarkdownReport() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let session = fixture.session(segments: [
             TranscriptSegment(text: "Structured transcript text for validation.")
         ])
         try CaptureDiagnostics(
@@ -153,7 +155,7 @@ final class MeetingExportServiceTests: XCTestCase {
         ).write(to: fixture.record.diagnosticsURL!)
         let destination = fixture.root.appendingPathComponent("readiness.md")
 
-        try MeetingExportService().exportReadinessReport(for: fixture.record, to: destination)
+        try MeetingExportService().exportReadinessReport(for: fixture.record, session: session, to: destination)
 
         let markdown = try String(contentsOf: destination, encoding: .utf8)
         XCTAssertTrue(markdown.contains("# Meeting Readiness Report"))
@@ -167,7 +169,7 @@ final class MeetingExportServiceTests: XCTestCase {
     func testExportsKnowledgePackageMarkdownFiles() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let segments = [
             TranscriptSegment(
                 id: "segment-1",
                 speaker: TranscriptSpeaker(identifier: "a", label: "Alice"),
@@ -180,7 +182,7 @@ final class MeetingExportServiceTests: XCTestCase {
                 startTimeSeconds: 48,
                 text: "I will confirm legal timing."
             )
-        ])
+        ]
         let summary = MeetingSummary(
             overview: "The team agreed to a Tokyo-only pilot.",
             keyTopics: ["Japan GTM"],
@@ -211,9 +213,10 @@ final class MeetingExportServiceTests: XCTestCase {
             status: .succeeded,
             failureReason: nil
         )
+        let session = fixture.session(segments: segments, summary: summary)
         let destination = fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
 
-        try MeetingExportService().exportKnowledgePackage(for: fixture.record, summary: summary, to: destination)
+        try MeetingExportService().exportKnowledgePackage(for: fixture.record, session: session, to: destination)
 
         let files = try FileManager.default.contentsOfDirectory(atPath: destination.path).sorted()
         XCTAssertEqual(files, ["knowledge.md", "meeting.md", "transcript.md"])
@@ -226,30 +229,33 @@ final class MeetingExportServiceTests: XCTestCase {
         XCTAssertTrue(knowledge.contains("[[transcript#t-00-00-12|Alice 00:00:12]]"))
     }
 
-    func testKnowledgePackageExportFailsWhenStructuredTranscriptMissing() throws {
+    func testKnowledgePackageExportUsesEmptySessionTranscriptWhenNoSegmentsExist() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
 
-        XCTAssertThrowsError(try MeetingExportService().exportKnowledgePackage(
+        let session = fixture.session(segments: [])
+        let destination = fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
+        try MeetingExportService().exportKnowledgePackage(
             for: fixture.record,
-            summary: nil,
-            to: fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
-        )) { error in
-            XCTAssertEqual(error as? MeetingExportError, .missingArtifact("structured transcript"))
-        }
+            session: session,
+            to: destination
+        )
+
+        let transcript = try String(contentsOf: destination.appendingPathComponent("transcript.md"), encoding: .utf8)
+        XCTAssertTrue(transcript.contains("Transcript is not available."))
     }
 
     func testExportsKnowledgePackageWithFailureNote() throws {
         let fixture = try MeetingExportFixture()
         defer { fixture.cleanup() }
-        try fixture.writeStructuredTranscript([
+        let session = fixture.session(segments: [
             TranscriptSegment(id: "segment-1", text: "Transcript exists.")
         ])
         let destination = fixture.root.appendingPathComponent("knowledge-package", isDirectory: true)
 
         try MeetingExportService().exportKnowledgePackage(
             for: fixture.record,
-            summary: nil,
+            session: session,
             knowledge: MeetingKnowledge(failureReason: "OpenRouter API key is not configured"),
             to: destination
         )
@@ -288,7 +294,37 @@ private struct MeetingExportFixture {
         try? FileManager.default.removeItem(at: root)
     }
 
-    func writeStructuredTranscript(_ segments: [TranscriptSegment]) throws {
+    func session(segments: [TranscriptSegment], summary: MeetingSummary? = nil) -> MeetingSessionState {
+        MeetingSessionState(
+            meetingID: record.id,
+            transcript: TranscriptState(
+                meetingID: record.id,
+                captionDocument: captionDocument(from: segments),
+                source: .hydratedFromPersistence
+            ),
+            summary: summary.map(SummaryState.loaded) ?? .missing
+        )
+    }
+
+    func summary(overview: String) -> MeetingSummary {
+        MeetingSummary(
+            overview: overview,
+            keyTopics: [],
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risks: [],
+            followUps: [],
+            language: "en-US",
+            sourceSegmentIDs: [],
+            generatedAt: Date(timeIntervalSince1970: 1_777_000_700),
+            provider: "test",
+            status: .succeeded,
+            failureReason: nil
+        )
+    }
+
+    private func captionDocument(from segments: [TranscriptSegment]) -> CaptionDocument {
         let turns = segments.map { segment in
             CaptionTurn(
                 id: segment.id,
@@ -314,13 +350,12 @@ private struct MeetingExportFixture {
                 updatedAt: segment.createdAt
             )
         }
-        let data = try JSONEncoder.meetingAgent.encode(CaptionDocument(
+        return CaptionDocument(
             turns: turns,
             provider: CaptionProviderInfo(
                 id: segments.first?.sourceProvider ?? "test",
                 locale: segments.compactMap(\.language).first
             )
-        ))
-        try data.write(to: record.transcriptJSONURL!, options: .atomic)
+        )
     }
 }

@@ -625,15 +625,8 @@ public final class MeetingAgentViewModel: ObservableObject {
             throw ProbeError.invalidArguments("Meeting has no summary output URL")
         }
 
-        let consumptionView: TranscriptConsumptionView
-        if let selectedMeetingSessionState,
-           selectedMeetingSessionState.meetingID == meetingID,
-           !selectedMeetingSessionState.transcript.consumptionView.finalTurns.isEmpty {
-            consumptionView = selectedMeetingSessionState.transcript.consumptionView
-        } else {
-            let transcript = try transcriptRepository.loadCaptionDocument(for: meeting)
-            consumptionView = TranscriptConsumptionView.project(meetingID: meeting.id, document: transcript)
-        }
+        let session = try sessionState(for: meeting)
+        let consumptionView = session.transcript.consumptionView
         let progress = progressState(for: meeting)
         let provider = summaryProviderFactory(speechConfiguration)
         let summary = try await provider.generateSummary(
@@ -790,21 +783,15 @@ public final class MeetingAgentViewModel: ObservableObject {
 
     public func exportTranscript(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Transcript", for: meetingID) { record in
-            if let session = selectedSession(for: record.id) {
-                try exportService.exportTranscript(for: record, session: session, to: destinationURL)
-            } else {
-                try exportService.exportTranscript(for: record, to: destinationURL)
-            }
+            let session = try sessionState(for: record)
+            try exportService.exportTranscript(for: record, session: session, to: destinationURL)
         }
     }
 
     public func exportSummary(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Summary", for: meetingID) { record in
-            if let session = selectedSession(for: record.id) {
-                try exportService.exportSummary(session.summary.summary, to: destinationURL)
-            } else {
-                try exportService.exportSummary(for: record, to: destinationURL)
-            }
+            let session = try sessionState(for: record)
+            try exportService.exportSummary(session.summary.summary, to: destinationURL)
         }
     }
 
@@ -820,32 +807,22 @@ public final class MeetingAgentViewModel: ObservableObject {
         to destinationURL: URL
     ) throws {
         try export(format == .srt ? "SRT subtitles" : "VTT subtitles", for: meetingID) { record in
-            if let session = selectedSession(for: record.id) {
-                try exportService.exportSubtitles(for: record, session: session, format: format, to: destinationURL)
-            } else {
-                try exportService.exportSubtitles(for: record, format: format, to: destinationURL)
-            }
+            let session = try sessionState(for: record)
+            try exportService.exportSubtitles(for: record, session: session, format: format, to: destinationURL)
         }
     }
 
     public func exportReadinessReport(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Readiness report", for: meetingID) { record in
-            if let session = selectedSession(for: record.id) {
-                try exportService.exportReadinessReport(for: record, session: session, to: destinationURL)
-            } else {
-                try exportService.exportReadinessReport(for: record, to: destinationURL)
-            }
+            let session = try sessionState(for: record)
+            try exportService.exportReadinessReport(for: record, session: session, to: destinationURL)
         }
     }
 
     public func exportKnowledgePackage(for meetingID: UUID, to destinationURL: URL) throws {
         try export("Knowledge package", for: meetingID) { record in
-            if let session = selectedSession(for: record.id) {
-                try exportService.exportKnowledgePackage(for: record, session: session, to: destinationURL)
-            } else {
-                let summary = try? summaryRepository.loadSummary(for: record)
-                try exportService.exportKnowledgePackage(for: record, summary: summary, to: destinationURL)
-            }
+            let session = try sessionState(for: record)
+            try exportService.exportKnowledgePackage(for: record, session: session, to: destinationURL)
         }
     }
 
@@ -857,11 +834,8 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         do {
             let summary: String
-            if let session = selectedSession(for: record.id) {
-                summary = try exportService.summaryText(summary: session.summary.summary)
-            } else {
-                summary = try exportService.summaryText(for: record)
-            }
+            let session = try sessionState(for: record)
+            summary = try exportService.summaryText(summary: session.summary.summary)
             statusText = "Summary copied"
             return summary
         } catch {
@@ -877,6 +851,30 @@ public final class MeetingAgentViewModel: ObservableObject {
             return nil
         }
         return selectedMeetingSessionState
+    }
+
+    private func sessionState(for record: MeetingRecord) throws -> MeetingSessionState {
+        if let session = selectedSession(for: record.id) {
+            return session
+        }
+
+        let captionDocument = try transcriptRepository.loadCaptionDocument(for: record)
+        var session = MeetingSessionState(
+            meetingID: record.id,
+            transcript: TranscriptState(
+                meetingID: record.id,
+                captionDocument: captionDocument,
+                source: record.id == activeMeetingID ? .activeRecording : .hydratedFromPersistence
+            ),
+            summary: .missing
+        )
+        if let summary = try summaryRepository.loadSummary(for: record) {
+            session.summary = .loaded(summary)
+        }
+        if selectedMeetingID == record.id {
+            selectedMeetingSessionState = session
+        }
+        return session
     }
 
     private func activeSessionState(for record: MeetingRecord, document: CaptionDocument) -> MeetingSessionState {
@@ -1122,8 +1120,13 @@ public final class MeetingAgentViewModel: ObservableObject {
                 meeting: selectedMeeting,
                 session: selectedMeetingSessionState
             )
+        } else if let session = try? sessionState(for: selectedMeeting) {
+            selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.make(
+                meeting: selectedMeeting,
+                session: session
+            )
         } else {
-            selectedMeetingArtifactSnapshot = MeetingArtifactSnapshot.load(for: selectedMeeting)
+            selectedMeetingArtifactSnapshot = nil
         }
     }
 
@@ -1426,20 +1429,12 @@ public final class MeetingAgentViewModel: ObservableObject {
     }
 
     private func selectedTranscriptDocument() -> TranscriptDocument? {
-        if let selectedMeetingSessionState,
-           selectedMeetingSessionState.meetingID == selectedMeetingID {
-            let document = selectedMeetingSessionState.transcript.captionDocument.transcriptDocument
-            return document.segments.isEmpty ? nil : document
-        }
         guard let meeting = selectedMeeting,
-              meeting.transcriptJSONURL != nil
+              let session = try? sessionState(for: meeting)
         else {
             return nil
         }
-        guard let captionDocument = try? transcriptRepository.loadCaptionDocument(for: meeting) else {
-            return nil
-        }
-        let document = captionDocument.transcriptDocument
+        let document = session.transcript.captionDocument.transcriptDocument
         return document.segments.isEmpty ? nil : document
     }
 
