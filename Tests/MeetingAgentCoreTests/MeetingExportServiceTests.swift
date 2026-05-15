@@ -219,14 +219,17 @@ final class MeetingExportServiceTests: XCTestCase {
         try MeetingExportService().exportKnowledgePackage(for: fixture.record, session: session, to: destination)
 
         let files = try FileManager.default.contentsOfDirectory(atPath: destination.path).sorted()
-        XCTAssertEqual(files, ["knowledge.md", "meeting.md", "transcript.md"])
+        XCTAssertEqual(files, ["ingest.md", "knowledge.md", "meeting.md", "transcript.md"])
         let meeting = try String(contentsOf: destination.appendingPathComponent("meeting.md"), encoding: .utf8)
         let transcript = try String(contentsOf: destination.appendingPathComponent("transcript.md"), encoding: .utf8)
         let knowledge = try String(contentsOf: destination.appendingPathComponent("knowledge.md"), encoding: .utf8)
+        let ingest = try String(contentsOf: destination.appendingPathComponent("ingest.md"), encoding: .utf8)
         XCTAssertTrue(meeting.contains("# Google Meet"))
         XCTAssertTrue(transcript.contains(#"<a id="t-00-00-12"></a>"#))
         XCTAssertTrue(knowledge.contains("### decision_001"))
         XCTAssertTrue(knowledge.contains("[[transcript#t-00-00-12|Alice 00:00:12]]"))
+        XCTAssertTrue(ingest.contains("# Ingest Meeting"))
+        XCTAssertTrue(ingest.contains("Treat `knowledge.md` items as proposed deltas"))
     }
 
     func testKnowledgePackageExportUsesEmptySessionTranscriptWhenNoSegmentsExist() throws {

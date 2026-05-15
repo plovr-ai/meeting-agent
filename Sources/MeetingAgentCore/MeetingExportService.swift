@@ -165,13 +165,7 @@ public struct MeetingExportService {
     }
 
     private func exportKnowledgePackage(package: MeetingKnowledgePackage, to destinationURL: URL) throws {
-        try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
-        try MeetingKnowledgePackageMarkdownRenderer.renderMeeting(package)
-            .write(to: destinationURL.appendingPathComponent("meeting.md"), atomically: true, encoding: .utf8)
-        try MeetingKnowledgePackageMarkdownRenderer.renderTranscript(package)
-            .write(to: destinationURL.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
-        try MeetingKnowledgePackageMarkdownRenderer.renderKnowledge(package)
-            .write(to: destinationURL.appendingPathComponent("knowledge.md"), atomically: true, encoding: .utf8)
+        try MeetingKnowledgePackageWriter(fileManager: fileManager).write(package, to: destinationURL)
     }
 
     private func exportSubtitles(segments: [TranscriptSegment], format: SubtitleExportFormat, to destinationURL: URL) throws {

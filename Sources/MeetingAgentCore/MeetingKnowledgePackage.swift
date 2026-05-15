@@ -304,6 +304,37 @@ public enum MeetingKnowledgePackageMarkdownRenderer {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    public static func renderIngest(_ package: MeetingKnowledgePackage) -> String {
+        let title = title(for: package)
+        return """
+        # Ingest Meeting
+
+        Read this meeting source package:
+
+        - [[meeting]]
+        - [[transcript]]
+        - [[knowledge]]
+
+        ## Source
+
+        - Meeting ID: \(package.record.id.uuidString)
+        - Title: \(title)
+        - Started: \(iso(package.record.startedAt))
+        - Language: \(package.summary?.language ?? package.record.speechLocaleIdentifier)
+
+        ## Rules
+
+        - Treat this directory as one meeting source package.
+        - Treat `transcript.md` as source evidence.
+        - Treat `knowledge.md` items as proposed deltas, not automatic truth.
+        - Update the long-term wiki or brain according to the local schema.
+        - Preserve evidence links or convert them into the destination citation format.
+        - Append timeline entries for accepted decisions, actions, and important entity updates.
+        - Mark inferred judgments, cultural interpretation, or relationship insight as inference.
+
+        """
+    }
+
     public static func anchor(for segment: TranscriptSegment) -> String {
         if let timestamp = timestamp(for: segment) {
             return "t-" + timestamp.replacingOccurrences(of: ":", with: "-")
