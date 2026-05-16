@@ -19,6 +19,9 @@ public protocol PostMeetingTranscriptRefining {
 }
 
 public final class PostMeetingTranscriptRefinementService: PostMeetingTranscriptRefining {
+    private static let localUserSpeakerID = "local-user"
+    private static let localUserSpeakerLabel = "Me"
+
     private let store: MeetingStore
     private let saveCaptionDocument: (CaptionDocument, MeetingRecord) throws -> Void
     private let providerFactory: (SpeechTranscriptionConfiguration) -> AudioTranscriptionProvider
@@ -88,8 +91,17 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
                 audio: AudioInput(wavURL: audioURL, localeIdentifier: record.speechLocaleIdentifier),
                 options: TranscriptionOptions(sourceLocale: record.speechLocaleIdentifier)
             )
+            var segments = transcript.segments
+            if let microphoneAudioURL = record.microphoneAudioURL,
+               fileManager.isReadableFile(atPath: microphoneAudioURL.path) {
+                let microphoneTranscript = try await provider.transcribe(
+                    audio: AudioInput(wavURL: microphoneAudioURL, localeIdentifier: record.speechLocaleIdentifier),
+                    options: TranscriptionOptions(sourceLocale: record.speechLocaleIdentifier)
+                )
+                segments.append(contentsOf: microphoneTranscript.segments.map(Self.localUserSegment))
+            }
             let refinedDocument = Self.captionDocument(
-                from: transcript.segments,
+                from: segments,
                 providerID: configuration.batchTranscriptionProviderID,
                 modelID: configuration.batchTranscriptionModelID,
                 localeIdentifier: record.speechLocaleIdentifier,
@@ -161,6 +173,26 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
         )
     }
 
+    private static func localUserSegment(_ segment: TranscriptSegment) -> TranscriptSegment {
+        TranscriptSegment(
+            id: segment.id,
+            speaker: TranscriptSpeaker(identifier: localUserSpeakerID, label: localUserSpeakerLabel),
+            startTimeSeconds: segment.startTimeSeconds,
+            endTimeSeconds: segment.endTimeSeconds,
+            text: segment.text,
+            language: segment.language,
+            sourceProvider: segment.sourceProvider,
+            isFinal: segment.isFinal,
+            speechFinal: segment.speechFinal,
+            confidence: segment.confidence,
+            createdAt: segment.createdAt,
+            timingSource: segment.timingSource,
+            translatedText: segment.translatedText,
+            translationTargetLocale: segment.translationTargetLocale,
+            translationIsFinal: segment.translationIsFinal
+        )
+    }
+
     public static func captionDocument(
         from segments: [TranscriptSegment],
         providerID: String,
@@ -210,6 +242,19 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
                 createdAt: segment.createdAt,
                 updatedAt: updatedAt
             ))
+        }
+
+        turns.sort { lhs, rhs in
+            switch (lhs.startTimeSeconds, rhs.startTimeSeconds) {
+            case let (lhs?, rhs?) where lhs != rhs:
+                return lhs < rhs
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            default:
+                return lhs.createdAt < rhs.createdAt
+            }
         }
 
         return CaptionDocument(

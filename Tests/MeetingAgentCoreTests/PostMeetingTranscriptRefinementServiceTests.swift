@@ -50,6 +50,51 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertEqual(persisted.turns.map(\.text), ["We decided to launch.", "I will follow up."])
     }
 
+    func testSuccessfulRefinementIncludesMicrophoneAudioAsMeTurns() async throws {
+        let fixture = try RefinementFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let audioURL = try XCTUnwrap(fixture.record.audioURL)
+        let microphoneAudioURL = try XCTUnwrap(fixture.record.microphoneAudioURL)
+        FileManager.default.createFile(atPath: audioURL.path, contents: Data([0x52, 0x49, 0x46, 0x46]))
+        FileManager.default.createFile(atPath: microphoneAudioURL.path, contents: Data([0x52, 0x49, 0x46, 0x46]))
+        fixture.provider.documentsByAudioURL[audioURL] = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "remote-1",
+                speaker: TranscriptSpeaker(identifier: "deepgram-speaker-0"),
+                startTimeSeconds: 1.0,
+                endTimeSeconds: 2.0,
+                text: "Remote update.",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe"
+            )
+        ])
+        fixture.provider.documentsByAudioURL[microphoneAudioURL] = TranscriptDocument(segments: [
+            TranscriptSegment(
+                id: "mic-1",
+                speaker: TranscriptSpeaker(identifier: "deepgram-speaker-9", label: "Speaker 9"),
+                startTimeSeconds: 0.2,
+                endTimeSeconds: 0.8,
+                text: "My update.",
+                language: "en-US",
+                sourceProvider: "deepgram-transcribe"
+            )
+        ])
+
+        let result = await fixture.service.refineTranscript(
+            for: fixture.record,
+            liveDocument: liveDocument(),
+            configuration: fixture.configuration
+        )
+
+        let document = try XCTUnwrap(result.captionDocument)
+        XCTAssertEqual(fixture.provider.requests.map(\.wavURL), [audioURL, microphoneAudioURL])
+        XCTAssertEqual(document.turns.map(\.id), ["mic-1", "remote-1"])
+        XCTAssertEqual(document.turns.map(\.text), ["My update.", "Remote update."])
+        XCTAssertEqual(document.turns.map(\.speakerLabel), ["Me", "Speaker 1"])
+        XCTAssertEqual(document.turns.map(\.speakerID), ["local-user", "deepgram-speaker-0"])
+        XCTAssertEqual(document.speakers.first(where: { $0.id == "local-user" })?.label, "Me")
+    }
+
     func testProviderFailurePreservesLiveTranscript() async throws {
         let fixture = try RefinementFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -253,6 +298,7 @@ private final class FakeBatchAudioTranscriptionProvider: AudioTranscriptionProvi
     )
 
     var document = TranscriptDocument()
+    var documentsByAudioURL: [URL: TranscriptDocument] = [:]
     var error: Error?
     private(set) var requests: [AudioInput] = []
 
@@ -260,6 +306,9 @@ private final class FakeBatchAudioTranscriptionProvider: AudioTranscriptionProvi
         requests.append(audio)
         if let error {
             throw error
+        }
+        if let wavURL = audio.wavURL, let document = documentsByAudioURL[wavURL] {
+            return document
         }
         return document
     }
