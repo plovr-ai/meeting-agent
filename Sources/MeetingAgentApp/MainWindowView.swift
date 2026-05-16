@@ -455,6 +455,8 @@ private struct MeetingDetailView: View {
                     liveCaptionTurns: liveCaptionTurns,
                     transcriptText: artifactSnapshot?.transcriptText ?? "Transcript will appear here while recording.",
                     transcriptionStatusText: transcriptionStatusText(for: meeting),
+                    transcriptQualityLabel: artifactSnapshot?.transcriptQualityLabel ?? "Live transcript",
+                    transcriptQualityDetailText: artifactSnapshot?.transcriptQualityDetailText ?? "0 final | 0 draft | 0 unknown speaker | 0 empty final",
                     summary: artifactSnapshot?.summary,
                     transcriptSegments: artifactSnapshot?.transcriptSegments ?? [],
                     transcriptLatencyText: artifactSnapshot?.transcriptLatencyText ?? "unavailable",
@@ -600,6 +602,8 @@ private struct MeetingCommandCenterView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
+    let transcriptQualityLabel: String
+    let transcriptQualityDetailText: String
     let summary: MeetingSummary?
     let transcriptSegments: [TranscriptSegment]
     let transcriptLatencyText: String
@@ -650,6 +654,8 @@ private struct MeetingCommandCenterView: View {
                         liveCaptionTurns: liveCaptionTurns,
                         transcriptText: transcriptText,
                         transcriptionStatusText: transcriptionStatusText,
+                        transcriptQualityLabel: transcriptQualityLabel,
+                        transcriptQualityDetailText: transcriptQualityDetailText,
                         transcriptLatencyText: transcriptLatencyText,
                         updateSpeakerLabel: updateSpeakerLabel
                     )
@@ -883,6 +889,8 @@ private struct TranscriptPaneView: View {
     let liveCaptionTurns: [LiveCaptionTurn]
     let transcriptText: String
     let transcriptionStatusText: String
+    let transcriptQualityLabel: String
+    let transcriptQualityDetailText: String
     let transcriptLatencyText: String
     let updateSpeakerLabel: (String, String) -> Void
     @State private var speakerEditTarget: LiveCaptionTurn?
@@ -998,11 +1006,16 @@ private struct TranscriptPaneView: View {
 
             HStack(spacing: 8) {
                 CommandCenterChip(title: transcriptionStatusText, tint: transcriptionTint, filled: true)
+                CommandCenterChip(title: transcriptQualityLabel, tint: transcriptQualityTint, filled: false)
                 CommandCenterChip(title: meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
                 if let endedAt = meeting.endedAt {
                     CommandCenterChip(title: "Ended \(endedAt.formatted(date: .omitted, time: .shortened))")
                 }
             }
+
+            Text(transcriptQualityDetailText)
+                .commandCenterCaption(CommandCenterPalette.secondaryText)
+                .textSelection(.enabled)
         }
     }
 
@@ -1031,6 +1044,17 @@ private struct TranscriptPaneView: View {
         case .transcribing, .retryRequested:
             return CommandCenterPalette.warning
         case .notStarted:
+            return CommandCenterPalette.secondaryText
+        }
+    }
+
+    private var transcriptQualityTint: Color {
+        switch transcriptQualityLabel {
+        case "Post-processed transcript":
+            return CommandCenterPalette.primary
+        case "Fallback live transcript", "Refinement failed":
+            return CommandCenterPalette.warning
+        default:
             return CommandCenterPalette.secondaryText
         }
     }

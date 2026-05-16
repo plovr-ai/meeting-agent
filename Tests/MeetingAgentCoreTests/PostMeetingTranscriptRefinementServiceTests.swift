@@ -41,11 +41,14 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertEqual(document.turns.map(\.speakerID), ["deepgram-speaker-0", "deepgram-speaker-1"])
         XCTAssertEqual(document.turns.map(\.speakerLabel), ["Speaker 1", "Speaker 2"])
         XCTAssertEqual(document.turns.map(\.source.providerID), ["deepgram-batch-transcribe", "deepgram-batch-transcribe"])
+        XCTAssertEqual(document.qualityMetadata?.source, .postProcessed)
+        XCTAssertEqual(document.qualityMetadata?.metrics.finalTurnCount, 2)
         XCTAssertEqual(result.record.transcriptRefinement?.status, .refined)
         XCTAssertEqual(result.record.transcriptRefinement?.providerID, "deepgram-batch-transcribe")
 
         let persisted = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
         XCTAssertEqual(persisted.provider, document.provider)
+        XCTAssertEqual(persisted.qualityMetadata?.source, .postProcessed)
         XCTAssertEqual(persisted.turns.map(\.id), ["utt-1", "utt-2"])
         XCTAssertEqual(persisted.turns.map(\.text), ["We decided to launch.", "I will follow up."])
     }
@@ -113,7 +116,10 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertNil(result.captionDocument)
         XCTAssertEqual(result.record.transcriptRefinement?.status, .failed)
         XCTAssertTrue(result.record.transcriptRefinement?.failureReason?.contains("provider exploded") == true)
-        XCTAssertEqual(try FileTranscriptRepository().loadCaptionDocument(for: fixture.record).turns.map(\.text), live.turns.map(\.text))
+        let persisted = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
+        XCTAssertEqual(persisted.turns.map(\.text), live.turns.map(\.text))
+        XCTAssertEqual(persisted.qualityMetadata?.source, .refinementFailed)
+        XCTAssertTrue(persisted.qualityMetadata?.fallbackReason?.contains("provider exploded") == true)
     }
 
     func testMissingAudioPreservesLiveTranscript() async throws {
@@ -168,6 +174,9 @@ final class PostMeetingTranscriptRefinementServiceTests: XCTestCase {
         XCTAssertEqual(result.record.transcriptRefinement?.status, .failed)
         XCTAssertEqual(result.record.transcriptRefinement?.providerID, "future-batch-provider")
         XCTAssertEqual(result.record.transcriptRefinement?.failureReason, "Batch transcript provider is not supported")
+        let persisted = try FileTranscriptRepository().loadCaptionDocument(for: fixture.record)
+        XCTAssertEqual(persisted.qualityMetadata?.source, .fallbackLive)
+        XCTAssertEqual(persisted.qualityMetadata?.fallbackReason, "Batch transcript provider is not supported")
         XCTAssertTrue(fixture.provider.requests.isEmpty)
     }
 

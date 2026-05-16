@@ -81,6 +81,17 @@ final class CaptionDocumentTests: XCTestCase {
                 )
             ],
             provider: CaptionProviderInfo(id: "deepgram", model: "nova-3", locale: "zh-CN"),
+            qualityMetadata: TranscriptQualityMetadata(
+                source: .refinementFailed,
+                fallbackReason: "Provider timed out",
+                metrics: TranscriptQualityMetrics(
+                    finalTurnCount: 1,
+                    draftTurnCount: 2,
+                    unknownSpeakerTurnCount: 3,
+                    emptyFinalTurnCount: 4
+                ),
+                updatedAt: Date(timeIntervalSince1970: 1_777_000_003)
+            ),
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_777_000_001),
             finalizedAt: Date(timeIntervalSince1970: 1_777_000_002)
@@ -90,6 +101,23 @@ final class CaptionDocumentTests: XCTestCase {
         let decoded = try JSONDecoder.meetingAgent.decode(CaptionDocument.self, from: data)
 
         XCTAssertEqual(decoded, document)
+    }
+
+    func testCaptionDocumentDecodesLegacyJSONWithoutQualityMetadata() throws {
+        let json = """
+        {
+          "version" : 2,
+          "speakers" : [],
+          "turns" : [],
+          "createdAt" : "2026-05-16T00:00:00Z",
+          "updatedAt" : "2026-05-16T00:00:01Z"
+        }
+        """
+
+        let decoded = try JSONDecoder.meetingAgent.decode(CaptionDocument.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.qualityMetadata)
+        XCTAssertEqual(decoded.version, 2)
     }
 
     func testCaptionTurnCanProjectToTranscriptSegmentForLegacyConsumers() {

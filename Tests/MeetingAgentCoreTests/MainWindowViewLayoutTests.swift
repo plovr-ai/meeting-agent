@@ -23,6 +23,16 @@ final class MainWindowViewLayoutTests: XCTestCase {
         XCTAssertFalse(source.contains("PipelineLatencySummary"))
     }
 
+    func testMeetingDetailDisplaysTranscriptQualityState() throws {
+        let source = try appSource(named: "MainWindowView.swift")
+
+        XCTAssertTrue(source.contains("artifactSnapshot?.transcriptQualityLabel"))
+        XCTAssertTrue(source.contains("artifactSnapshot?.transcriptQualityDetailText"))
+        XCTAssertTrue(source.contains("Post-processed transcript"))
+        XCTAssertTrue(source.contains("Fallback live transcript"))
+        XCTAssertTrue(source.contains("Refinement failed"))
+    }
+
     func testAgendaSidebarUsesWiderDefaultWidth() throws {
         let sourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MeetingAgentApp/MainWindowView.swift")

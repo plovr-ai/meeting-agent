@@ -141,6 +141,15 @@ public struct MeetingExportService {
         }
 
         lines.append(contentsOf: [
+            "## Transcript Quality",
+            "",
+            "- Source: \(transcriptQualitySourceLabel(for: session.transcript.consumptionView.quality.source))",
+            "- Fallback reason: \(session.transcript.consumptionView.quality.fallbackReason ?? "None")",
+            "- Final turns: \(session.transcript.consumptionView.quality.finalTurnCount)",
+            "- Draft turns: \(session.transcript.consumptionView.quality.draftTurnCount)",
+            "- Unknown speaker turns: \(session.transcript.consumptionView.quality.unknownSpeakerTurnCount)",
+            "- Empty final turns: \(session.transcript.consumptionView.quality.emptyFinalTurnCount)",
+            "",
             "## Transcript Excerpt",
             "",
             transcriptExcerpt(from: transcript),
@@ -148,6 +157,19 @@ public struct MeetingExportService {
         ])
 
         return lines.joined(separator: "\n")
+    }
+
+    private func transcriptQualitySourceLabel(for source: TranscriptQualitySource) -> String {
+        switch source {
+        case .liveOnly:
+            return "liveOnly"
+        case .postProcessed:
+            return "postProcessed"
+        case .fallbackLive:
+            return "fallbackLive"
+        case .refinementFailed:
+            return "refinementFailed"
+        }
     }
 
     private func diagnostics(for record: MeetingRecord) -> CaptureDiagnostics? {

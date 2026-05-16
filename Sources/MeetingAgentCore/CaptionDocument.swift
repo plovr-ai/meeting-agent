@@ -5,6 +5,89 @@ public enum CaptionTurnState: String, Codable, Equatable, Sendable {
     case final
 }
 
+public enum TranscriptQualitySource: String, Codable, Equatable, Sendable {
+    case liveOnly
+    case postProcessed
+    case fallbackLive
+    case refinementFailed
+}
+
+public struct TranscriptQualityMetrics: Codable, Equatable, Sendable {
+    public let finalTurnCount: Int
+    public let draftTurnCount: Int
+    public let unknownSpeakerTurnCount: Int
+    public let emptyFinalTurnCount: Int
+
+    public init(
+        finalTurnCount: Int = 0,
+        draftTurnCount: Int = 0,
+        unknownSpeakerTurnCount: Int = 0,
+        emptyFinalTurnCount: Int = 0
+    ) {
+        self.finalTurnCount = finalTurnCount
+        self.draftTurnCount = draftTurnCount
+        self.unknownSpeakerTurnCount = unknownSpeakerTurnCount
+        self.emptyFinalTurnCount = emptyFinalTurnCount
+    }
+
+    public static func calculate(for turns: [CaptionTurn]) -> TranscriptQualityMetrics {
+        var finalTurnCount = 0
+        var draftTurnCount = 0
+        var unknownSpeakerTurnCount = 0
+        var emptyFinalTurnCount = 0
+
+        for turn in turns {
+            switch turn.state {
+            case .draft:
+                draftTurnCount += 1
+            case .final:
+                let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.isEmpty {
+                    emptyFinalTurnCount += 1
+                    continue
+                }
+                finalTurnCount += 1
+                if isUnknownSpeaker(turn) {
+                    unknownSpeakerTurnCount += 1
+                }
+            }
+        }
+
+        return TranscriptQualityMetrics(
+            finalTurnCount: finalTurnCount,
+            draftTurnCount: draftTurnCount,
+            unknownSpeakerTurnCount: unknownSpeakerTurnCount,
+            emptyFinalTurnCount: emptyFinalTurnCount
+        )
+    }
+
+    private static func isUnknownSpeaker(_ turn: CaptionTurn) -> Bool {
+        guard let speakerID = turn.speakerID, !speakerID.isEmpty else {
+            return true
+        }
+        return turn.speakerLabel == nil || turn.speakerLabel == speakerID
+    }
+}
+
+public struct TranscriptQualityMetadata: Codable, Equatable, Sendable {
+    public let source: TranscriptQualitySource
+    public let fallbackReason: String?
+    public let metrics: TranscriptQualityMetrics
+    public let updatedAt: Date
+
+    public init(
+        source: TranscriptQualitySource,
+        fallbackReason: String? = nil,
+        metrics: TranscriptQualityMetrics = TranscriptQualityMetrics(),
+        updatedAt: Date = Date()
+    ) {
+        self.source = source
+        self.fallbackReason = fallbackReason.nilIfBlank
+        self.metrics = metrics
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct CaptionProviderInfo: Codable, Equatable, Sendable {
     public let id: String
     public let model: String?
@@ -163,6 +246,7 @@ public struct CaptionDocument: Codable, Equatable, Sendable {
     public var speakers: [CaptionSpeaker]
     public var turns: [CaptionTurn]
     public var provider: CaptionProviderInfo?
+    public var qualityMetadata: TranscriptQualityMetadata?
     public let createdAt: Date
     public var updatedAt: Date
     public var finalizedAt: Date?
@@ -176,6 +260,7 @@ public struct CaptionDocument: Codable, Equatable, Sendable {
         speakers: [CaptionSpeaker] = [],
         turns: [CaptionTurn] = [],
         provider: CaptionProviderInfo? = nil,
+        qualityMetadata: TranscriptQualityMetadata? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         finalizedAt: Date? = nil
@@ -184,9 +269,26 @@ public struct CaptionDocument: Codable, Equatable, Sendable {
         self.speakers = speakers
         self.turns = turns
         self.provider = provider
+        self.qualityMetadata = qualityMetadata
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.finalizedAt = finalizedAt
+    }
+
+    public func updatingQuality(
+        source: TranscriptQualitySource,
+        fallbackReason: String? = nil,
+        updatedAt: Date = Date()
+    ) -> CaptionDocument {
+        var document = self
+        document.qualityMetadata = TranscriptQualityMetadata(
+            source: source,
+            fallbackReason: fallbackReason,
+            metrics: TranscriptQualityMetrics.calculate(for: turns),
+            updatedAt: updatedAt
+        )
+        document.updatedAt = updatedAt
+        return document
     }
 }
 

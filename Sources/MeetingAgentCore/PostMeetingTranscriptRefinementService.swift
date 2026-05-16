@@ -63,24 +63,30 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
         guard configuration.usesDeepgramBatchRefinement else {
             return await fail(
                 record: updatedRecord,
+                liveDocument: liveDocument,
                 configuration: configuration,
                 startedAt: startedAt,
+                qualitySource: .fallbackLive,
                 reason: "Batch transcript provider is not supported"
             )
         }
         guard let audioURL = record.audioURL else {
             return await fail(
                 record: updatedRecord,
+                liveDocument: liveDocument,
                 configuration: configuration,
                 startedAt: startedAt,
+                qualitySource: .refinementFailed,
                 reason: "No saved audio is available for transcript refinement"
             )
         }
         guard fileManager.isReadableFile(atPath: audioURL.path) else {
             return await fail(
                 record: updatedRecord,
+                liveDocument: liveDocument,
                 configuration: configuration,
                 startedAt: startedAt,
+                qualitySource: .refinementFailed,
                 reason: "Saved audio is not readable for transcript refinement"
             )
         }
@@ -111,13 +117,19 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
             guard !refinedDocument.turns.isEmpty else {
                 return await fail(
                     record: updatedRecord,
+                    liveDocument: liveDocument,
                     configuration: configuration,
                     startedAt: startedAt,
+                    qualitySource: .refinementFailed,
                     reason: "Batch transcript refinement returned no usable transcript"
                 )
             }
-            try saveCaptionDocument(refinedDocument, record)
             let endedAt = now()
+            let qualityDocument = refinedDocument.updatingQuality(
+                source: .postProcessed,
+                updatedAt: endedAt
+            )
+            try saveCaptionDocument(qualityDocument, record)
             updatedRecord.transcriptRefinement = metadata(
                 configuration: configuration,
                 status: .refined,
@@ -126,12 +138,14 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
                 endedAt: endedAt
             )
             try? store.save(updatedRecord)
-            return PostMeetingTranscriptRefinementResult(record: updatedRecord, captionDocument: refinedDocument)
+            return PostMeetingTranscriptRefinementResult(record: updatedRecord, captionDocument: qualityDocument)
         } catch {
             return await fail(
                 record: updatedRecord,
+                liveDocument: liveDocument,
                 configuration: configuration,
                 startedAt: startedAt,
+                qualitySource: .refinementFailed,
                 reason: "Transcript refinement failed: \(error)"
             )
         }
@@ -139,8 +153,10 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
 
     private func fail(
         record: MeetingRecord,
+        liveDocument: CaptionDocument,
         configuration: SpeechTranscriptionConfiguration,
         startedAt: Date,
+        qualitySource: TranscriptQualitySource,
         reason: String
     ) async -> PostMeetingTranscriptRefinementResult {
         var failedRecord = record
@@ -153,6 +169,12 @@ public final class PostMeetingTranscriptRefinementService: PostMeetingTranscript
             endedAt: endedAt
         )
         try? store.save(failedRecord)
+        let fallbackDocument = liveDocument.updatingQuality(
+            source: qualitySource,
+            fallbackReason: reason,
+            updatedAt: endedAt
+        )
+        try? saveCaptionDocument(fallbackDocument, failedRecord)
         return PostMeetingTranscriptRefinementResult(record: failedRecord, captionDocument: nil)
     }
 

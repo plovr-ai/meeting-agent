@@ -7,6 +7,8 @@ public struct MeetingArtifactSnapshot: Equatable {
     public let summary: MeetingSummary?
     public let actualTranscriptionSourceText: String
     public let transcriptLatencyText: String
+    public let transcriptQualityLabel: String
+    public let transcriptQualityDetailText: String
 
     public init(
         meetingID: UUID,
@@ -14,7 +16,9 @@ public struct MeetingArtifactSnapshot: Equatable {
         transcriptSegments: [TranscriptSegment],
         summary: MeetingSummary?,
         actualTranscriptionSourceText: String,
-        transcriptLatencyText: String
+        transcriptLatencyText: String,
+        transcriptQualityLabel: String,
+        transcriptQualityDetailText: String
     ) {
         self.meetingID = meetingID
         self.transcriptText = transcriptText
@@ -22,10 +26,13 @@ public struct MeetingArtifactSnapshot: Equatable {
         self.summary = summary
         self.actualTranscriptionSourceText = actualTranscriptionSourceText
         self.transcriptLatencyText = transcriptLatencyText
+        self.transcriptQualityLabel = transcriptQualityLabel
+        self.transcriptQualityDetailText = transcriptQualityDetailText
     }
 
     public static func make(meeting: MeetingRecord, session: MeetingSessionState) -> MeetingArtifactSnapshot {
         let document = session.transcript.captionDocument.transcriptDocument
+        let quality = session.transcript.consumptionView.quality
         let transcriptText = formattedTranscriptText(from: document)
             ?? "Transcript will appear here while recording."
         let providers = Array(Set(document.segments.map(\.sourceProvider))).sorted()
@@ -36,8 +43,36 @@ public struct MeetingArtifactSnapshot: Equatable {
             transcriptSegments: document.segments,
             summary: session.summary.summary,
             actualTranscriptionSourceText: providers.isEmpty ? meeting.transcriptionProviderID : providers.joined(separator: ", "),
-            transcriptLatencyText: Self.transcriptLatencyText(for: meeting)
+            transcriptLatencyText: Self.transcriptLatencyText(for: meeting),
+            transcriptQualityLabel: Self.qualityLabel(for: quality.source),
+            transcriptQualityDetailText: Self.qualityDetailText(for: quality)
         )
+    }
+
+    private static func qualityLabel(for source: TranscriptQualitySource) -> String {
+        switch source {
+        case .liveOnly:
+            return "Live transcript"
+        case .postProcessed:
+            return "Post-processed transcript"
+        case .fallbackLive:
+            return "Fallback live transcript"
+        case .refinementFailed:
+            return "Refinement failed"
+        }
+    }
+
+    private static func qualityDetailText(for quality: TranscriptConsumptionQuality) -> String {
+        var parts = [
+            "\(quality.finalTurnCount) final",
+            "\(quality.draftTurnCount) draft",
+            "\(quality.unknownSpeakerTurnCount) unknown speaker",
+            "\(quality.emptyFinalTurnCount) empty final"
+        ]
+        if let reason = quality.fallbackReason {
+            parts.append(reason)
+        }
+        return parts.joined(separator: " | ")
     }
 
     private static func formattedTranscriptText(from document: TranscriptDocument) -> String? {

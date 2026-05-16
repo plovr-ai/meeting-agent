@@ -24,12 +24,8 @@ public struct TranscriptConsumptionView: Equatable, Sendable {
     public static func project(meetingID: UUID, document: CaptionDocument) -> TranscriptConsumptionView {
         let finalSourceTurns = document.turns.filter { $0.state == .final }
         let finalTurns = finalSourceTurns.compactMap(TranscriptConsumptionTurn.init(turn:))
-        let draftTurnCount = document.turns.filter { $0.state == .draft }.count
-        let unknownSpeakerTurnCount = finalTurns.filter { turn in
-            guard let speakerID = turn.speakerID, !speakerID.isEmpty else { return true }
-            return turn.speakerLabel == nil || turn.speakerLabel == speakerID
-        }.count
-        let emptyFinalTurnCount = finalSourceTurns.count - finalTurns.count
+        let metrics = TranscriptQualityMetrics.calculate(for: document.turns)
+        let persistedQuality = document.qualityMetadata
 
         return TranscriptConsumptionView(
             meetingID: meetingID,
@@ -37,10 +33,12 @@ public struct TranscriptConsumptionView: Equatable, Sendable {
             provider: document.provider,
             finalTurns: finalTurns,
             quality: TranscriptConsumptionQuality(
-                finalTurnCount: finalTurns.count,
-                draftTurnCount: draftTurnCount,
-                unknownSpeakerTurnCount: unknownSpeakerTurnCount,
-                emptyFinalTurnCount: emptyFinalTurnCount
+                source: persistedQuality?.source ?? .liveOnly,
+                fallbackReason: persistedQuality?.fallbackReason,
+                finalTurnCount: metrics.finalTurnCount,
+                draftTurnCount: metrics.draftTurnCount,
+                unknownSpeakerTurnCount: metrics.unknownSpeakerTurnCount,
+                emptyFinalTurnCount: metrics.emptyFinalTurnCount
             )
         )
     }
@@ -161,17 +159,23 @@ public struct TranscriptConsumptionSection: Equatable, Sendable {
 }
 
 public struct TranscriptConsumptionQuality: Equatable, Sendable {
+    public let source: TranscriptQualitySource
+    public let fallbackReason: String?
     public let finalTurnCount: Int
     public let draftTurnCount: Int
     public let unknownSpeakerTurnCount: Int
     public let emptyFinalTurnCount: Int
 
     public init(
+        source: TranscriptQualitySource = .liveOnly,
+        fallbackReason: String? = nil,
         finalTurnCount: Int = 0,
         draftTurnCount: Int = 0,
         unknownSpeakerTurnCount: Int = 0,
         emptyFinalTurnCount: Int = 0
     ) {
+        self.source = source
+        self.fallbackReason = fallbackReason.nilIfBlankForTranscriptConsumption
         self.finalTurnCount = finalTurnCount
         self.draftTurnCount = draftTurnCount
         self.unknownSpeakerTurnCount = unknownSpeakerTurnCount
