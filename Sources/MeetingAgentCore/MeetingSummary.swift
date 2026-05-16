@@ -287,6 +287,12 @@ enum MeetingSummaryTitleGenerator {
     }
 }
 
+public enum MeetingSummaryTranscriptSource: Equatable {
+    case live
+    case refined
+    case fallback(reason: String)
+}
+
 public struct MeetingSummaryInput: Equatable {
     public let meetingName: String
     public let startedAt: Date
@@ -295,6 +301,7 @@ public struct MeetingSummaryInput: Equatable {
     public let targetLanguage: String?
     public let meetingGoal: String?
     public let transcript: TranscriptConsumptionView
+    public let transcriptSource: MeetingSummaryTranscriptSource
     public let generatedAt: Date
 
     public init(
@@ -305,6 +312,7 @@ public struct MeetingSummaryInput: Equatable {
         targetLanguage: String? = nil,
         meetingGoal: String?,
         transcript: TranscriptConsumptionView,
+        transcriptSource: MeetingSummaryTranscriptSource = .live,
         generatedAt: Date = Date()
     ) {
         self.meetingName = meetingName
@@ -314,6 +322,7 @@ public struct MeetingSummaryInput: Equatable {
         self.targetLanguage = targetLanguage
         self.meetingGoal = meetingGoal
         self.transcript = transcript
+        self.transcriptSource = transcriptSource
         self.generatedAt = generatedAt
     }
 }

@@ -627,6 +627,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             return
         }
 
+        statusText = "Refining transcript"
         await refineStoppedTranscriptIfPossible(for: stoppedID)
         try await generateSummary(for: stoppedID, generatedAt: generatedAt)
     }
@@ -688,6 +689,7 @@ public final class MeetingAgentViewModel: ObservableObject {
         let consumptionView = session.transcript.consumptionView
         let progress = progressState(for: meeting)
         let provider = summaryProviderFactory(speechConfiguration)
+        statusText = "Generating summary"
         let summary = try await provider.generateSummary(
             input: MeetingSummaryInput(
                 meetingName: meeting.name,
@@ -697,6 +699,7 @@ public final class MeetingAgentViewModel: ObservableObject {
                 targetLanguage: speechConfiguration.localeIdentifier,
                 meetingGoal: summaryGoalContext(for: progress),
                 transcript: consumptionView,
+                transcriptSource: summaryTranscriptSource(for: meeting),
                 generatedAt: generatedAt
             )
         )
@@ -710,6 +713,24 @@ public final class MeetingAgentViewModel: ObservableObject {
         }
         statusText = summary.status == .succeeded ? "Summary generated" : "Summary failed"
         objectWillChange.send()
+    }
+
+    private func summaryTranscriptSource(for meeting: MeetingRecord) -> MeetingSummaryTranscriptSource {
+        guard let refinement = meeting.transcriptRefinement else {
+            return .live
+        }
+        switch refinement.status {
+        case .notStarted, .running:
+            return .live
+        case .refined:
+            return .refined
+        case .failed:
+            let reason = refinement.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let reason, !reason.isEmpty {
+                return .fallback(reason: reason)
+            }
+            return .fallback(reason: "Transcript refinement failed")
+        }
     }
 
     private func summaryGoalContext(for progress: MeetingProgressState?) -> String? {

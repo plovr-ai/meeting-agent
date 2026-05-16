@@ -25,6 +25,13 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
 
     public func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
         let sourceSegmentIDs = Self.sourceSegmentIDs(from: input.transcript)
+        guard !sourceSegmentIDs.isEmpty else {
+            return failedSummary(
+                input: input,
+                sourceSegmentIDs: sourceSegmentIDs,
+                reason: "No transcript is available for summary generation"
+            )
+        }
         switch configuration {
         case .unavailable(let reason):
             return failedSummary(input: input, sourceSegmentIDs: sourceSegmentIDs, reason: reason)
@@ -88,6 +95,7 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
             "Meeting name: \(input.meetingName)",
             "Transcript language: \(input.language ?? "unknown")",
             "Summary target language: \(input.targetLanguage ?? input.language ?? "unknown")",
+            "Transcript source: \(transcriptSourceDescription(input.transcriptSource))",
             "Write every generated JSON string value in the summary target language."
         ]
         lines.append(contentsOf: qualityPromptLines(for: input.transcript.quality))
@@ -110,6 +118,21 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
             lines.append("Transcript fallback reason: \(fallbackReason)")
         }
         return lines
+    }
+
+    private static func transcriptSourceDescription(_ source: MeetingSummaryTranscriptSource) -> String {
+        switch source {
+        case .live:
+            return "live"
+        case .refined:
+            return "refined"
+        case .fallback(let reason):
+            let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedReason.isEmpty {
+                return "fallback"
+            }
+            return "fallback (\(trimmedReason))"
+        }
     }
 
     private static func promptLines(for turn: TranscriptConsumptionTurn) -> [String] {
