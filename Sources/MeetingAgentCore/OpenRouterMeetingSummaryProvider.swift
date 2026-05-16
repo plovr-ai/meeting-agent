@@ -90,6 +90,7 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
             "Summary target language: \(input.targetLanguage ?? input.language ?? "unknown")",
             "Write every generated JSON string value in the summary target language."
         ]
+        lines.append(contentsOf: qualityPromptLines(for: input.transcript.quality))
         if let meetingGoal = input.meetingGoal?.trimmingCharacters(in: .whitespacesAndNewlines),
            !meetingGoal.isEmpty {
             lines.append("Meeting goal: \(meetingGoal)")
@@ -98,6 +99,17 @@ public struct OpenRouterMeetingSummaryProvider: MeetingSummaryProvider {
         lines.append("Transcript segments:")
         lines.append(contentsOf: input.transcript.finalTurns.flatMap(Self.promptLines(for:)))
         return lines.joined(separator: "\n")
+    }
+
+    private static func qualityPromptLines(for quality: TranscriptConsumptionQuality) -> [String] {
+        var lines = [
+            "Transcript quality source: \(quality.source.rawValue)",
+            "Transcript quality metrics: finalTurns=\(quality.finalTurnCount), draftTurns=\(quality.draftTurnCount), unknownSpeakerTurns=\(quality.unknownSpeakerTurnCount), emptyFinalTurns=\(quality.emptyFinalTurnCount)"
+        ]
+        if let fallbackReason = quality.fallbackReason {
+            lines.append("Transcript fallback reason: \(fallbackReason)")
+        }
+        return lines
     }
 
     private static func promptLines(for turn: TranscriptConsumptionTurn) -> [String] {

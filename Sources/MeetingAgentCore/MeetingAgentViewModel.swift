@@ -652,8 +652,14 @@ public final class MeetingAgentViewModel: ObservableObject {
             meetings[index] = result.record
         }
         guard selectedMeetingID == result.record.id else { return }
-        refreshSelectedMeetingArtifactSnapshot()
-        guard let captionDocument = result.captionDocument else { return }
+        let captionDocument: CaptionDocument
+        if let refinedDocument = result.captionDocument {
+            captionDocument = refinedDocument
+        } else if let persistedFallback = try? transcriptRepository.loadCaptionDocument(for: result.record) {
+            captionDocument = persistedFallback
+        } else {
+            return
+        }
         selectedMeetingSessionState = MeetingSessionState(
             meetingID: result.record.id,
             transcript: TranscriptState(
@@ -664,6 +670,7 @@ public final class MeetingAgentViewModel: ObservableObject {
             summary: selectedMeetingSessionState?.summary ?? .missing
         )
         liveCaptionTurns = selectedMeetingSessionState?.transcript.visibleTurns ?? []
+        refreshSelectedMeetingArtifactSnapshot()
     }
 
     public func generateSummary(for meetingID: UUID, generatedAt: Date = Date()) async throws {

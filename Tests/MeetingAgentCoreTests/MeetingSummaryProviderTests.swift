@@ -255,6 +255,53 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Write every generated JSON string value in the summary target language."))
     }
 
+    func testOpenRouterSummaryPromptIncludesTranscriptQualityContext() async throws {
+        let client = RecordingOpenRouterChatClient(responseContent: """
+        {
+          "overview": "Fallback transcript summarized.",
+          "keyTopics": [],
+          "decisions": [],
+          "actionItems": [],
+          "openQuestions": [],
+          "risks": [],
+          "followUps": []
+        }
+        """)
+        let provider = OpenRouterMeetingSummaryProvider(
+            configuration: OpenRouterChatConfiguration(apiKey: "test-key", model: "openai/gpt-4.1-mini"),
+            client: client
+        )
+
+        _ = try await provider.generateSummary(
+            input: MeetingSummaryInput(
+                meetingName: "Launch Review",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                endedAt: nil,
+                language: "en-US",
+                meetingGoal: nil,
+                transcript: Self.transcriptView(
+                    turns: [
+                        Self.turn(id: "segment-1", text: "We decided to launch.", sourceIDs: ["segment-1"])
+                    ],
+                    quality: TranscriptConsumptionQuality(
+                        source: .refinementFailed,
+                        fallbackReason: "Transcript refinement failed: timeout",
+                        finalTurnCount: 1,
+                        draftTurnCount: 2,
+                        unknownSpeakerTurnCount: 3,
+                        emptyFinalTurnCount: 4
+                    )
+                ),
+                generatedAt: Date(timeIntervalSince1970: 1_777_000_100)
+            )
+        )
+
+        let prompt = try XCTUnwrap(client.requests.first?.messages.last?.content)
+        XCTAssertTrue(prompt.contains("Transcript quality source: refinementFailed"))
+        XCTAssertTrue(prompt.contains("finalTurns=1, draftTurns=2, unknownSpeakerTurns=3, emptyFinalTurns=4"))
+        XCTAssertTrue(prompt.contains("Transcript fallback reason: Transcript refinement failed: timeout"))
+    }
+
     func testOpenRouterProviderFailsWhenConfigurationIsMissing() async throws {
         let provider = OpenRouterMeetingSummaryProvider(
             configuration: .unavailable("OpenRouter API key is not configured"),
@@ -354,13 +401,17 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertTrue(markdown.contains("No transcript was available."))
     }
 
-    private static func transcriptView(turns: [TranscriptConsumptionTurn], language: String = "en-US") -> TranscriptConsumptionView {
+    private static func transcriptView(
+        turns: [TranscriptConsumptionTurn],
+        language: String = "en-US",
+        quality: TranscriptConsumptionQuality? = nil
+    ) -> TranscriptConsumptionView {
         TranscriptConsumptionView(
             meetingID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
             language: language,
             provider: CaptionProviderInfo(id: "test", locale: language),
             finalTurns: turns,
-            quality: TranscriptConsumptionQuality(finalTurnCount: turns.count)
+            quality: quality ?? TranscriptConsumptionQuality(finalTurnCount: turns.count)
         )
     }
 

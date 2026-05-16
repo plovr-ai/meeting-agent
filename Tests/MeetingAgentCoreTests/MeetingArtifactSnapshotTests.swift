@@ -62,6 +62,8 @@ final class MeetingArtifactSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.transcriptText, "User A:\nLatency covered")
         XCTAssertEqual(snapshot.actualTranscriptionSourceText, "deepgram-transcribe")
         XCTAssertEqual(snapshot.transcriptLatencyText, "1.0 s")
+        XCTAssertEqual(snapshot.transcriptQualityLabel, "Live transcript")
+        XCTAssertEqual(snapshot.transcriptQualityDetailText, "1 final | 0 draft | 1 unknown speaker | 0 empty final")
     }
 
     func testSnapshotFormatsSubsecondTranscriptLatencyInMilliseconds() throws {
@@ -98,6 +100,49 @@ final class MeetingArtifactSnapshotTests: XCTestCase {
         let snapshot = MeetingArtifactSnapshot.make(meeting: record, session: MeetingSessionState(meetingID: meetingID))
 
         XCTAssertEqual(snapshot.transcriptLatencyText, "0 ms")
+    }
+
+    func testSnapshotReportsPostProcessedTranscriptQuality() throws {
+        let meetingID = UUID()
+        let record = MeetingRecord(
+            id: meetingID,
+            name: "Quality",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: nil,
+            audioURL: nil,
+            transcriptURL: nil,
+            transcriptionProviderID: "deepgram-transcribe"
+        )
+        let document = CaptionDocument(
+            turns: [
+                CaptionTurn(
+                    id: "turn-1",
+                    speakerID: "speaker-1",
+                    speakerLabel: "Allan",
+                    sections: [CaptionSection(text: "Refined text")],
+                    state: .final,
+                    source: CaptionTurnSource(providerID: "deepgram-batch-transcribe")
+                )
+            ],
+            qualityMetadata: TranscriptQualityMetadata(
+                source: .postProcessed,
+                metrics: TranscriptQualityMetrics(finalTurnCount: 1),
+                updatedAt: Date(timeIntervalSince1970: 200)
+            )
+        )
+        let session = MeetingSessionState(
+            meetingID: meetingID,
+            transcript: TranscriptState(
+                meetingID: meetingID,
+                captionDocument: document,
+                source: .hydratedFromPersistence
+            )
+        )
+
+        let snapshot = MeetingArtifactSnapshot.make(meeting: record, session: session)
+
+        XCTAssertEqual(snapshot.transcriptQualityLabel, "Post-processed transcript")
+        XCTAssertEqual(snapshot.transcriptQualityDetailText, "1 final | 0 draft | 0 unknown speaker | 0 empty final")
     }
 }
 

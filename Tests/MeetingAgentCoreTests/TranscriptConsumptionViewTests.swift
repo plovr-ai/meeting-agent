@@ -49,6 +49,8 @@ final class TranscriptConsumptionViewTests: XCTestCase {
         XCTAssertEqual(view.quality.finalTurnCount, 1)
         XCTAssertEqual(view.quality.draftTurnCount, 1)
         XCTAssertEqual(view.quality.unknownSpeakerTurnCount, 0)
+        XCTAssertEqual(view.quality.source, .liveOnly)
+        XCTAssertNil(view.quality.fallbackReason)
     }
 
     func testProjectorFiltersEmptySectionsAndFallsBackToSpeakerID() {
@@ -97,5 +99,47 @@ final class TranscriptConsumptionViewTests: XCTestCase {
         XCTAssertEqual(view.finalTurns.first?.speakerID, "local-user")
         XCTAssertEqual(view.finalTurns.first?.speakerLabel, "Me")
         XCTAssertEqual(view.quality.unknownSpeakerTurnCount, 0)
+    }
+
+    func testProjectorPreservesQualitySourceAndRecomputesMetrics() {
+        let document = CaptionDocument(
+            turns: [
+                CaptionTurn(
+                    id: "unknown-final",
+                    speakerID: nil,
+                    speakerLabel: nil,
+                    sections: [CaptionSection(id: "kept", text: "Fallback text.")],
+                    state: .final,
+                    source: CaptionTurnSource(providerID: "deepgram")
+                ),
+                CaptionTurn(
+                    id: "empty-final",
+                    sections: [CaptionSection(id: "empty", text: " ")],
+                    state: .final,
+                    source: CaptionTurnSource(providerID: "deepgram")
+                ),
+                CaptionTurn(
+                    id: "draft",
+                    sections: [CaptionSection(id: "draft-section", text: "draft")],
+                    state: .draft,
+                    source: CaptionTurnSource(providerID: "deepgram")
+                )
+            ],
+            qualityMetadata: TranscriptQualityMetadata(
+                source: .refinementFailed,
+                fallbackReason: "Transcript refinement failed: timeout",
+                metrics: TranscriptQualityMetrics(finalTurnCount: 99),
+                updatedAt: Date(timeIntervalSince1970: 10)
+            )
+        )
+
+        let view = TranscriptConsumptionView.project(meetingID: UUID(), document: document)
+
+        XCTAssertEqual(view.quality.source, .refinementFailed)
+        XCTAssertEqual(view.quality.fallbackReason, "Transcript refinement failed: timeout")
+        XCTAssertEqual(view.quality.finalTurnCount, 1)
+        XCTAssertEqual(view.quality.draftTurnCount, 1)
+        XCTAssertEqual(view.quality.unknownSpeakerTurnCount, 1)
+        XCTAssertEqual(view.quality.emptyFinalTurnCount, 1)
     }
 }
