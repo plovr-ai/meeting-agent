@@ -3098,7 +3098,123 @@ final class MeetingAgentViewModelTests: XCTestCase {
         XCTAssertEqual(refiner.requests.count, 1)
         XCTAssertEqual(viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.map(\.id), ["refined-final"])
         XCTAssertEqual(summaryProvider.receivedInputs.first?.transcript.finalTurns.map(\.turnID), ["refined-final"])
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcriptSource, .refined)
         XCTAssertEqual(viewModel.meetings.first?.transcriptRefinement?.status, .refined)
+    }
+
+    func testStopRecordingAndGenerateSummaryFallsBackToLiveTranscriptWhenRefinementFails() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let summaryProvider = CapturingSummaryProvider(providerName: "test-summary")
+        let refiner = FakePostMeetingTranscriptRefiner()
+        refiner.failureReason = "Deepgram batch unavailable"
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            postMeetingTranscriptRefiner: refiner,
+            summaryProviderFactory: { _ in summaryProvider },
+            processTargetsProvider: { [target] }
+        )
+
+        try await viewModel.startRecording(for: target)
+        fixture.transcriber.emit(.upsert(TranscriptSegment(
+            id: "live-final",
+            text: "We decided from the live transcript.",
+            language: "en-US",
+            sourceProvider: "deepgram-transcribe"
+        )))
+        try await waitFor { viewModel.selectedMeetingSessionState?.transcript.captionDocument.turns.map(\.id) == ["live-final"] }
+
+        try await viewModel.stopRecordingAndGenerateSummary(at: Date(timeIntervalSince1970: 200))
+
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcript.finalTurns.map(\.turnID), ["live-final"])
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcriptSource, .fallback(reason: "Deepgram batch unavailable"))
+        XCTAssertEqual(viewModel.meetings.first?.transcriptRefinement?.status, .failed)
+        XCTAssertEqual(viewModel.statusText, "Summary generated")
+    }
+
+    func testStopRecordingAndGenerateSummaryFailsClearlyWithoutTranscript() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let summaryProvider = CapturingSummaryProvider(providerName: "test-summary")
+        let refiner = FakePostMeetingTranscriptRefiner()
+        refiner.failureReason = "Deepgram batch unavailable"
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil
+            ),
+            postMeetingTranscriptRefiner: refiner,
+            summaryProviderFactory: { _ in summaryProvider },
+            processTargetsProvider: { [target] }
+        )
+
+        try await viewModel.startRecording(for: target)
+        try await viewModel.stopRecordingAndGenerateSummary(at: Date(timeIntervalSince1970: 200))
+
+        let summary = try MeetingSummaryWriter.read(from: XCTUnwrap(viewModel.meetings.first?.summaryJSONURL))
+        XCTAssertEqual(summary.status, .failed)
+        XCTAssertEqual(summary.failureReason, "No transcript is available for summary generation")
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcript.finalTurns, [])
+        XCTAssertEqual(summaryProvider.receivedInputs.first?.transcriptSource, .fallback(reason: "Deepgram batch unavailable"))
+        XCTAssertEqual(viewModel.statusText, "Summary failed")
+    }
+
+    func testStopRecordingAndGenerateSummaryReportsRefinementAndSummaryStatusOrder() async throws {
+        let fixture = try ViewModelRecorderFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var statusSnapshots: [String] = []
+        let summaryProvider = CapturingSummaryProvider(providerName: "test-summary")
+        let refiner = FakePostMeetingTranscriptRefiner()
+        refiner.document = summaryCaptionDocument([
+            TranscriptSegment(
+                id: "refined-final",
+                text: "We decided to launch with refined transcript.",
+                language: "en-US",
+                sourceProvider: "deepgram-batch-transcribe"
+            )
+        ])
+        let target = AudioCaptureTarget(processID: 42, displayName: "Google Meet", bundleIdentifier: "com.google.Chrome")
+        let viewModel = MeetingAgentViewModel(
+            store: fixture.store,
+            recorder: fixture.recorder,
+            speechConfiguration: SpeechTranscriptionConfiguration(
+                provider: .whisper,
+                localeIdentifier: "en-US",
+                whisperBinaryPath: nil,
+                whisperModelPath: nil,
+                transcriptionExecutionMode: .hosted,
+                hostedTranscriptionProviderID: "deepgram-transcribe",
+                deepgramAPIKey: "key"
+            ),
+            postMeetingTranscriptRefiner: refiner,
+            summaryProviderFactory: { _ in summaryProvider },
+            processTargetsProvider: { [target] }
+        )
+        refiner.onRefine = { statusSnapshots.append(viewModel.statusText) }
+        summaryProvider.onGenerate = { _ in statusSnapshots.append(viewModel.statusText) }
+
+        try await viewModel.startRecording(for: target)
+        try await viewModel.stopRecordingAndGenerateSummary(at: Date(timeIntervalSince1970: 200))
+        statusSnapshots.append(viewModel.statusText)
+
+        XCTAssertEqual(statusSnapshots, [
+            "Refining transcript",
+            "Generating summary",
+            "Summary generated"
+        ])
     }
 
     func testStopRecordingRefinementFailureKeepsLiveTranscript() async throws {
@@ -3451,6 +3567,8 @@ private final class ViewModelFakeTranscriberFactory {
 
 private final class FakePostMeetingTranscriptRefiner: PostMeetingTranscriptRefining {
     var document: CaptionDocument?
+    var failureReason = "fake failure"
+    var onRefine: (() -> Void)?
     private(set) var requests: [MeetingRecord] = []
 
     func refineTranscript(
@@ -3459,6 +3577,7 @@ private final class FakePostMeetingTranscriptRefiner: PostMeetingTranscriptRefin
         configuration: SpeechTranscriptionConfiguration
     ) async -> PostMeetingTranscriptRefinementResult {
         requests.append(record)
+        onRefine?()
         var updatedRecord = record
         if let document {
             updatedRecord.transcriptRefinement = TranscriptRefinementMetadata(
@@ -3474,7 +3593,7 @@ private final class FakePostMeetingTranscriptRefiner: PostMeetingTranscriptRefin
             providerID: configuration.batchTranscriptionProviderID,
             modelID: configuration.batchTranscriptionModelID,
             status: .failed,
-            failureReason: "fake failure",
+            failureReason: failureReason,
             durationSeconds: 0.1,
             updatedAt: Date(timeIntervalSince1970: 200)
         )
@@ -3484,6 +3603,7 @@ private final class FakePostMeetingTranscriptRefiner: PostMeetingTranscriptRefin
 
 private final class CapturingSummaryProvider: MeetingSummaryProvider {
     let providerName: String
+    var onGenerate: ((MeetingSummaryInput) -> Void)?
     private(set) var receivedInputs: [MeetingSummaryInput] = []
 
     init(providerName: String) {
@@ -3492,8 +3612,26 @@ private final class CapturingSummaryProvider: MeetingSummaryProvider {
 
     func generateSummary(input: MeetingSummaryInput) async throws -> MeetingSummary {
         receivedInputs.append(input)
+        onGenerate?(input)
         let usableTurns = input.transcript.finalTurns.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !usableTurns.isEmpty else {
+            return MeetingSummary(
+                overview: "",
+                keyTopics: [],
+                decisions: [],
+                actionItems: [],
+                openQuestions: [],
+                risks: [],
+                followUps: [],
+                language: input.language,
+                sourceSegmentIDs: [],
+                generatedAt: input.generatedAt,
+                provider: providerName,
+                status: .failed,
+                failureReason: "No transcript is available for summary generation"
+            )
         }
         let decisions = usableTurns
             .filter { $0.text.lowercased().contains("decided") || $0.text.lowercased().contains("agreed") }

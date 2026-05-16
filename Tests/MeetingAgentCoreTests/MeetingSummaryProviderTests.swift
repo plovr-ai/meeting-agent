@@ -2,6 +2,31 @@ import XCTest
 @testable import MeetingAgentCore
 
 final class MeetingSummaryProviderTests: XCTestCase {
+    func testSummaryInputRetainsTranscriptSourceMetadata() {
+        let fallbackInput = MeetingSummaryInput(
+            meetingName: "Launch Review",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 200),
+            language: "en-US",
+            meetingGoal: nil,
+            transcript: Self.transcriptView(turns: []),
+            transcriptSource: .fallback(reason: "Deepgram batch unavailable"),
+            generatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let defaultInput = MeetingSummaryInput(
+            meetingName: "Launch Review",
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 200),
+            language: "en-US",
+            meetingGoal: nil,
+            transcript: Self.transcriptView(turns: []),
+            generatedAt: Date(timeIntervalSince1970: 300)
+        )
+
+        XCTAssertEqual(fallbackInput.transcriptSource, .fallback(reason: "Deepgram batch unavailable"))
+        XCTAssertEqual(defaultInput.transcriptSource, .live)
+    }
+
     func testMarkdownRendererOmitsBlankSectionsAndRendersLists() {
         let summary = MeetingSummary(
             overview: " ",
@@ -135,6 +160,7 @@ final class MeetingSummaryProviderTests: XCTestCase {
         XCTAssertTrue(client.requests.first?.messages.first?.content.contains("tags") == true)
         XCTAssertTrue(client.requests.first?.messages.first?.content.contains("2-4") == true)
         XCTAssertTrue(client.requests.first?.messages.last?.content.contains("segment-1") == true)
+        XCTAssertTrue(client.requests.first?.messages.last?.content.contains("Transcript source: live") == true)
     }
 
     func testOpenRouterSummaryPromptUsesConsumptionTurnsWithSourceEvidence() async throws {
